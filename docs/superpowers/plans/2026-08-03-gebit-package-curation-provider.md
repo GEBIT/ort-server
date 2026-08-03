@@ -84,8 +84,7 @@ Expected: FAIL because the `Gebit` plugin is not yet registered.
 
 ```bash
 git add shared/package-curation-providers/src/test/kotlin/GebitPackageCurationProviderTest.kt
-git commit -m "test: specify Gebit package curation behavior" \
-  -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+git commit -m "test: specify Gebit package curation behavior"
 ```
 
 ### Task 2: Implement and register the Gebit provider
@@ -157,8 +156,7 @@ and service discovery.
 
 ```bash
 git add shared/package-curation-providers/src/main/kotlin/GebitPackageCurationProvider.kt
-git commit -m "feat: add Gebit package curation provider" \
-  -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+git commit -m "feat: add Gebit package curation provider"
 ```
 
 ### Task 3: Run the module validation
@@ -189,4 +187,3 @@ git diff HEAD~2..HEAD -- \
 
 Expected: only the dedicated provider and its focused tests are included; the
 pre-existing worktree changes remain untouched.
-
