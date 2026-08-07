@@ -63,6 +63,69 @@ class GebitPackageCurationProviderTest : StringSpec({
         )
     }
 
+    "Maven packages with de.gebit.pos and de.gebit.trend namespaces and descendants should match" {
+        val packages = listOf(
+            Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.pos", "pos-artifact", "1.0.0")),
+            Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.pos.example", "pos-sub-artifact", "1.0.0")),
+            Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.trend", "trend-artifact", "1.0.0")),
+            Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.trend.example", "trend-sub-artifact", "1.0.0"))
+        )
+
+        val curations = provider.getCurationsFor(packages)
+
+        curations.map { it.id } should containExactlyInAnyOrder(packages.map { it.id })
+    }
+
+    "Maven packages with de.gebit.compas namespace and descendants should match" {
+        val packages = listOf(
+            Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.compas", "compas-artifact", "1.0.0")),
+            Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.compas.example", "compas-sub-artifact", "1.0.0"))
+        )
+
+        val curations = provider.getCurationsFor(packages)
+
+        curations.map { it.id } should containExactlyInAnyOrder(packages.map { it.id })
+    }
+
+    "Maven packages with de.gebit.ep and de.gebit.integrity namespaces and descendants should match" {
+        val packages = listOf(
+            Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.ep", "ep-artifact", "1.0.0")),
+            Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.ep.example", "ep-sub-artifact", "1.0.0")),
+            Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.integrity", "integrity-artifact", "1.0.0")),
+            Package.EMPTY.copy(
+                id = Identifier("Maven", "de.gebit.integrity.example", "integrity-sub-artifact", "1.0.0")
+            )
+        )
+
+        val curations = provider.getCurationsFor(packages)
+
+        curations.map { it.id } should containExactlyInAnyOrder(packages.map { it.id })
+    }
+
+    "Maven packages with de.gebit.lib namespace and descendants should match" {
+        val packages = listOf(
+            Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.lib", "lib-artifact", "1.0.0")),
+            Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.lib.example", "lib-sub-artifact", "1.0.0"))
+        )
+
+        val curations = provider.getCurationsFor(packages)
+
+        curations.map { it.id } should containExactlyInAnyOrder(packages.map { it.id })
+    }
+
+    "Maven packages with de.gebit.wildfly namespace and descendants should match" {
+        val packages = listOf(
+            Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.wildfly", "wildfly-artifact", "1.0.0")),
+            Package.EMPTY.copy(
+                id = Identifier("Maven", "de.gebit.wildfly.example", "wildfly-sub-artifact", "1.0.0")
+            )
+        )
+
+        val curations = provider.getCurationsFor(packages)
+
+        curations.map { it.id } should containExactlyInAnyOrder(packages.map { it.id })
+    }
+
     "A Maven package with near-match namespace de.gebit.rpx should not match" {
         val pkg = Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.rpx", "some-artifact", "1.0.0"))
 
