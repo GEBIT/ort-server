@@ -40,7 +40,19 @@ class GebitPackageCurationProvider(
     override fun getCurationsFor(packages: Collection<Package>): Set<PackageCuration> =
         packages.filter { pkg ->
             pkg.id.type == "Maven" &&
-                (pkg.id.namespace == "de.gebit.rp" || pkg.id.namespace.startsWith("de.gebit.rp."))
+                listOf(
+                    "de.gebit.rp",
+                    "de.gebit.pos",
+                    "de.gebit.trend",
+                    "de.gebit.compas",
+                    "de.gebit.ep",
+                    "de.gebit.integrity",
+                    "de.gebit.wildfly",
+                    // maybe switch later to license mapping
+                    "de.gebit.lib"
+                ).any { namespace ->
+                    pkg.id.namespace == namespace || pkg.id.namespace.startsWith("$namespace.")
+                }
         }.mapTo(mutableSetOf()) { pkg ->
             PackageCuration(
                 id = pkg.id,
