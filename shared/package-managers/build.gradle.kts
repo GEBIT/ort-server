@@ -31,9 +31,11 @@ group = "org.eclipse.apoapsis.ortserver.shared"
 dependencies {
     api(ortLibs.analyzer)
 
+    implementation(libs.kaml)
     implementation(libs.slf4j)
     implementation(ortLibs.ortPlugins.packageManagers.maven)
     implementation(ortLibs.ortPlugins.packageManagers.node)
+    implementation(ortLibs.ortPlugins.packageManagers.pub)
     implementation(ortLibs.utils.common)
 
     ksp(ortLibs.ortPlugins.compiler)
