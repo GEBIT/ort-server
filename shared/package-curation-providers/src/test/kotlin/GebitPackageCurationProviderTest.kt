@@ -141,4 +141,52 @@ class GebitPackageCurationProviderTest : StringSpec({
 
         curations should beEmpty()
     }
+
+    "A custom namespace configured via options should match and the default namespaces should not" {
+        val customProvider = PackageCurationProviderFactory.create(
+            listOf(ProviderPluginConfiguration(type = "Gebit", options = mapOf("namespaces" to "de.acme")))
+        ).single().second
+
+        val matchingPkg = Package.EMPTY.copy(id = Identifier("Maven", "de.acme", "some-artifact", "1.0.0"))
+        val defaultNamespacePkg = Package.EMPTY.copy(id = Identifier("Maven", "de.gebit.rp", "some-artifact", "1.0.0"))
+
+        val curations = customProvider.getCurationsFor(listOf(matchingPkg, defaultNamespacePkg))
+
+        curations should containExactlyInAnyOrder(
+            PackageCuration(
+                id = matchingPkg.id,
+                data = PackageCurationData(concludedLicense = SpdxExpression.parse("LicenseRef-GEBIT"))
+            )
+        )
+    }
+
+    "Explicit curations configured via options should apply to matching packages regardless of namespace" {
+        val curationProvider = PackageCurationProviderFactory.create(
+            listOf(
+                ProviderPluginConfiguration(
+                    type = "Gebit",
+                    options = mapOf(
+                        "curations" to "Maven:net.sf:jargs:1.0=BSD-3-Clause,Maven:org.apache.bcel:bcel:5.2=Apache-2.0"
+                    )
+                )
+            )
+        ).single().second
+
+        val jargsPkg = Package.EMPTY.copy(id = Identifier("Maven", "net.sf", "jargs", "1.0"))
+        val bcelPkg = Package.EMPTY.copy(id = Identifier("Maven", "org.apache.bcel", "bcel", "5.2"))
+        val uncuratedPkg = Package.EMPTY.copy(id = Identifier("Maven", "net.sf", "jargs", "2.0"))
+
+        val curations = curationProvider.getCurationsFor(listOf(jargsPkg, bcelPkg, uncuratedPkg))
+
+        curations should containExactlyInAnyOrder(
+            PackageCuration(
+                id = jargsPkg.id,
+                data = PackageCurationData(concludedLicense = SpdxExpression.parse("BSD-3-Clause"))
+            ),
+            PackageCuration(
+                id = bcelPkg.id,
+                data = PackageCurationData(concludedLicense = SpdxExpression.parse("Apache-2.0"))
+            )
+        )
+    }
 })
