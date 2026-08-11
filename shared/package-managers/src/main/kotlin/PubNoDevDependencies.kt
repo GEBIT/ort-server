@@ -84,7 +84,14 @@ data class PubNoDevDependenciesConfig(
      * delegate Pub package manager.
      */
     @OrtPluginOption(defaultValue = "false")
-    val pubDependenciesOnly: Boolean
+    val pubDependenciesOnly: Boolean,
+
+    /**
+     * Whether Pub may resolve projects without a lockfile or with dynamic dependency versions. Forwarded to the
+     * delegate Pub package manager.
+     */
+    @OrtPluginOption(defaultValue = "false")
+    val allowDynamicVersions: Boolean
 )
 
 /**
@@ -122,6 +129,8 @@ class PubNoDevDependencies(
     override val descriptor: PluginDescriptor,
     config: PubNoDevDependenciesConfig
 ) : PackageManager("Pub") {
+    private val allowDynamicVersions = config.allowDynamicVersions
+
     /** The real Pub package manager implementation that this plugin delegates to. */
     private val delegate = PubFactory.create(
         flutterVersion = config.flutterVersion,
@@ -130,6 +139,9 @@ class PubNoDevDependencies(
     )
 
     override val globsForDefinitionFiles = delegate.globsForDefinitionFiles
+
+    private fun withAllowDynamicVersions(analyzerConfig: AnalyzerConfiguration): AnalyzerConfiguration =
+        analyzerConfig.copy(allowDynamicVersions = allowDynamicVersions)
 
     /**
      * Expands any YAML anchors/aliases in [definitionFiles] (see the class documentation above) before delegating,
@@ -142,7 +154,7 @@ class PubNoDevDependencies(
         analyzerConfig: AnalyzerConfiguration
     ) {
         definitionFiles.forEach(::expandYamlAnchorsAndAliases)
-        delegate.beforeResolution(analysisRoot, definitionFiles, analyzerConfig)
+        delegate.beforeResolution(analysisRoot, definitionFiles, withAllowDynamicVersions(analyzerConfig))
     }
 
     override fun afterResolution(analysisRoot: File, definitionFiles: List<File>) =
@@ -178,7 +190,7 @@ class PubNoDevDependencies(
             definitionFiles,
             excludesWithDevDependencies,
             includes,
-            analyzerConfig,
+            withAllowDynamicVersions(analyzerConfig),
             labels
         )
     }
@@ -196,7 +208,14 @@ class PubNoDevDependencies(
         analyzerConfig: AnalyzerConfiguration,
         labels: Map<String, String>
     ): List<ProjectAnalyzerResult> =
-        delegate.resolveDependencies(analysisRoot, definitionFile, excludes, includes, analyzerConfig, labels)
+        delegate.resolveDependencies(
+            analysisRoot,
+            definitionFile,
+            excludes,
+            includes,
+            withAllowDynamicVersions(analyzerConfig),
+            labels
+        )
 }
 
 /**
