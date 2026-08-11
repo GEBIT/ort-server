@@ -62,7 +62,7 @@ class PubNoDevDependenciesTest : StringSpec({
     }
 
     "resolveDependencies() forwards the multi-file result from the built-in Pub package manager and merges in a " +
-        "hard-coded 'dev_dependencies' scope exclude" {
+        "hard-coded 'dev_dependencies' scope exclude while overriding allowDynamicVersions via default config" {
         mockkConstructor(Pub::class)
         try {
             val expectedResult = PackageManagerResult(
@@ -71,6 +71,7 @@ class PubNoDevDependenciesTest : StringSpec({
                 sharedPackages = emptySet()
             )
             val excludesSlot = slot<Excludes>()
+            val analyzerConfigSlot = slot<AnalyzerConfiguration>()
 
             every {
                 anyConstructed<Pub>().resolveDependencies(
@@ -78,7 +79,7 @@ class PubNoDevDependenciesTest : StringSpec({
                     any<List<File>>(),
                     capture(excludesSlot),
                     any(),
-                    any(),
+                    capture(analyzerConfigSlot),
                     any()
                 )
             } returns expectedResult
@@ -92,12 +93,59 @@ class PubNoDevDependenciesTest : StringSpec({
                 listOf(definitionFile),
                 Excludes.EMPTY,
                 Includes.EMPTY,
-                AnalyzerConfiguration(),
+                AnalyzerConfiguration(allowDynamicVersions = true),
                 emptyMap()
             )
 
             actualResult shouldBe expectedResult
             excludesSlot.captured.scopes.map { it.pattern } shouldContain "dev_dependencies"
+            analyzerConfigSlot.captured.allowDynamicVersions shouldBe false
+        } finally {
+            unmockkConstructor(Pub::class)
+        }
+    }
+
+    "resolveDependencies() forwards allowDynamicVersions=true from plugin options and still excludes " +
+        "'dev_dependencies'" {
+        mockkConstructor(Pub::class)
+        try {
+            val expectedResult = PackageManagerResult(
+                projectResults = emptyMap(),
+                dependencyGraph = null,
+                sharedPackages = emptySet()
+            )
+            val excludesSlot = slot<Excludes>()
+            val analyzerConfigSlot = slot<AnalyzerConfiguration>()
+
+            every {
+                anyConstructed<Pub>().resolveDependencies(
+                    any(),
+                    any<List<File>>(),
+                    capture(excludesSlot),
+                    any(),
+                    capture(analyzerConfigSlot),
+                    any()
+                )
+            } returns expectedResult
+
+            val analysisRoot = File(".")
+            val definitionFile = File(analysisRoot, "pubspec.yaml")
+            val plugin = PackageManagerFactory.ALL.getValue("PubNoDevDependencies").create(
+                PluginConfig(options = mapOf("allowDynamicVersions" to "true"))
+            )
+
+            val actualResult = plugin.resolveDependencies(
+                analysisRoot,
+                listOf(definitionFile),
+                Excludes.EMPTY,
+                Includes.EMPTY,
+                AnalyzerConfiguration(allowDynamicVersions = false),
+                emptyMap()
+            )
+
+            actualResult shouldBe expectedResult
+            excludesSlot.captured.scopes.map { it.pattern } shouldContain "dev_dependencies"
+            analyzerConfigSlot.captured.allowDynamicVersions shouldBe true
         } finally {
             unmockkConstructor(Pub::class)
         }
@@ -107,7 +155,8 @@ class PubNoDevDependenciesTest : StringSpec({
         "(which forbids them, see PubNoDevDependencies' documentation) can subsequently read them without failing" {
         mockkConstructor(Pub::class)
         try {
-            every { anyConstructed<Pub>().beforeResolution(any(), any(), any()) } returns Unit
+            val analyzerConfigSlot = slot<AnalyzerConfiguration>()
+            every { anyConstructed<Pub>().beforeResolution(any(), any(), capture(analyzerConfigSlot)) } returns Unit
 
             val tempDir = kotlin.io.path.createTempDirectory("pub-no-dev-dependencies-test").toFile()
             val definitionFile = File(tempDir, "pubspec.yaml").apply {
@@ -123,17 +172,60 @@ class PubNoDevDependenciesTest : StringSpec({
                 )
             }
 
-            val plugin = PackageManagerFactory.ALL.getValue("PubNoDevDependencies").create(PluginConfig.EMPTY)
+            val plugin = PackageManagerFactory.ALL.getValue("PubNoDevDependencies").create(
+                PluginConfig(options = mapOf("allowDynamicVersions" to "true"))
+            )
 
-            plugin.beforeResolution(tempDir, listOf(definitionFile), AnalyzerConfiguration())
+            plugin.beforeResolution(
+                tempDir,
+                listOf(definitionFile),
+                AnalyzerConfiguration(allowDynamicVersions = false)
+            )
 
             val rewritten = definitionFile.readText()
             rewritten shouldNotContain "&"
             rewritten shouldNotContain "*"
+            analyzerConfigSlot.captured.allowDynamicVersions shouldBe true
 
             // The delegate's own strict configuration (anchors/aliases forbidden) must now be able to parse the
             // rewritten file without throwing.
             strictYaml.parseToYamlNode(rewritten)
+        } finally {
+            unmockkConstructor(Pub::class)
+        }
+    }
+
+    "resolveDependencies() for a single definition file forwards allowDynamicVersions=true from plugin options" {
+        mockkConstructor(Pub::class)
+        try {
+            val analyzerConfigSlot = slot<AnalyzerConfiguration>()
+            every {
+                anyConstructed<Pub>().resolveDependencies(
+                    any(),
+                    any<File>(),
+                    any(),
+                    any(),
+                    capture(analyzerConfigSlot),
+                    any()
+                )
+            } returns emptyList()
+
+            val analysisRoot = File(".")
+            val definitionFile = File(analysisRoot, "pubspec.yaml")
+            val plugin = PackageManagerFactory.ALL.getValue("PubNoDevDependencies").create(
+                PluginConfig(options = mapOf("allowDynamicVersions" to "true"))
+            )
+
+            plugin.resolveDependencies(
+                analysisRoot,
+                definitionFile,
+                Excludes.EMPTY,
+                Includes.EMPTY,
+                AnalyzerConfiguration(allowDynamicVersions = false),
+                emptyMap()
+            ) shouldBe emptyList()
+
+            analyzerConfigSlot.captured.allowDynamicVersions shouldBe true
         } finally {
             unmockkConstructor(Pub::class)
         }
