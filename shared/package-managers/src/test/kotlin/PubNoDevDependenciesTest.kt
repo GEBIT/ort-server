@@ -29,7 +29,6 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldNotContain
 
 import io.mockk.every
-import io.mockk.mockk
 import io.mockk.mockkConstructor
 import io.mockk.slot
 import io.mockk.unmockkConstructor
