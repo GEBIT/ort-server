@@ -1,6 +1,7 @@
 .gradle/
 .kotlin/
 build/
+bin/
 out/
 /*.iml
 
