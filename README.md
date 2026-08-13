@@ -1,5 +1,31 @@
 # <img alt="ORT Server" src="website/static/img/ort-server-logo.svg" width="10%"> Eclipse Apoapsis™ - ORT Server
 
+## GEBIT Modifications
+
+The commits prefixed with `DINF-1255:` add GEBIT-specific extensions to the ORT
+Analyzer:
+
+- `GebitPackageCurationProvider` applies the concluded license
+  `LicenseRef-GEBIT` to Maven packages in the configured GEBIT namespaces and
+  their descendants. The default namespaces are `de.gebit.rp`, `de.gebit.pos`,
+  `de.gebit.trend`, `de.gebit.compas`, `de.gebit.ep`, `de.gebit.integrity`,
+  `de.gebit.wildfly`, and `de.gebit.lib`. The provider also supports custom
+  namespaces and exact package-coordinate curations with SPDX license
+  expressions. These curations can be configured in `ort-server.params.kts`;
+  see the [deployment example](https://gitlab.local.gebit.de/gebit-build/services/ort-server-deploy/-/blob/master/scripts/compose/config/ort-server.params.kts?ref_type=heads).
+- `MavenNoTestDependencies`, `NpmNoDevDependencies`, and
+  `PubNoDevDependencies` wrap ORT's built-in package managers while always
+  excluding Maven `test`, NPM `devDependencies`, and Pub `dev_dependencies`
+  scopes, respectively. They retain the delegates' dependency-resolution
+  behavior and expose the relevant built-in options.
+- The Pub adapter additionally expands YAML anchors and aliases before
+  delegation, and exposes the `allowDynamicVersions` option for lockfile-free
+  or dynamic-version projects.
+
+The custom plugins are packaged in shared modules and included in the Analyzer
+worker. `build-analyzer-image.sh` builds the base, Analyzer base, and final
+Analyzer worker images needed to run these extensions.
+
 The [Eclipse Apoapsis](https://projects.eclipse.org/projects/technology.apoapsis) project's **ORT Server** is a
 standalone application to deploy the [OSS Review Toolkit](https://github.com/oss-review-toolkit/ort) as a service in the
 cloud.
