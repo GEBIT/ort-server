@@ -189,4 +189,34 @@ class GebitPackageCurationProviderTest : StringSpec({
             )
         )
     }
+
+    "Packages configured via noSourceCurations should be curated with empty sourceCodeOrigins" {
+        val curationProvider = PackageCurationProviderFactory.create(
+            listOf(
+                ProviderPluginConfiguration(
+                    type = "Gebit",
+                    options = mapOf(
+                        "noSourceCurations" to
+                            "Maven:com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava"
+                    )
+                )
+            )
+        ).single().second
+
+        val emptyPkg = Package.EMPTY.copy(
+            id = Identifier(
+                "Maven",
+                "com.google.guava",
+                "listenablefuture",
+                "9999.0-empty-to-avoid-conflict-with-guava"
+            )
+        )
+        val uncuratedPkg = Package.EMPTY.copy(id = Identifier("Maven", "com.google.guava", "guava", "32.0.0-jre"))
+
+        val curations = curationProvider.getCurationsFor(listOf(emptyPkg, uncuratedPkg))
+
+        curations should containExactlyInAnyOrder(
+            PackageCuration(id = emptyPkg.id, data = PackageCurationData(sourceCodeOrigins = emptyList()))
+        )
+    }
 })
