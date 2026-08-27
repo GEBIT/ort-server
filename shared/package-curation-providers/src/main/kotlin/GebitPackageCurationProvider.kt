@@ -61,7 +61,15 @@ data class GebitPackageCurationProviderConfig(
      * license to apply, for example `BSD-3-Clause`. This can be used to curate packages that do not have a
      * detectable license, such as those identified with an empty "License IDs" field in a compliance report.
      */
-    val curations: List<String>?
+    val curations: List<String>?,
+
+    /**
+     * Package coordinates (in the same `type:namespace:name:version` form as used in [curations]) of packages that
+     * have no actual source code to download or scan, for example placeholder/empty artifacts. Curates these
+     * packages with an empty `sourceCodeOrigins` list so the downloader/scanner don't attempt to resolve VCS or
+     * source artifact provenance for them, which would otherwise fail with an error.
+     */
+    val noSourceCurations: List<String>?
 )
 
 private const val DEFAULT_GEBIT_NAMESPACES_STRING =
@@ -72,7 +80,8 @@ private const val DEFAULT_GEBIT_NAMESPACES_STRING =
     id = "Gebit",
     displayName = "Gebit Package Curation Provider",
     summary = "A package curation provider that applies GEBIT license curations to GEBIT Maven packages, and " +
-        "optionally applies additional explicit curations configured via the 'curations' option.",
+        "optionally applies additional explicit curations configured via the 'curations' option, and marks " +
+        "packages with no source code via the 'noSourceCurations' option.",
     factory = PackageCurationProviderFactory::class
 )
 class GebitPackageCurationProvider(
@@ -93,6 +102,11 @@ class GebitPackageCurationProvider(
         Identifier(coordinates.trim()) to SpdxExpression.parse(license.trim())
     }
 
+    /** Package identifiers parsed from the `noSourceCurations` option. */
+    private val noSourceCurations: Set<Identifier> = config.noSourceCurations.orEmpty()
+        .map { Identifier(it.trim()) }
+        .toSet()
+
     override fun getCurationsFor(packages: Collection<Package>): Set<PackageCuration> {
         val namespaceCurations = packages.filter { pkg ->
             pkg.id.type == "Maven" &&
@@ -112,6 +126,10 @@ class GebitPackageCurationProvider(
             }
         }
 
-        return (namespaceCurations + additionalCurations).toSet()
+        val noSourceCurationsForPackages = packages.filter { it.id in noSourceCurations }.map { pkg ->
+            PackageCuration(id = pkg.id, data = PackageCurationData(sourceCodeOrigins = emptyList()))
+        }
+
+        return (namespaceCurations + additionalCurations + noSourceCurationsForPackages).toSet()
     }
 }
