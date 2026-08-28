@@ -23,6 +23,8 @@ import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.PackageCuration
 import org.ossreviewtoolkit.model.PackageCurationData
+import org.ossreviewtoolkit.model.VcsInfoCurationData
+import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.plugins.api.OrtPlugin
 import org.ossreviewtoolkit.plugins.api.OrtPluginOption
 import org.ossreviewtoolkit.plugins.api.PluginDescriptor
@@ -69,7 +71,17 @@ data class GebitPackageCurationProviderConfig(
      * packages with an empty `sourceCodeOrigins` list so the downloader/scanner don't attempt to resolve VCS or
      * source artifact provenance for them, which would otherwise fail with an error.
      */
-    val noSourceCurations: List<String>?
+    val noSourceCurations: List<String>?,
+
+    /**
+     * Explicit VCS location overrides, independent of [namespaces]. Each entry must have the format
+     * `<package-coordinates>=<git-url>@<revision>`, where `<package-coordinates>` is an identifier in the form
+     * `type:namespace:name:version` (e.g. `Maven:org.example:example:1.0`), `<git-url>` is the Git clone URL to use
+     * instead of the one declared in the package's own metadata, and `<revision>` is the tag/branch/commit to check
+     * out. This can be used for packages whose declared VCS metadata is stale (e.g. points at a now-archived
+     * repository with no matching tag), preventing the downloader/scanner from failing to resolve a revision.
+     */
+    val vcsCurations: List<String>?
 )
 
 private const val DEFAULT_GEBIT_NAMESPACES_STRING =
@@ -80,8 +92,9 @@ private const val DEFAULT_GEBIT_NAMESPACES_STRING =
     id = "Gebit",
     displayName = "Gebit Package Curation Provider",
     summary = "A package curation provider that applies GEBIT license curations to GEBIT Maven packages, and " +
-        "optionally applies additional explicit curations configured via the 'curations' option, and marks " +
-        "packages with no source code via the 'noSourceCurations' option.",
+        "optionally applies additional explicit curations configured via the 'curations' option, marks " +
+        "packages with no source code via the 'noSourceCurations' option, and overrides stale VCS metadata via " +
+        "the 'vcsCurations' option.",
     factory = PackageCurationProviderFactory::class
 )
 class GebitPackageCurationProvider(
@@ -107,6 +120,25 @@ class GebitPackageCurationProvider(
         .map { Identifier(it.trim()) }
         .toSet()
 
+    /** Explicit VCS curations parsed from the `vcsCurations` option, keyed by package identifier. */
+    private val explicitVcsCurations: Map<Identifier, VcsInfoCurationData> = config.vcsCurations.orEmpty()
+        .associate { entry ->
+            val (coordinates, vcsSpec) = entry.split("=", limit = 2).also {
+                require(it.size == 2) {
+                    "Invalid Gebit VCS curation entry '$entry'. Expected format: '<coordinates>=<git-url>@<revision>'."
+                }
+            }
+
+            val url = vcsSpec.substringBeforeLast("@")
+            val revision = vcsSpec.substringAfterLast("@")
+            require(url.isNotBlank() && revision.isNotBlank() && url != vcsSpec) {
+                "Invalid Gebit VCS curation entry '$entry'. Expected format: '<coordinates>=<git-url>@<revision>'."
+            }
+
+            Identifier(coordinates.trim()) to
+                VcsInfoCurationData(type = VcsType.GIT, url = url.trim(), revision = revision.trim())
+        }
+
     override fun getCurationsFor(packages: Collection<Package>): Set<PackageCuration> {
         val namespaceCurations = packages.filter { pkg ->
             pkg.id.type == "Maven" &&
@@ -130,6 +162,13 @@ class GebitPackageCurationProvider(
             PackageCuration(id = pkg.id, data = PackageCurationData(sourceCodeOrigins = emptyList()))
         }
 
-        return (namespaceCurations + additionalCurations + noSourceCurationsForPackages).toSet()
+        val vcsCurationsForPackages = packages.mapNotNull { pkg ->
+            explicitVcsCurations[pkg.id]?.let { vcs ->
+                PackageCuration(id = pkg.id, data = PackageCurationData(vcs = vcs))
+            }
+        }
+
+        return (namespaceCurations + additionalCurations + noSourceCurationsForPackages + vcsCurationsForPackages)
+            .toSet()
     }
 }
