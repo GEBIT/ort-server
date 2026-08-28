@@ -25,12 +25,14 @@ import io.kotest.matchers.collections.containExactlyInAnyOrder
 import io.kotest.matchers.should
 
 import org.ossreviewtoolkit.model.Identifier
-import org.ossreviewtoolkit.utils.spdxexpression.SpdxExpression
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.PackageCuration
 import org.ossreviewtoolkit.model.PackageCurationData
+import org.ossreviewtoolkit.model.VcsInfoCurationData
+import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.model.config.ProviderPluginConfiguration
 import org.ossreviewtoolkit.plugins.packagecurationproviders.api.PackageCurationProviderFactory
+import org.ossreviewtoolkit.utils.spdxexpression.SpdxExpression
 
 class GebitPackageCurationProviderTest : StringSpec({
     val provider = PackageCurationProviderFactory.create(
@@ -186,6 +188,53 @@ class GebitPackageCurationProviderTest : StringSpec({
             PackageCuration(
                 id = bcelPkg.id,
                 data = PackageCurationData(concludedLicense = SpdxExpression.parse("Apache-2.0"))
+            )
+        )
+    }
+
+    "Explicit VCS curations configured via options should apply to matching packages regardless of namespace" {
+        val curationProvider = PackageCurationProviderFactory.create(
+            listOf(
+                ProviderPluginConfiguration(
+                    type = "Gebit",
+                    options = mapOf(
+                        "vcsCurations" to
+                            "Maven:org.springframework.cloud:spring-cloud-starter-stream-kafka:5.0.2=" +
+                            "https://github.com/spring-cloud/spring-cloud-stream.git@v5.0.2"
+                    )
+                )
+            )
+        ).single().second
+
+        val kafkaStarterPkg = Package.EMPTY.copy(
+            id = Identifier(
+                "Maven",
+                "org.springframework.cloud",
+                "spring-cloud-starter-stream-kafka",
+                "5.0.2"
+            )
+        )
+        val uncuratedPkg = Package.EMPTY.copy(
+            id = Identifier(
+                "Maven",
+                "org.springframework.cloud",
+                "spring-cloud-starter-stream-kafka",
+                "5.0.1"
+            )
+        )
+
+        val curations = curationProvider.getCurationsFor(listOf(kafkaStarterPkg, uncuratedPkg))
+
+        curations should containExactlyInAnyOrder(
+            PackageCuration(
+                id = kafkaStarterPkg.id,
+                data = PackageCurationData(
+                    vcs = VcsInfoCurationData(
+                        type = VcsType.GIT,
+                        url = "https://github.com/spring-cloud/spring-cloud-stream.git",
+                        revision = "v5.0.2"
+                    )
+                )
             )
         )
     }
