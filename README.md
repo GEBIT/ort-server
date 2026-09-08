@@ -13,11 +13,21 @@ Analyzer:
   namespaces and exact package-coordinate curations with SPDX license
   expressions. These curations can be configured in `ort-server.params.kts`;
   see the [deployment example](https://gitlab.local.gebit.de/gebit-build/services/ort-server-deploy/-/blob/master/scripts/compose/config/ort-server.params.kts?ref_type=heads).
-- `MavenNoTestDependencies`, `NpmNoDevDependencies`, and
-  `PubNoDevDependencies` wrap ORT's built-in package managers while always
-  excluding Maven `test`, NPM `devDependencies`, and Pub `dev_dependencies`
-  scopes, respectively. They retain the delegates' dependency-resolution
-  behavior and expose the relevant built-in options.
+- `MavenNoTestDependencies` wraps ORT's built-in Maven package manager while
+  always excluding Maven `test` scope. It retains the delegate's
+  dependency-resolution behavior and exposes the relevant built-in options. The
+  `settingsFileCandidates` option provides an ordered, comma-separated list of
+  paths relative to the checked-out repository root. The first existing
+  candidate is passed to ORT Maven as `MavenConfig.userSettingsFile`,
+  supporting repository-local `settings.xml` such as `development/settings.xml`
+  for customer-specific Nexus mirrors without JVM forking. If no candidate
+  exists or is configured, ORT's normal generated settings are used. The
+  default order is `development/settings.xml,settings.xml`, and overrides are
+  configured in `ort-server.params.kts`; see the [deployment example](https://gitlab.local.gebit.de/gebit-build/services/ort-server-deploy/-/blob/master/scripts/compose/config/ort-server.params.kts?ref_type=heads).
+- `NpmNoDevDependencies` and `PubNoDevDependencies` wrap ORT's built-in package
+  managers while always excluding NPM `devDependencies` and Pub
+  `dev_dependencies` scopes, respectively. They retain the delegates'
+  dependency-resolution behavior and expose the relevant built-in options.
 - The Pub adapter additionally expands YAML anchors and aliases before
   delegation, and exposes the `allowDynamicVersions` option for lockfile-free
   or dynamic-version projects.
