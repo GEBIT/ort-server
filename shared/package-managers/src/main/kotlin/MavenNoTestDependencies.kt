@@ -31,7 +31,10 @@ import org.ossreviewtoolkit.model.config.Includes
 import org.ossreviewtoolkit.model.config.ScopeExclude
 import org.ossreviewtoolkit.model.config.ScopeExcludeReason
 import org.ossreviewtoolkit.plugins.api.OrtPlugin
+import org.ossreviewtoolkit.plugins.api.OrtPluginOption
 import org.ossreviewtoolkit.plugins.api.PluginDescriptor
+import org.ossreviewtoolkit.plugins.packagemanagers.maven.Maven
+import org.ossreviewtoolkit.plugins.packagemanagers.maven.MavenConfig
 import org.ossreviewtoolkit.plugins.packagemanagers.maven.MavenFactory
 
 /** The Maven project type / package manager id that this plugin's delegate reports itself as. */
@@ -39,6 +42,22 @@ private const val MAVEN_PROJECT_TYPE = "Maven"
 
 /** The name of the Maven scope that contains test-only dependencies. */
 private const val TEST_SCOPE_NAME = "test"
+
+/** The default, ordered list of relative paths to probe for a repository-provided Maven settings file. */
+private const val DEFAULT_SETTINGS_FILE_CANDIDATES = "development/settings.xml,settings.xml"
+
+/**
+ * The configuration options supported by [MavenNoTestDependencies].
+ */
+data class MavenNoTestDependenciesConfig(
+    /**
+     * An ordered list of paths relative to the analyzer's analysis root to probe for a repository-provided Maven
+     * `settings.xml`. The first candidate that exists as a regular file is passed to the delegate Maven package
+     * manager. Blank entries are ignored.
+     */
+    @OrtPluginOption(defaultValue = DEFAULT_SETTINGS_FILE_CANDIDATES)
+    val settingsFileCandidates: List<String>
+)
 
 /**
  * A [PackageManager] for Maven projects that always excludes the [TEST_SCOPE_NAME] scope, regardless of whether a
@@ -59,10 +78,11 @@ private const val TEST_SCOPE_NAME = "test"
     factory = PackageManagerFactory::class
 )
 class MavenNoTestDependencies(
-    override val descriptor: PluginDescriptor
+    override val descriptor: PluginDescriptor,
+    private val config: MavenNoTestDependenciesConfig
 ) : PackageManager(MAVEN_PROJECT_TYPE) {
     /** The real Maven package manager implementation that this plugin delegates to. */
-    private val delegate = MavenFactory.create()
+    private var delegate = MavenFactory.create()
 
     override val globsForDefinitionFiles = delegate.globsForDefinitionFiles
 
@@ -76,7 +96,22 @@ class MavenNoTestDependencies(
         analysisRoot: File,
         definitionFiles: List<File>,
         analyzerConfig: AnalyzerConfiguration
-    ) = delegate.beforeResolution(analysisRoot, definitionFiles, analyzerConfig)
+    ) {
+        val settingsFile = resolveSettingsFile(analysisRoot)
+        delegate = Maven(MavenFactory.descriptor, MavenConfig(userSettingsFile = settingsFile?.path))
+        delegate.beforeResolution(analysisRoot, definitionFiles, analyzerConfig)
+    }
+
+    /**
+     * Return the first configured settings-file candidate relative to [analysisRoot] that exists as a regular file,
+     * or `null` if none does (or none are configured), preserving the configured candidate order.
+     */
+    internal fun resolveSettingsFile(analysisRoot: File): File? =
+        config.settingsFileCandidates
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { File(analysisRoot, it) }
+            .firstOrNull { it.isFile }
 
     override fun afterResolution(analysisRoot: File, definitionFiles: List<File>) =
         delegate.afterResolution(analysisRoot, definitionFiles)

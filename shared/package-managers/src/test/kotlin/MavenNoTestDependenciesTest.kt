@@ -29,6 +29,7 @@ import io.mockk.mockk
 import io.mockk.mockkConstructor
 import io.mockk.slot
 import io.mockk.unmockkConstructor
+import io.mockk.verify
 
 import java.io.File
 
@@ -104,6 +105,71 @@ class MavenNoTestDependenciesTest : StringSpec({
             excludesSlot.captured.scopes.map { it.pattern } shouldContain "test"
         } finally {
             unmockkConstructor(Maven::class)
+        }
+    }
+
+    "beforeResolution() configures the delegate with the first existing settings file candidate" {
+        val tempDir = kotlin.io.path.createTempDirectory().toFile()
+        try {
+            val devSettings = File(tempDir, "development/settings.xml").apply {
+                parentFile.mkdirs()
+                writeText("<settings/>")
+            }
+            File(tempDir, "settings.xml").writeText("<settings/>")
+
+            mockkConstructor(Maven::class)
+            try {
+                every { anyConstructed<Maven>().beforeResolution(any(), any(), any()) } returns Unit
+
+                val plugin = PackageManagerFactory.ALL.getValue("MavenNoTestDependencies").create(
+                    PluginConfig(
+                        options = mapOf("settingsFileCandidates" to "development/settings.xml,settings.xml"),
+                        secrets = emptyMap()
+                    )
+                ) as MavenNoTestDependencies
+                plugin.beforeResolution(tempDir, emptyList(), AnalyzerConfiguration())
+
+                verify {
+                    anyConstructed<Maven>().beforeResolution(any(), any(), any())
+                }
+            } finally {
+                unmockkConstructor(Maven::class)
+            }
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    "resolveSettingsFile() falls back to no settings file when no candidate exists" {
+        val tempDir = kotlin.io.path.createTempDirectory().toFile()
+        try {
+            val plugin = PackageManagerFactory.ALL.getValue("MavenNoTestDependencies").create(
+                PluginConfig(
+                    options = mapOf("settingsFileCandidates" to "development/settings.xml,settings.xml"),
+                    secrets = emptyMap()
+                )
+            ) as MavenNoTestDependencies
+
+            plugin.resolveSettingsFile(tempDir) shouldBe null
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    "resolveSettingsFile() trims blank entries and preserves priority order" {
+        val tempDir = kotlin.io.path.createTempDirectory().toFile()
+        try {
+            File(tempDir, "settings.xml").writeText("<settings/>")
+            val plugin = PackageManagerFactory.ALL.getValue("MavenNoTestDependencies").create(
+                PluginConfig(
+                    options = mapOf("settingsFileCandidates" to " , development/settings.xml , settings.xml , "),
+                    secrets = emptyMap()
+                )
+            ) as MavenNoTestDependencies
+
+            plugin.resolveSettingsFile(tempDir) shouldBe File(tempDir, "settings.xml")
+        } finally {
+            tempDir.deleteRecursively()
         }
     }
 })
