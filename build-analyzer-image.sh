@@ -19,11 +19,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 ORT_SERVER_DIR="${1:-${SCRIPT_DIR}}"
 
-# Pinned to the base image published for the upstream ORT Server 0.91.0 release tag (commit
-# 656bfd93df591231e67c4ac0413954da1b2319fd), verified to exist at
-# ghcr.io/eclipse-apoapsis/ort-server-base-image:sha-656bfd9 (an equivalent "0.91.0"-tagged alias of the same
-# image is also published, but the sha- form matches this script's existing pinning style).
-BASE_IMAGE_TAG="sha-656bfd9"
+# Pinned to the base image published for the upstream ORT Server 0.91.0 release.
+BASE_IMAGE_TAG="0.91.0"
 BASE_IMAGE_NAME="ort-server-base-image:${BASE_IMAGE_TAG}"
 ANALYZER_BASE_IMAGE_NAME="ort-server-analyzer-worker-base-image:${BASE_IMAGE_TAG}"
 
