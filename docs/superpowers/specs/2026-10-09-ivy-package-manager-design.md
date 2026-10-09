@@ -48,7 +48,7 @@ usual ORT mechanisms (`.netrc`, environment variables); no secrets are
 exposed as options.
 
 Options are configured in `ort-server.params.kts` like those of the other GEBIT
-plugins. For `trend/`: `settingsFileCandidates=ant-build/ivysettings.xml`,
+plugins. For `trend/` (applied only when the `trend/trend` repository is analyzed): `settingsFileCandidates=ant-build/ivysettings.xml`,
 `propertiesFiles=ant-build/build.properties_ci,ant-build/dependencies.properties`
 (trend's CI creates the git-ignored `build.properties` from the `_ci` template;
 `dependencies.properties` defines e.g. `gebitparentivy.*` used by `<extends>`),
