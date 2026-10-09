@@ -37,6 +37,7 @@ dependencies {
     implementation(ortLibs.ortPlugins.packageManagers.maven)
     implementation(ortLibs.ortPlugins.packageManagers.node)
     implementation(ortLibs.ortPlugins.packageManagers.pub)
+    implementation(ortLibs.downloader)
     implementation(ortLibs.utils.common)
 
     ksp(ortLibs.ortPlugins.compiler)

@@ -23,13 +23,25 @@ import java.io.File
 
 import org.ossreviewtoolkit.analyzer.PackageManager
 import org.ossreviewtoolkit.analyzer.PackageManagerFactory
+import org.ossreviewtoolkit.analyzer.PackageManagerResult
+import org.ossreviewtoolkit.downloader.VersionControlSystem
+import org.ossreviewtoolkit.model.Identifier
+import org.ossreviewtoolkit.model.Issue
+import org.ossreviewtoolkit.model.Project
 import org.ossreviewtoolkit.model.ProjectAnalyzerResult
+import org.ossreviewtoolkit.model.Severity
+import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 import org.ossreviewtoolkit.model.config.Excludes
 import org.ossreviewtoolkit.model.config.Includes
+import org.ossreviewtoolkit.model.utils.DependencyGraphBuilder
+import org.ossreviewtoolkit.model.utils.isScopeIncluded
 import org.ossreviewtoolkit.plugins.api.OrtPlugin
 import org.ossreviewtoolkit.plugins.api.OrtPluginOption
 import org.ossreviewtoolkit.plugins.api.PluginDescriptor
+import org.ossreviewtoolkit.utils.common.collectMessages
+
+import org.slf4j.LoggerFactory
 
 /** The project type reported for Ivy projects. */
 internal const val IVY_PROJECT_TYPE = "Ivy"
@@ -93,6 +105,10 @@ class IvyPackageManager(
     override val descriptor: PluginDescriptor,
     private val config: IvyConfig
 ) : PackageManager(IVY_PROJECT_TYPE) {
+    private val logger = LoggerFactory.getLogger(IvyPackageManager::class.java)
+    private val resolver = IvyResolver(config)
+    private val graphBuilder = DependencyGraphBuilder(IvyDependencyHandler())
+
     override val globsForDefinitionFiles = listOf("ivy.xml")
 
     override fun mapDefinitionFiles(
@@ -107,7 +123,6 @@ class IvyPackageManager(
         }
     }
 
-    // Replaced by the real implementation in a later task.
     override fun resolveDependencies(
         analysisRoot: File,
         definitionFile: File,
@@ -115,7 +130,55 @@ class IvyPackageManager(
         includes: Includes,
         analyzerConfig: AnalyzerConfiguration,
         labels: Map<String, String>
-    ): List<ProjectAnalyzerResult> = emptyList()
+    ): List<ProjectAnalyzerResult> {
+        val definitionFilePath = VersionControlSystem.getPathInfo(definitionFile).path
+        val vcsProcessed = processProjectVcs(definitionFile.parentFile)
+
+        val resolution = runCatching { resolver.resolve(analysisRoot, definitionFile) }.getOrElse { exception ->
+            logger.error("Failed to resolve '$definitionFile'.", exception)
+
+            val project = Project(
+                id = Identifier(IVY_PROJECT_TYPE, "", definitionFile.parentFile.name, ""),
+                definitionFilePath = definitionFilePath,
+                authors = emptySet(),
+                declaredLicenses = emptySet(),
+                vcs = VcsInfo.EMPTY,
+                vcsProcessed = vcsProcessed,
+                homepageUrl = "",
+                scopeNames = emptySet()
+            )
+
+            val issue = Issue(
+                source = IVY_PROJECT_TYPE,
+                message = "Failed to resolve '${definitionFile.relativeTo(analysisRoot).invariantSeparatorsPath}': " +
+                    exception.collectMessages(),
+                severity = Severity.ERROR
+            )
+
+            return listOf(ProjectAnalyzerResult(project, emptySet(), listOf(issue)))
+        }
+
+        val projectId = Identifier(IVY_PROJECT_TYPE, resolution.organisation, resolution.module, resolution.revision)
+
+        val includedScopes = resolution.scopes.filterKeys { isScopeIncluded(it, excludes, includes) }
+        includedScopes.forEach { (conf, dependencies) -> graphBuilder.addDependencies(projectId, conf, dependencies) }
+
+        val project = Project(
+            id = projectId,
+            definitionFilePath = definitionFilePath,
+            authors = emptySet(),
+            declaredLicenses = resolution.licenses,
+            vcs = VcsInfo.EMPTY,
+            vcsProcessed = vcsProcessed,
+            homepageUrl = resolution.homepageUrl,
+            scopeNames = includedScopes.keys
+        )
+
+        return listOf(ProjectAnalyzerResult(project, emptySet(), resolution.issues))
+    }
+
+    override fun createPackageManagerResult(projectResults: Map<File, List<ProjectAnalyzerResult>>) =
+        PackageManagerResult(projectResults, graphBuilder.build(), graphBuilder.packages())
 }
 
 /** Trim all entries and drop the blank ones. */
