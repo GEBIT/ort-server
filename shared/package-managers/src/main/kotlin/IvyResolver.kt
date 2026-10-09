@@ -75,7 +75,20 @@ internal class IvyResolver(private val config: IvyConfig) {
         val issues = mutableListOf<Issue>()
         val scopes = linkedMapOf<String, List<IvyDependency>>()
 
-        if (confs.isNotEmpty()) {
+        if (confs.isEmpty()) {
+            val available = descriptor.publicConfigurationsNames.joinToString(", ")
+            val configured = config.confs.cleaned().joinToString(", ")
+            val excluded = config.excludeConfs.cleaned().joinToString(", ")
+
+            issues += Issue(
+                source = IVY_PROJECT_TYPE,
+                message = "No Ivy configurations were selected for '${definitionFile.name}'. " +
+                        "Available public configurations in the project descriptor: [$available]. " +
+                        "Configured confs: [$configured]. Configured excludeConfs: [$excluded]. " +
+                        "Adjust the confs and/or excludeConfs options to select at least one available configuration.",
+                severity = Severity.WARNING
+            )
+        } else {
             val options = ResolveOptions()
                 .setConfs(confs.toTypedArray())
                 .setValidate(false)

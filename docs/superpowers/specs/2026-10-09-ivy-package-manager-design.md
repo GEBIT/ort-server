@@ -37,6 +37,9 @@ dependencies.
 | `offline` | `false` | Resolve from caches and local repositories only. |
 | `skipDirs` | `build,bin,dist` | Directory names whose `ivy.xml` files are ignored. |
 
+List option values cannot contain commas, so `extraProperties` cannot express
+values such as version ranges like `[1.0,2.0)`.
+
 The automatic variable `ivy.settings.dir` is set to the directory of the chosen
 settings file, and `basedir` to the project directory. Placeholders in settings
 and descriptors are resolved from these variables, `propertiesFiles`,

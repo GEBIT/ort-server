@@ -112,6 +112,56 @@ class IvyResolverTest : StringSpec({
         resolution.scopes.keys.toList() shouldContainExactly listOf("compile")
     }
 
+    "No declared configurations yields a warning instead of a clean empty resolution" {
+        val repo = IvyTestRepo(tempdir())
+        repo.writeSettings()
+        val project = repo.root.resolve("project/ivy.xml").apply {
+            parentFile.mkdirs()
+            writeText(
+                """
+                <ivy-module version="2.0">
+                  <info organisation="test.org" module="project" revision="1.0"/>
+                  <dependencies/>
+                </ivy-module>
+                """.trimIndent()
+            )
+        }
+
+        val config = ivyTestConfig(confs = listOf("compile", "runtime"), excludeConfs = listOf("test", "sources"))
+        val resolution = IvyResolver(config).resolve(repo.root, project)
+
+        resolution.scopes.size shouldBe 0
+        resolution.issues shouldHaveSize 1
+        resolution.issues.single().source shouldBe "Ivy"
+        resolution.issues.single().severity shouldBe Severity.WARNING
+        resolution.issues.single().message shouldContain "default"
+        resolution.issues.single().message shouldContain "compile, runtime"
+        resolution.issues.single().message shouldContain "test, sources"
+        resolution.issues.single().message shouldContain "confs"
+        resolution.issues.single().message shouldContain "excludeConfs"
+    }
+
+    "Excluding all declared configurations yields a warning with configuration guidance" {
+        val repo = IvyTestRepo(tempdir())
+        repo.writeSettings()
+        val project = repo.writeProject("project", emptyList(), confs = listOf("compile", "runtime"))
+        val config = ivyTestConfig(
+            confs = listOf("*"),
+            excludeConfs = listOf("compile", "runtime")
+        )
+
+        val resolution = IvyResolver(config).resolve(repo.root, project)
+
+        resolution.scopes.size shouldBe 0
+        resolution.issues shouldHaveSize 1
+        resolution.issues.single().source shouldBe "Ivy"
+        resolution.issues.single().severity shouldBe Severity.WARNING
+        resolution.issues.single().message shouldContain "compile, runtime"
+        resolution.issues.single().message shouldContain "*"
+        resolution.issues.single().message shouldContain "excludeConfs"
+        resolution.issues.single().message shouldContain "Adjust"
+    }
+
     "An unresolved dependency yields an issue while the other dependencies are still resolved" {
         val repo = IvyTestRepo(tempdir())
         repo.writeSettings()

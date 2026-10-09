@@ -35,7 +35,9 @@ Analyzer:
   their `ivy.xml` files with Apache Ivy, including transitive dependencies.
   Modules are reported as Maven packages (`org` = namespace, `name` = name), so
   `GebitPackageCurationProvider` applies to them. Every resolved Ivy
-  configuration becomes a scope. Options (comma-separated lists):
+  configuration becomes a scope. Options (comma-separated lists): list option
+  values cannot contain commas, so `extraProperties` cannot express values such
+  as version ranges like `[1.0,2.0)`.
   `settingsFileCandidates` (default
   `ant-build/ivysettings.xml,ivysettings.xml,settings/ivysettings.xml`; an
   `ivysettings.xml` next to the `ivy.xml` always wins, Ivy's default settings
