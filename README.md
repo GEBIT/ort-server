@@ -31,6 +31,24 @@ Analyzer:
 - The Pub adapter additionally expands YAML anchors and aliases before
   delegation, and exposes the `allowDynamicVersions` option for lockfile-free
   or dynamic-version projects.
+- `Ivy` (`IvyPackageManager`) analyzes Ant/Ivy projects by fully resolving
+  their `ivy.xml` files with Apache Ivy, including transitive dependencies.
+  Modules are reported as Maven packages (`org` = namespace, `name` = name), so
+  `GebitPackageCurationProvider` applies to them. Every resolved Ivy
+  configuration becomes a scope. Options (comma-separated lists):
+  `settingsFileCandidates` (default
+  `ant-build/ivysettings.xml,ivysettings.xml,settings/ivysettings.xml`; an
+  `ivysettings.xml` next to the `ivy.xml` always wins, Ivy's default settings
+  are used if none exists), `propertiesFiles` and `extraProperties` (both
+  default empty; `extraProperties` uses `key=value`) to define Ivy variables,
+  `confs` (default `compile,runtime`, `*` for all public configurations),
+  `excludeConfs` (default `test,sources,javadoc`), `offline` (default `false`)
+  and `skipDirs` (default `build,bin,dist`). For `trend/`, the initial values are
+  `propertiesFiles=ant-build/build.properties_ci,ant-build/dependencies.properties`,
+  `extraProperties=version.integration=0.0.0-SNAPSHOT,version.integration.dep=+`
+  and `excludeConfs=test,sources,javadoc,mustHaveDependencies`. Options are
+  configured in `ort-server.params.kts`; see the
+  [deployment example](https://gitlab.local.gebit.de/gebit-build/services/ort-server-service/-/blob/master/scripts/compose/config/ort-server.params.kts?ref_type=heads).
 
 The custom plugins are packaged in shared modules and included in the Analyzer
 worker. `build-analyzer-image.sh` builds the base, Analyzer base, and final

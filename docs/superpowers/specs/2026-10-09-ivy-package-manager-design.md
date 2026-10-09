@@ -45,9 +45,13 @@ usual ORT mechanisms (`.netrc`, environment variables); no secrets are
 exposed as options.
 
 Options are configured in `ort-server.params.kts` like those of the other GEBIT
-plugins. For `trend/`:
-`settingsFileCandidates=ant-build/ivysettings.xml`,
-`propertiesFiles=ant-build/build.properties,ant-build/ivysettings-local.properties`,
+plugins. For `trend/`: `settingsFileCandidates=ant-build/ivysettings.xml`,
+`propertiesFiles=ant-build/build.properties_ci,ant-build/dependencies.properties`
+(trend's CI creates the git-ignored `build.properties` from the `_ci` template;
+`dependencies.properties` defines e.g. `gebitparentivy.*` used by `<extends>`),
+`extraProperties=version.integration=0.0.0-SNAPSHOT,version.integration.dep=+`
+(trend's Ant build computes these two at build time, so they must be supplied;
+the values are verified by the smoke test in Task 8),
 `excludeConfs=test,sources,javadoc,mustHaveDependencies`.
 
 ## Data flow per `ivy.xml`
@@ -62,9 +66,10 @@ plugins. For `trend/`:
 4. Map each resolved module to a `Package` with identifier
    `Maven:<organisation>:<name>:<revision>`. Using Maven identifiers lets
    `GebitPackageCurationProvider` apply to `de.gebit.*` modules unchanged.
-5. Fill package metadata (description, declared licenses, VCS, binary and source
-   artifact URLs and hashes where available) from the resolved `ivy.xml` or POM
-   in the cache.
+5. Fill package metadata (description, homepage, declared licenses, binary and
+   source artifact URLs where the resolver can locate them) from the resolved
+   `ivy.xml`. VCS information and artifact hashes are not populated in this
+   version.
 6. The project identifier is `Ivy:<organisation>:<module>:<revision>` taken from
    `<info>`; its definition file path is the `ivy.xml` path.
 

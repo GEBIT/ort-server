@@ -2,7 +2,7 @@
 #
 # Builds the Docker images required to run the ORT Server Analyzer worker
 # with our custom plugins (GebitPackageCurationProvider, NpmNoDevDependencies,
-# MavenNoTestDependencies):
+# MavenNoTestDependencies, Ivy):
 #
 #   1. ort-server-base-image           - common base image (Java, certs, etc.)
 #   2. ort-server-analyzer-worker-base-image - Analyzer tooling on top of the base image
