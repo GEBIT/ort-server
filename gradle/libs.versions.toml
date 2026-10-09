@@ -44,6 +44,7 @@ hikari = "7.1.0"
 hoplite = "2.9.0"
 jsonSchemaValidator = "3.0.7"
 kaml = "0.104.0"
+ivy = "2.5.3"
 keycloakTestcontainerVersion = "4.3.1"
 koin = "4.2.2"
 konform = "0.11.1"
@@ -103,6 +104,7 @@ hoplite-core = { module = "com.sksamuel.hoplite:hoplite-core", version.ref = "ho
 hoplite-hocon = { module = "com.sksamuel.hoplite:hoplite-hocon", version.ref = "hoplite" }
 jsonSchemaValidator = { module = "com.networknt:json-schema-validator", version.ref = "jsonSchemaValidator" }
 kaml = { module = "com.charleskorn.kaml:kaml", version.ref = "kaml" }
+ivy = { module = "org.apache.ivy:ivy", version.ref = "ivy" }
 koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
 koin-ktor = { module = "io.insert-koin:koin-ktor", version.ref = "koin" }
 koin-test = { module = "io.insert-koin:koin-test", version.ref = "koin" }
