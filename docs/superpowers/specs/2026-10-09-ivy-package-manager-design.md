@@ -30,7 +30,7 @@ dependencies.
 | Option | Default | Meaning |
 |---|---|---|
 | `settingsFileCandidates` | `ant-build/ivysettings.xml,ivysettings.xml,settings/ivysettings.xml` | Ordered paths relative to the analysis root; an `ivysettings.xml` next to the `ivy.xml` is checked first. First existing regular file wins. If none exists, Ivy's default settings (Maven Central) are used. Blank entries are ignored. |
-| `propertiesFiles` | empty | Ordered candidate paths relative to the analysis root, loaded as Ivy variables when they exist (e.g. `ant-build/build.properties,ant-build/ivysettings-local.properties`). |
+| `propertiesFiles` | empty | Ordered candidate paths relative to the analysis root, loaded as Ivy variables when they exist (e.g. `ant-build/build.properties_ci,ant-build/dependencies.properties`). |
 | `extraProperties` | empty | `key=value` list of Ivy variables; overrides values from `propertiesFiles`. |
 | `confs` | `compile,runtime` | Ivy configurations to resolve; `*` means all public configurations. |
 | `excludeConfs` | `test,sources,javadoc` | Configurations never resolved or reported, even if matched by `confs`. |
