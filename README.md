@@ -12,7 +12,7 @@ Analyzer:
   `de.gebit.wildfly`, and `de.gebit.lib`. The provider also supports custom
   namespaces and exact package-coordinate curations with SPDX license
   expressions. These curations can be configured in `ort-server.params.kts`;
-  see the [deployment example](https://gitlab.local.gebit.de/gebit-build/services/ort-server-deploy/-/blob/master/scripts/compose/config/ort-server.params.kts?ref_type=heads).
+  see the [deployment example](https://gitlab.local.gebit.de/gebit-build/services/ort-server-service/-/blob/master/scripts/compose/config/ort-server.params.kts?ref_type=heads).
 - `MavenNoTestDependencies` wraps ORT's built-in Maven package manager while
   always excluding Maven `test` scope. It retains the delegate's
   dependency-resolution behavior and exposes the relevant built-in options. The
@@ -23,7 +23,7 @@ Analyzer:
   for customer-specific Nexus mirrors without JVM forking. If no candidate
   exists or is configured, ORT's normal generated settings are used. The
   default order is `development/settings.xml,settings.xml`, and overrides are
-  configured in `ort-server.params.kts`; see the [deployment example](https://gitlab.local.gebit.de/gebit-build/services/ort-server-deploy/-/blob/master/scripts/compose/config/ort-server.params.kts?ref_type=heads).
+  configured in `ort-server.params.kts`; see the [deployment example](https://gitlab.local.gebit.de/gebit-build/services/ort-server-service/-/blob/master/scripts/compose/config/ort-server.params.kts?ref_type=heads).
 - `NpmNoDevDependencies` and `PubNoDevDependencies` wrap ORT's built-in package
   managers while always excluding NPM `devDependencies` and Pub
   `dev_dependencies` scopes, respectively. They retain the delegates'
