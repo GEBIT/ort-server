@@ -76,8 +76,12 @@ plugins. For `trend/`:
   becomes an error issue on the project; analysis of other `ivy.xml` files
   continues.
 - Ivy's output is routed to SLF4J and does not write to stdout.
-- Ivy cache location is a temporary directory per analysis unless configured by
-  the settings file.
+- Ivy uses its default cache (`${user.home}/.ivy2/cache`) unless the settings
+  file configures another location (e.g. trend's `ivy.cache.dir`). No extra
+  volume is required; like Maven's `~/.m2`, the cache lives in the container
+  filesystem and is reused across runs of the same worker container. Mutable
+  revisions (`-SNAPSHOT`, `latest.integration`) are governed by the TTL
+  settings in the Ivy settings file.
 
 ## Testing
 
@@ -105,4 +109,5 @@ describing the options and the trend example, and mention the plugin in
 - The Analyzer worker can reach the Nexus at `gebit-nexus.local.gebit.de`, as it
   already must for Maven.
 - No Ant `build.xml` parsing; no execution of Ant targets.
-- No publishing of artifacts or Ivy-cache sharing between runs.
+- No publishing of artifacts, and no persistent or shared Ivy cache across
+  worker containers (no `cacheDir` option, no volume mount).
