@@ -32,6 +32,8 @@ import org.apache.ivy.plugins.parser.ModuleDescriptorParserRegistry
 import org.ossreviewtoolkit.model.Issue
 import org.ossreviewtoolkit.model.Severity
 
+import org.slf4j.LoggerFactory
+
 /** A resolved Ivy module together with the modules it depends on within one configuration. */
 internal class IvyDependency(
     val organisation: String,
@@ -61,6 +63,7 @@ internal class IvyResolution(
 
 /** Resolves `ivy.xml` files with Apache Ivy and converts the result into an [IvyResolution]. */
 internal class IvyResolver(private val config: IvyConfig) {
+    private val logger = LoggerFactory.getLogger(IvyResolver::class.java)
     private val factory = IvyFactory(config)
 
     fun resolve(analysisRoot: File, definitionFile: File): IvyResolution {
@@ -135,6 +138,7 @@ internal class IvyResolver(private val config: IvyConfig) {
         }
 
         val roots = mutableListOf<IvyDependency>()
+        val childDependencies = mutableMapOf<IvyDependency, MutableList<IvyDependency>>()
 
         nodes.forEach { node ->
             val dependency = dependencies.getValue(node.resolvedId)
@@ -146,12 +150,45 @@ internal class IvyResolver(private val config: IvyConfig) {
                     if (dependency !in roots) roots += dependency
                 } else {
                     val parent = dependencies[callerId]
-                    if (parent != null && dependency !in parent.dependencies) parent.dependencies += dependency
+                    if (parent != null) {
+                        childDependencies.getOrPut(parent) { mutableListOf() }.apply {
+                            if (dependency !in this) add(dependency)
+                        }
+                    }
                 }
             }
         }
 
+        val visited = mutableSetOf<IvyDependency>()
+
+        fun addDependencies(parent: IvyDependency) {
+            if (!visited.add(parent)) return
+
+            childDependencies[parent].orEmpty().forEach { dependency ->
+                if (!hasPath(dependency, parent)) {
+                    parent.dependencies += dependency
+                    addDependencies(dependency)
+                }
+            }
+        }
+
+        roots.forEach(::addDependencies)
+
         return roots
+    }
+
+    /** Return whether [target] is already reachable from [start] by following dependency edges. */
+    private fun hasPath(start: IvyDependency, target: IvyDependency): Boolean {
+        val visited = mutableSetOf<IvyDependency>()
+
+        fun visit(dependency: IvyDependency): Boolean {
+            if (dependency === target) return true
+            if (!visited.add(dependency)) return false
+
+            return dependency.dependencies.any(::visit)
+        }
+
+        return visit(start)
     }
 
     /** Create a fresh [IvyDependency] for [node] (the tree edges are per configuration), reusing cached metadata. */
@@ -193,9 +230,13 @@ internal class IvyResolver(private val config: IvyConfig) {
     }
 
     /** Return the location of [artifact] as known to the resolver of [node], or an empty string if unavailable. */
-    private fun locate(node: IvyNode, artifact: DefaultArtifact): String =
-        runCatching {
+    private fun locate(node: IvyNode, artifact: DefaultArtifact): String {
+        if (config.offline) return ""
+
+        return runCatching {
             val origin = node.moduleRevision?.resolver?.locate(artifact)
             if (origin == null || ArtifactOrigin.isUnknown(origin)) "" else origin.location
-        }.getOrDefault("")
+        }.onFailure { logger.debug("Failed to locate Ivy artifact $artifact.", it) }
+            .getOrDefault("")
+    }
 }

@@ -36,6 +36,15 @@ private fun IvyDependency.tree(): String =
         "$name:$revision(${dependencies.joinToString(",") { it.tree() }})"
     }
 
+private fun IvyDependency.guardedTree(depth: Int = 0, maxDepth: Int = 10): String =
+    if (depth >= maxDepth) {
+        "depth-limit"
+    } else if (dependencies.isEmpty()) {
+        "$name:$revision"
+    } else {
+        "$name:$revision(${dependencies.joinToString(",") { it.guardedTree(depth + 1, maxDepth) }})"
+    }
+
 private fun IvyResolution.trees(conf: String) = scopes.getValue(conf).map { it.tree() }
 
 class IvyResolverTest : StringSpec({
@@ -137,13 +146,35 @@ class IvyResolverTest : StringSpec({
         resolution.trees("compile") shouldContainExactly listOf("a:1(c:2)", "b:1(c:2)")
     }
 
-    "A project without dependencies resolves to empty scopes using Ivy default settings in offline mode" {
+    "Dependency cycles are resolved without creating unbounded dependency trees" {
         val repo = IvyTestRepo(tempdir())
-        val project = repo.writeProject("project", emptyList())
+        repo.writeSettings()
+        repo.publish("o", "a", "1", deps = listOf(TestDep("o", "b", "1")))
+        repo.publish("o", "b", "1", deps = listOf(TestDep("o", "a", "1")))
+        val project = repo.writeProject("project", listOf(TestDep("o", "a", "1", "compile->default")))
 
-        // With Ivy's default settings and no dependencies, resolution succeeds and yields empty scopes.
-        val resolution = IvyResolver(ivyTestConfig(offline = true)).resolve(repo.root, project)
+        val resolution = IvyResolver(ivyTestConfig()).resolve(repo.root, project)
+        val tree = resolution.scopes.getValue("compile").single().guardedTree()
 
-        resolution.scopes.values.forEach { it.shouldBeEmpty() }
+        tree shouldBe "a:1(b:1)"
+    }
+
+    "Offline resolution uses cached dependencies after the repository is removed" {
+        val repo = IvyTestRepo(tempdir())
+        repo.writeSettings()
+        repo.publish("o", "a", "1")
+        val project = repo.writeProject("project", listOf(TestDep("o", "a", "1", "compile->default")))
+
+        val onlineResolution = IvyResolver(ivyTestConfig()).resolve(repo.root, project)
+
+        onlineResolution.trees("compile") shouldContainExactly listOf("a:1")
+        onlineResolution.scopes.getValue("compile").single().binaryArtifactUrl shouldEndWith "a-1.jar"
+
+        repo.repoDir.deleteRecursively()
+
+        val offlineResolution = IvyResolver(ivyTestConfig(offline = true)).resolve(repo.root, project)
+
+        offlineResolution.trees("compile") shouldContainExactly listOf("a:1")
+        offlineResolution.scopes.getValue("compile").single().binaryArtifactUrl shouldBe ""
     }
 })
