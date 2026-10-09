@@ -43,9 +43,9 @@ Analyzer:
   default empty; `extraProperties` uses `key=value`) to define Ivy variables,
   `confs` (default `compile,runtime`, `*` for all public configurations),
   `excludeConfs` (default `test,sources,javadoc`), `offline` (default `false`)
-  and `skipDirs` (default `build,bin,dist`). For `trend/`, the initial values are
+  and `skipDirs` (default `build,bin,dist`). For `trend/` (smoke-tested against the checkout with Version_ID 11.0.0; adjust the version values per release) use
   `propertiesFiles=ant-build/build.properties_ci,ant-build/dependencies.properties`,
-  `extraProperties=version.integration=0.0.0-SNAPSHOT,version.integration.dep=+`
+  `extraProperties=version.integration=11.0.0-SNAPSHOT,version.integration.dep=11.0.+,defaultresolver=trend-public-gebit`
   and `excludeConfs=test,sources,javadoc,mustHaveDependencies`. Options are
   configured in `ort-server.params.kts`; see the
   [deployment example](https://gitlab.local.gebit.de/gebit-build/services/ort-server-service/-/blob/master/scripts/compose/config/ort-server.params.kts?ref_type=heads).

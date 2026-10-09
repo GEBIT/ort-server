@@ -49,9 +49,10 @@ plugins. For `trend/`: `settingsFileCandidates=ant-build/ivysettings.xml`,
 `propertiesFiles=ant-build/build.properties_ci,ant-build/dependencies.properties`
 (trend's CI creates the git-ignored `build.properties` from the `_ci` template;
 `dependencies.properties` defines e.g. `gebitparentivy.*` used by `<extends>`),
-`extraProperties=version.integration=0.0.0-SNAPSHOT,version.integration.dep=+`
-(trend's Ant build computes these two at build time, so they must be supplied;
-the values are verified by the smoke test in Task 8),
+`extraProperties=version.integration=11.0.0-SNAPSHOT,version.integration.dep=11.0.+,defaultresolver=trend-public-gebit`
+(trend's Ant build computes the two version values at build time, so they must be
+supplied and follow trend's `Version_ID`; `defaultresolver` selects the resolver
+chain that finds trend's internal modules; verified by a smoke test against trend),
 `excludeConfs=test,sources,javadoc,mustHaveDependencies`.
 
 ## Data flow per `ivy.xml`
