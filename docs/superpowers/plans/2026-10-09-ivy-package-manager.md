@@ -6,7 +6,7 @@
 
 **Architecture:** A new plugin class `IvyPackageManager` in `shared/package-managers` (KSP-registered via `@OrtPlugin`, like the other GEBIT plugins). Settings/variables handling (`IvyFactory`), the Ivy resolution into a plain model (`IvyResolver`), and the ORT mapping (`IvyDependencyHandler` + `DependencyGraphBuilder`) are separate units, so each can be tested without the others. Ivy dependencies are mapped to Maven-style identifiers (`Maven:<org>:<name>:<rev>`).
 
-**Tech Stack:** Kotlin, ORT 92.6.0 analyzer API, Apache Ivy 2.5.2, Kotest (StringSpec), Gradle.
+**Tech Stack:** Kotlin, ORT 92.6.0 analyzer API, Apache Ivy 2.5.3, Kotest (StringSpec), Gradle.
 
 **Spec:** `docs/superpowers/specs/2026-10-09-ivy-package-manager-design.md`
 
@@ -74,7 +74,7 @@
 In `gradle/libs.versions.toml`, add to the `[versions]` section (keep alphabetical order, after `kaml`/before `kotest` entries as appropriate):
 
 ```toml
-ivy = "2.5.2"
+ivy = "2.5.3"
 ```
 
 and to `[libraries]` (next to `kaml`):
@@ -179,7 +179,8 @@ import org.ossreviewtoolkit.plugins.api.PluginDescriptor
 internal const val IVY_PROJECT_TYPE = "Ivy"
 
 /** The default, ordered list of relative paths to probe for an Ivy settings file. */
-private const val DEFAULT_SETTINGS_FILE_CANDIDATES = "ant-build/ivysettings.xml,ivysettings.xml,settings/ivysettings.xml"
+private const val DEFAULT_SETTINGS_FILE_CANDIDATES =
+    "ant-build/ivysettings.xml,ivysettings.xml,settings/ivysettings.xml"
 
 /**
  * The configuration options supported by [IvyPackageManager]. All list options are comma-separated in the plugin
@@ -268,7 +269,7 @@ internal fun List<String>.cleaned(): List<String> = map { it.trim() }.filter { i
 - [ ] **Step 6: Run the test to verify it passes**
 
 Run: `./gradlew :shared:package-managers:test --tests '*IvyPackageManagerTest*'`
-Expected: PASS (3 tests). If KSP rejects `defaultValue = ""` for a `List<String>`, change those two annotations to `@OrtPluginOption(defaultValue = " ")`; the `cleaned()` helper already drops blank entries.
+Expected: PASS (3 tests).
 
 - [ ] **Step 7: Commit**
 
@@ -460,6 +461,7 @@ import java.util.Properties
 
 import org.apache.ivy.Ivy
 import org.apache.ivy.core.settings.IvySettings
+import org.apache.ivy.util.Message
 
 private const val SETTINGS_FILE_NAME = "ivysettings.xml"
 
@@ -482,6 +484,9 @@ internal class IvyFactory(private val config: IvyConfig) {
      * Settings files may still define further variables, e.g. via `<properties override="false">`.
      */
     fun createIvy(analysisRoot: File, definitionFile: File): Ivy {
+        // Must be installed before the settings are loaded, as Ivy logs to stdout by default.
+        Message.setDefaultLogger(IvyMessageLogger())
+
         val settings = IvySettings()
 
         settings.addAllVariables(System.getenv().mapKeys { "env.${it.key}" }, false)
@@ -497,7 +502,7 @@ internal class IvyFactory(private val config: IvyConfig) {
         val settingsFile = findSettingsFile(analysisRoot, definitionFile)
         if (settingsFile != null) settings.load(settingsFile) else settings.loadDefault()
 
-        return Ivy.newInstance(settings).also { it.loggerEngine.setDefaultLogger(IvyMessageLogger()) }
+        return Ivy.newInstance(settings)
     }
 
     private fun parseExtraProperties(): List<Pair<String, String>> =
@@ -538,8 +543,6 @@ Create `shared/package-managers/src/test/kotlin/IvyTestFixtures.kt`:
 package org.eclipse.apoapsis.ortserver.shared.packagemanagers
 
 import java.io.File
-
-private const val D = "$"
 
 /** A dependency declaration in an `ivy.xml`: [conf] is the Ivy `conf` mapping, e.g. `compile->default`. */
 internal data class TestDep(val org: String, val name: String, val rev: String, val conf: String = "default")
@@ -590,7 +593,7 @@ internal class IvyTestRepo(val root: File) {
 
     /**
      * Write a project descriptor at `<dir>/ivy.xml` below [root] with the configurations [confs] and [deps], and
-     * return it. [revision] may contain `${D}{...}` placeholders.
+     * return it. [revision] may contain Ivy placeholders.
      */
     fun writeProject(
         dir: String,
@@ -617,8 +620,6 @@ internal class IvyTestRepo(val root: File) {
         joinToString("") { """<dependency org="${it.org}" name="${it.name}" rev="${it.rev}" conf="${it.conf}"/>""" }
 }
 ```
-
-(`D` is only used in the KDoc above; if the compiler warns about it being unused, delete the constant and write the placeholder in the KDoc literally.)
 
 - [ ] **Step 2: Write the failing resolver tests**
 
@@ -771,13 +772,13 @@ package org.eclipse.apoapsis.ortserver.shared.packagemanagers
 
 import java.io.File
 
+import org.apache.ivy.core.cache.ArtifactOrigin
 import org.apache.ivy.core.module.descriptor.DefaultArtifact
 import org.apache.ivy.core.module.descriptor.ModuleDescriptor
 import org.apache.ivy.core.module.id.ModuleRevisionId
 import org.apache.ivy.core.report.ResolveReport
 import org.apache.ivy.core.resolve.IvyNode
 import org.apache.ivy.core.resolve.ResolveOptions
-import org.apache.ivy.core.cache.ArtifactOrigin
 import org.apache.ivy.plugins.parser.ModuleDescriptorParserRegistry
 
 import org.ossreviewtoolkit.model.Issue
@@ -1107,6 +1108,7 @@ In `IvyPackageManagerTest.kt` add these imports (merge with existing ones):
 
 ```kotlin
 import io.kotest.engine.spec.tempdir
+import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.string.shouldContain
 
@@ -1137,15 +1139,14 @@ and add these tests inside the `StringSpec` block:
         val project = projectResult.project
 
         project.id shouldBe Identifier("Ivy", "test.org", "project", "1.0")
-        project.definitionFilePath shouldBe "project/ivy.xml"
         project.scopeNames shouldBe setOf("compile", "runtime")
         projectResult.issues shouldBe emptyList()
 
-        result.sharedPackages.map { it.id } shouldBe listOf(
+        result.sharedPackages.map { it.id } shouldContainExactlyInAnyOrder listOf(
             Identifier("Maven", "o", "a", "1"), Identifier("Maven", "o", "c", "1")
         )
 
-        val compile = result.dependencyGraph.createScopes(setOf("compile")).single()
+        val compile = result.dependencyGraph!!.createScopes().single { it.name == "compile" }
         compile.dependencies.single().id shouldBe Identifier("Maven", "o", "a", "1")
         compile.dependencies.single().dependencies.single().id shouldBe Identifier("Maven", "o", "c", "1")
     }
@@ -1191,7 +1192,6 @@ and add these tests inside the `StringSpec` block:
 
         val projectResult = result.projectResults.getValue(definitionFile).single()
         projectResult.project.id.type shouldBe "Ivy"
-        projectResult.project.definitionFilePath shouldBe "broken/ivy.xml"
         projectResult.issues.single().severity shouldBe Severity.ERROR
     }
 ```
@@ -1235,7 +1235,7 @@ Replace the stub `resolveDependencies` (including the "Replaced by…" comment) 
         val vcsProcessed = processProjectVcs(definitionFile.parentFile)
 
         val resolution = runCatching { resolver.resolve(analysisRoot, definitionFile) }.getOrElse { exception ->
-            logger.error(exception) { "Failed to resolve '$definitionFile'." }
+            logger.error("Failed to resolve '$definitionFile'.", exception)
 
             val project = Project(
                 id = Identifier(IVY_PROJECT_TYPE, "", definitionFile.parentFile.name, ""),
@@ -1250,7 +1250,8 @@ Replace the stub `resolveDependencies` (including the "Replaced by…" comment) 
 
             val issue = Issue(
                 source = IVY_PROJECT_TYPE,
-                message = "Failed to resolve '$definitionFilePath': ${exception.collectMessages()}",
+                message = "Failed to resolve '${definitionFile.relativeTo(analysisRoot).invariantSeparatorsPath}': " +
+                    exception.collectMessages(),
                 severity = Severity.ERROR
             )
 
@@ -1281,14 +1282,14 @@ Replace the stub `resolveDependencies` (including the "Replaced by…" comment) 
         PackageManagerResult(projectResults, graphBuilder.build(), graphBuilder.packages())
 ```
 
-Also add `import org.ossreviewtoolkit.utils.common.collectMessages` (the helper `Throwable.collectMessages()` used throughout ORT) and, for the logger, `import org.apache.logging.log4j.kotlin.logger`? — the base class `PackageManager` already exposes a `logger` (see `Gleam`/`Maven`, which call `logger.info { ... }`), so no extra import is needed. If `logger` is not accessible, remove the `logger.error(...)` line.
+Also add `import org.ossreviewtoolkit.utils.common.collectMessages` (`Throwable.collectMessages()`, used throughout ORT), and `import org.slf4j.LoggerFactory` plus a member `private val logger = LoggerFactory.getLogger(IvyPackageManager::class.java)` (the module has `libs.slf4j`; log4j-kotlin is not a dependency).
 
 Note: `graphBuilder` is shared across all definition files processed by this instance, which is how ORT's dependency graph (`PackageManagerResult.dependencyGraph`) is meant to be built.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `./gradlew :shared:package-managers:test --tests '*IvyPackageManagerTest*'`
-Expected: PASS (7 tests). Check specifically the "resolved into a project result" test: if `definitionFilePath` is `"ivy.xml"` or has a different prefix, that is because `VersionControlSystem.getPathInfo` returns a path relative to a VCS root; outside a git working tree it is the empty string relative path. In that case assert `endsWith("project/ivy.xml")` or initialise a git repository in the temp dir in the test (`org.ossreviewtoolkit.utils.common` offers no helper; run `git init` via `ProcessBuilder`).
+Expected: PASS (7 tests). Note: temp directories are not VCS working trees, so `definitionFilePath` is empty in these tests; that is why they do not assert it.
 
 - [ ] **Step 5: Commit**
 
@@ -1441,17 +1442,28 @@ git commit -m "DINF-1282: Test Ivy resolution with a trend-like layout"
 - Modify: `README.md`, `build-analyzer-image.sh`, `docs/superpowers/specs/2026-10-09-ivy-package-manager-design.md`
 - Modify (separate repo): `../ort-server-service/scripts/compose/config/ort-server.params.kts`
 
-- [ ] **Step 1: Update the spec's trend example**
+- [ ] **Step 1: Update the spec's trend example and data flow**
 
-In the spec, replace the example paragraph under "Options" with:
+In the spec, replace the example paragraph under "Options" with the first block below, and step 5 of "Data flow per `ivy.xml`" with the quoted text after it:
 
 ```markdown
 Options are configured in `ort-server.params.kts` like those of the other GEBIT
 plugins. For `trend/`: `settingsFileCandidates=ant-build/ivysettings.xml`,
-`propertiesFiles=ant-build/build.properties_ci` (trend's CI creates the git-ignored
-`build.properties` from this template; the settings file skips a missing
-`build.properties`), `excludeConfs=test,sources,javadoc,mustHaveDependencies`.
+`propertiesFiles=ant-build/build.properties_ci,ant-build/dependencies.properties`
+(trend's CI creates the git-ignored `build.properties` from the `_ci` template;
+`dependencies.properties` defines e.g. `gebitparentivy.*` used by `<extends>`),
+`extraProperties=version.integration=0.0.0-SNAPSHOT,version.integration.dep=+`
+(trend's Ant build computes these two at build time, so they must be supplied;
+the values are verified by the smoke test in Task 8),
+`excludeConfs=test,sources,javadoc,mustHaveDependencies`.
+
+Also replace step 5 of "Data flow per `ivy.xml`" with: "Fill package metadata
+(description, homepage, declared licenses, binary and source artifact URLs where
+the resolver can locate them) from the resolved `ivy.xml`. VCS information and
+artifact hashes are not populated in this version."
 ```
+
+(Apply both changes to the spec: the example paragraph and data-flow step 5.)
 
 - [ ] **Step 2: Add a README bullet**
 
@@ -1471,8 +1483,9 @@ In `README.md`, directly before the paragraph starting "The custom plugins are p
   `*` for all public configurations), `excludeConfs` (default
   `test,sources,javadoc`), `offline` and `skipDirs` (default
   `build,bin,dist`). For `trend/` use
-  `propertiesFiles=ant-build/build.properties_ci` and
-  `excludeConfs=test,sources,javadoc,mustHaveDependencies`. Options are
+  `propertiesFiles=ant-build/build.properties_ci,ant-build/dependencies.properties`,
+  `extraProperties=version.integration=0.0.0-SNAPSHOT,version.integration.dep=+`
+  and `excludeConfs=test,sources,javadoc,mustHaveDependencies`. Options are
   configured in `ort-server.params.kts`; see the [deployment example](https://gitlab.local.gebit.de/gebit-build/services/ort-server-service/-/blob/master/scripts/compose/config/ort-server.params.kts?ref_type=heads).
 ```
 
@@ -1514,7 +1527,8 @@ In `/home/dschiemann/workspace/compliance-reports/ort-server-service/scripts/com
 ```kotlin
                 "Ivy" to ivyConfig.copy(
                     options = ivyConfig.options.orEmpty() + mapOf(
-                        "propertiesFiles" to "ant-build/build.properties_ci",
+                        "propertiesFiles" to "ant-build/build.properties_ci,ant-build/dependencies.properties",
+                        "extraProperties" to "version.integration=0.0.0-SNAPSHOT,version.integration.dep=+",
                         "excludeConfs" to "test,sources,javadoc,mustHaveDependencies"
                     )
                 ),
@@ -1542,12 +1556,12 @@ Expected: BUILD SUCCESSFUL — all tests (existing Maven/Npm/Pub tests and the n
 - [ ] **Step 2: Verify the plugin is packaged into the Analyzer worker**
 
 Run: `./gradlew :workers:analyzer:dependencies --configuration runtimeClasspath | grep -E "package-managers|ivy"`
-Expected: output contains both `project :shared:package-managers` and `org.apache.ivy:ivy:2.5.2`. If `:shared:package-managers` is missing, it is not on the worker's classpath and needs to be added where the other GEBIT plugin modules are referenced (`grep -rn "shared:package-managers\|shared.packageManagers" workers/analyzer/build.gradle.kts`).
+Expected: output contains both `project :shared:package-managers` and `org.apache.ivy:ivy:2.5.3`. If `:shared:package-managers` is missing, it is not on the worker's classpath and needs to be added where the other GEBIT plugin modules are referenced (`grep -rn "shared:package-managers\|shared.packageManagers" workers/analyzer/build.gradle.kts`).
 
 - [ ] **Step 3: Smoke test against the real `trend/` checkout (only if the Nexus is reachable)**
 
-Create a throwaway test file `shared/package-managers/src/test/kotlin/IvyTrendSmokeTest.kt` (do **not** commit it) that runs the plugin on `/home/dschiemann/workspace/compliance-reports/trend` with options `propertiesFiles=ant-build/build.properties_ci`, `excludeConfs=test,sources,javadoc,mustHaveDependencies`, definition file `core/base/ivy.xml`, and prints `result.projectResults` issues and `result.sharedPackages.size`. Run it with `./gradlew :shared:package-managers:test --tests '*IvyTrendSmokeTest*' -i`.
-Expected: the project id is `Ivy:de.gebit.trend:trend-base:<version>`, the package list is non-empty, and any issues are understandable (e.g. missing variables such as `PARAM_BRANCH_VERSION_DOTS` placeholders in `build.properties_ci` — supply them through `extraProperties` if they break resolution). Delete the file afterwards. This step is informational; record findings and adjust the deployment `propertiesFiles`/`extraProperties` accordingly.
+Create a throwaway test file `shared/package-managers/src/test/kotlin/IvyTrendSmokeTest.kt` (do **not** commit it) that runs the plugin on `/home/dschiemann/workspace/compliance-reports/trend` with the same `propertiesFiles`, `extraProperties` and `excludeConfs` as the deployment config above for the definition file `core/base/ivy.xml`; it prints `result.projectResults` issues and `result.sharedPackages.size`. Run it with `./gradlew :shared:package-managers:test --tests '*IvyTrendSmokeTest*' -i`.
+Expected: the project id is `Ivy:de.gebit.trend:trend-base:<version>`, the package list is non-empty, and any issues are understandable (e.g. undefined `${...}` variables, which Ivy leaves unsubstituted — add them to `extraProperties`; also check that `version.integration.dep=+` yields resolvable ranges). Delete the file afterwards. This step is informational; record findings and adjust the deployment `propertiesFiles`/`extraProperties` accordingly.
 
 - [ ] **Step 4: Confirm a clean tree**
 
