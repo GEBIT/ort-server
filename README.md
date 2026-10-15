@@ -54,8 +54,7 @@ Analyzer:
 
 The custom plugins are packaged in shared modules and included in the Analyzer
 and Advisor workers. `build-worker-images.sh [analyzer|advisor|all]` builds the
-base, Analyzer base, and final worker images needed to run these extensions
-(`build-analyzer-image.sh` is kept as a shortcut for the Analyzer only).
+base, Analyzer base, and final worker images needed to run these extensions.
 
 The [Eclipse Apoapsis](https://projects.eclipse.org/projects/technology.apoapsis) project's **ORT Server** is a
 standalone application to deploy the [OSS Review Toolkit](https://github.com/oss-review-toolkit/ort) as a service in the
