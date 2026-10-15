@@ -42,6 +42,9 @@ BASE_IMAGE_TAG="0.91.0"
 BASE_IMAGE_NAME="ort-server-base-image:${BASE_IMAGE_TAG}"
 ANALYZER_BASE_IMAGE_NAME="ort-server-analyzer-worker-base-image:${BASE_IMAGE_TAG}"
 
+# Overrides the Go version of Analyzer.Dockerfile (1.25.0): it installs buildozer@latest, which now requires Go 1.26.
+GO_VERSION="1.26.0"
+
 if [[ ! -d "${ORT_SERVER_DIR}" ]]; then
     echo "ORT Server checkout not found at: ${ORT_SERVER_DIR}" >&2
     exit 1
@@ -64,6 +67,7 @@ if [[ "${TARGET}" == "analyzer" || "${TARGET}" == "all" ]]; then
         -f "${ORT_SERVER_DIR}/workers/analyzer/docker/Analyzer.Dockerfile" \
         --build-arg BASE_REGISTRY= \
         --build-arg BASE_IMAGE_TAG="${BASE_IMAGE_TAG}" \
+        --build-arg GO_VERSION="${GO_VERSION}" \
         -t "${ANALYZER_BASE_IMAGE_NAME}"
 
     echo "==> Building Analyzer worker image via Gradle/Jib"
