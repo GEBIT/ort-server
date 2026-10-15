@@ -72,6 +72,10 @@ class PluginInfoTest : WordSpec({
                     )
                 ),
                 TypedPluginId(
+                    PluginId("LicenseObligation"),
+                    PluginType("org.ossreviewtoolkit.plugins.advisors.api.AdviceProviderFactory")
+                ),
+                TypedPluginId(
                     PluginId("SourceCodeBundle"),
                     PluginType("org.ossreviewtoolkit.reporter.ReporterFactory")
                 )
