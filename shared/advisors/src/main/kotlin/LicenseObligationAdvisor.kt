@@ -23,6 +23,7 @@ import java.net.URI
 import java.net.URISyntaxException
 import java.time.Instant
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -125,13 +126,19 @@ class LicenseObligationAdvisor(
 
     private val cache = createCache(config.cacheDir)
 
-    override suspend fun retrievePackageFindings(packages: Set<Package>): Map<Package, AdvisorResult> {
+    override suspend fun retrievePackageFindings(packages: Set<Package>): Map<Package, AdvisorResult> =
+        retrievePackageFindings(packages, ::loadFacts)
+
+    internal suspend fun retrievePackageFindings(
+        packages: Set<Package>,
+        factsLoader: (RemoteArtifact) -> ArtifactLegalFacts
+    ): Map<Package, AdvisorResult> {
         val startTime = Instant.now()
         val semaphore = Semaphore(config.maxParallelDownloads.coerceAtLeast(1))
 
         val findings = coroutineScope {
             packages.filter { it.isCandidate() }.map { pkg ->
-                async(Dispatchers.IO) { semaphore.withPermit { pkg to check(pkg) } }
+                async(Dispatchers.IO) { semaphore.withPermit { pkg to check(pkg, factsLoader) } }
             }.awaitAll()
         }
 
@@ -148,27 +155,40 @@ class LicenseObligationAdvisor(
     private fun Package.isCandidate() =
         id.type == "Maven" && !isMetadataOnly && !binaryArtifact.url.endsWith(".pom")
 
-    private fun check(pkg: Package): List<ObligationFinding> {
+    @Suppress("TooGenericExceptionCaught")
+    private fun check(
+        pkg: Package,
+        factsLoader: (RemoteArtifact) -> ArtifactLegalFacts
+    ): List<ObligationFinding> {
         val artifact = pkg.binaryArtifact
 
         if (artifact.url.isBlank()) return listOf(rules.unavailable("the package has no binary artifact", ""))
 
-        val facts = try {
-            loadFacts(artifact)
+        return try {
+            val facts = factsLoader(artifact)
+
+            rules.evaluate(pkg.concludedLicense ?: pkg.declaredLicensesProcessed.spdxExpression, facts, artifact.url)
         } catch (e: IOException) {
             logger.warn("Could not verify the artifact of '{}': {}", pkg.id.toCoordinates(), e.message)
-            return listOf(rules.unavailable(e.message.orEmpty(), artifact.url))
+            listOf(rules.unavailable(e.message.orEmpty(), artifact.url))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RuntimeException) {
+            val reason = "unexpected error: ${e::class.simpleName ?: "RuntimeException"}"
+            logger.warn("Unexpected error while checking artifact for '{}': {}", pkg.id.toCoordinates(), reason)
+            listOf(rules.unavailable(reason, artifact.url))
         }
-
-        return rules.evaluate(pkg.concludedLicense ?: pkg.declaredLicensesProcessed.spdxExpression, facts, artifact.url)
     }
 
     private fun loadFacts(artifact: RemoteArtifact): ArtifactLegalFacts {
-        val key = cacheKey(artifact)
+        val cacheable = artifact.hash.value.isNotBlank() && artifact.hash.algorithm.isVerifiable
+        val key = if (cacheable) cacheKey(artifact) else null
 
-        cache.get(key)?.let { return it }
+        key?.let { cache.get(it)?.let { facts -> return facts } }
 
-        return downloader.download(artifact) { inspector.inspect(it) }.also { cache.put(key, it) }
+        return downloader.download(artifact) { inspector.inspect(it) }.also { facts ->
+            key?.let { cache.put(it, facts) }
+        }
     }
 
     private fun ObligationFinding.toVulnerability(pkg: Package) =

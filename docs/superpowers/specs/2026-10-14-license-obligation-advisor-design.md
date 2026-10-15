@@ -198,6 +198,7 @@ never requires invalidation.
 - **Key:** `sha1(binaryArtifact.url + hash value + extractorVersion)`. The
   hash makes entries immutable per artifact content; `extractorVersion` is a
   constant bumped when the extraction logic or default patterns change.
+- Artifacts without a verifiable hash, including a blank hash value, are not cached.
 - **Value:** small JSON: `{ "licenseFiles": [...], "noticeFiles": [...],
   "entryCount": n, "extractorVersion": 1 }`. The artifact itself is never
   cached.

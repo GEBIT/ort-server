@@ -18,15 +18,19 @@
  */
 package org.eclipse.apoapsis.ortserver.shared.advisors
 
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.StringSpec
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.maps.shouldBeEmpty
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
 
 import java.io.File
 import java.nio.file.Files
 import java.util.Base64
+
+import kotlinx.coroutines.CancellationException
 
 import org.ossreviewtoolkit.model.Hash
 import org.ossreviewtoolkit.model.HashAlgorithm
@@ -171,6 +175,49 @@ class LicenseObligationAdvisorTest : StringSpec({
         server.requestCount.get() shouldBe 1
         second.getValue(pkg).vulnerabilities.map { it.id } shouldBe
                 first.getValue(pkg).vulnerabilities.map { it.id }
+    }
+
+    "artifacts without a verifiable hash are not cached" {
+        val cacheDir = tempDir().absolutePath
+        val pkg = pkg("unverified", "LICENSE" to "l", "NOTICE" to "n").let {
+            it.copy(binaryArtifact = it.binaryArtifact.copy(hash = Hash.NONE))
+        }
+
+        advisor(cacheDir).retrievePackageFindings(setOf(pkg))
+        advisor(cacheDir).retrievePackageFindings(setOf(pkg))
+
+        server.requestCount.get() shouldBe 2
+    }
+
+    "an unexpected runtime failure for one package does not abort other packages" {
+        val failing = pkg("unexpected", "LICENSE" to "l")
+        val other = pkg("other-runtime", "LICENSE" to "l", license = "MIT")
+        val factsLoader: (RemoteArtifact) -> ArtifactLegalFacts = { artifact ->
+            if (artifact.url == failing.binaryArtifact.url) {
+                error("sensitive failure detail")
+            }
+
+            ArtifactLegalFacts(entryCount = 1, licenseFiles = emptyList(), noticeFiles = emptyList())
+        }
+
+        val result = (advisor() as LicenseObligationAdvisor)
+            .retrievePackageFindings(setOf(failing, other), factsLoader)
+
+        result.keys shouldContainExactly setOf(failing, other)
+        result.getValue(failing).vulnerabilities.single().id shouldBe "LIC_OBL_ARTIFACT_UNAVAILABLE"
+        val unavailableDescription = result.getValue(failing).vulnerabilities.single().description!!
+        unavailableDescription shouldContain "unexpected error"
+        unavailableDescription shouldNotContain "sensitive failure detail"
+        result.getValue(other).vulnerabilities.map { it.id } shouldContainExactly listOf("LIC_OBL_MISSING_LICENSE")
+    }
+
+    "cancellation exceptions are rethrown" {
+        val pkg = pkg("cancelled", "LICENSE" to "l")
+        val factsLoader: (RemoteArtifact) -> ArtifactLegalFacts = { throw CancellationException("cancelled") }
+
+        shouldThrow<CancellationException> {
+            (advisor() as LicenseObligationAdvisor).retrievePackageFindings(setOf(pkg), factsLoader)
+        }
     }
 
     "findings are derived from cached facts, so changed options take effect without a new download" {
