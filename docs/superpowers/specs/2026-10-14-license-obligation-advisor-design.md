@@ -201,8 +201,8 @@ never requires invalidation.
 - **Value:** small JSON: `{ "licenseFiles": [...], "noticeFiles": [...],
   "entryCount": n, "extractorVersion": 1 }`. The artifact itself is never
   cached.
-- **Failures:** `LIC_OBL_ARTIFACT_UNAVAILABLE` results are not cached (or have a
-  short TTL, default 1 hour) so transient failures do not stick.
+- **Failures:** `LIC_OBL_ARTIFACT_UNAVAILABLE` results are never cached, so
+  transient failures do not stick.
 - **Interface:** `LicenseObligationCache { get(key): ArtifactLegalFacts?;
   put(key, facts) }`, so the backing store can change without touching the
   rest of the plugin.
@@ -255,7 +255,6 @@ this door open.
 | `noticeFilePatterns` | see Rules | Entry name patterns for notice files. |
 | `noticeRequiredLicenses` | `Apache-2.0`, `ECL-2.0` | SPDX ids requiring a NOTICE. |
 | `cacheDir` | `/home/ort/.cache/advisor` | Directory of the file cache; empty disables it. |
-| `failedLookupTtl` | `1h` | TTL for unavailable-artifact results. |
 | `maxParallelDownloads` | `4` | Concurrency limit. |
 | `maxArchiveBytes` | `536870912` | Download size guard. |
 | `maxArchiveEntries` | `100000` | Entry count guard. |
@@ -309,7 +308,7 @@ Unit tests (Kotest, JUnit 5; test archives generated in-memory, no network):
   contract, non-Maven/metadata-only skipped, hash mismatch, download failure
   producing `LIC_OBL_ARTIFACT_UNAVAILABLE`.
 - Cache: hit avoids a download (verified with a counting server), key changes
-  with hash and `extractorVersion`, failed lookups not cached or expiring,
+  with hash and `extractorVersion`, failed lookups not cached,
   concurrent writers.
 - A reporter round trip: run the stock `CycloneDxReporter` on an `OrtResult`
   containing a finding and assert the BOM `vulnerabilities` entry (id,
