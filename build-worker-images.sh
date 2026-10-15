@@ -73,7 +73,7 @@ if [[ "${TARGET}" == "analyzer" || "${TARGET}" == "all" ]]; then
     echo "==> Building Analyzer worker image via Gradle/Jib"
     (
         cd "${ORT_SERVER_DIR}"
-        ./gradlew :workers:analyzer:tinyJibDocker \
+        ./gradlew :workers:analyzer:tinyJibDocker --rerun \
             -Djib.from.image="docker://${ANALYZER_BASE_IMAGE_NAME}" \
             -Djib.to.image=ort-server-analyzer-worker:latest
     )
@@ -85,7 +85,7 @@ if [[ "${TARGET}" == "advisor" || "${TARGET}" == "all" ]]; then
     echo "==> Building Advisor worker image via Gradle/Jib"
     (
         cd "${ORT_SERVER_DIR}"
-        ./gradlew :workers:advisor:tinyJibDocker \
+        ./gradlew :workers:advisor:tinyJibDocker --rerun \
             -Djib.from.image="docker://${BASE_IMAGE_NAME}" \
             -Djib.to.image=ort-server-advisor-worker:latest
     )
