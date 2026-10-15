@@ -51,6 +51,7 @@ dependencies {
     implementation(ortLibs.ortPlugins.advisors.api)
     implementation(ortLibs.utils.common)
 
+    runtimeOnly(projects.shared.advisors)
     runtimeOnly(platform(ortLibs.ortPlugins.advisors))
     runtimeOnly(platform(projects.config))
     runtimeOnly(platform(projects.secrets))

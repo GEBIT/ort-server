@@ -50,6 +50,7 @@ dependencies {
     compileOnly(platform(ortLibs.ortPlugins.scanners))
 
     // Depend on the projects that contain custom plugins to make sure they are built before this project.
+    compileOnly(projects.shared.advisors)
     compileOnly(projects.shared.packageCurationProviders)
     compileOnly(projects.shared.reporters)
 
