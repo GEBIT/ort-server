@@ -163,6 +163,19 @@ class LicenseObligationAdvisorTest : StringSpec({
         server.requestCount.get() shouldBe 0
     }
 
+    "packages in skipped namespaces and their sub-namespaces are skipped without any request" {
+        val exact = pkg("exact", "x" to "y")
+        val sub = pkg("sub", "x" to "y").let { it.copy(id = it.id.copy(namespace = "org.example.inner")) }
+        val other = pkg("other", "x" to "y").let { it.copy(id = it.id.copy(namespace = "org.examples")) }
+
+        val result = advisor(options = mapOf("skipNamespaces" to "org.example")).retrievePackageFindings(
+            setOf(exact, sub, other)
+        )
+
+        result.keys shouldContainExactly listOf(other)
+        server.requestCount.get() shouldBe 1
+    }
+
     "the cache avoids a second download" {
         val cacheDir = tempDir().absolutePath
         val pkg = pkg("cached", "NOTICE" to "n")

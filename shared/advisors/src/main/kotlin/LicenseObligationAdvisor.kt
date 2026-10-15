@@ -82,6 +82,10 @@ data class LicenseObligationAdvisorConfig(
     @OrtPluginOption(defaultValue = "100000")
     val maxArchiveEntries: Int,
 
+    /** Maven namespaces to skip. Each entry matches the namespace itself and all its sub-namespaces. */
+    @OrtPluginOption(defaultValue = "")
+    val skipNamespaces: List<String>,
+
     /** A URL to the policy documentation, attached as reference to every finding. */
     val policyUrl: String?,
 
@@ -126,6 +130,8 @@ class LicenseObligationAdvisor(
 
     private val cache = createCache(config.cacheDir)
 
+    private val skipNamespaces = config.skipNamespaces.map { it.trim() }.filter { it.isNotEmpty() }
+
     override suspend fun retrievePackageFindings(packages: Set<Package>): Map<Package, AdvisorResult> =
         retrievePackageFindings(packages, ::loadFacts)
 
@@ -153,7 +159,10 @@ class LicenseObligationAdvisor(
 
     /** Only Maven packages with a distributed artifact are checked; POM-only packages have none. */
     private fun Package.isCandidate() =
-        id.type == "Maven" && !isMetadataOnly && !binaryArtifact.url.endsWith(".pom")
+        id.type == "Maven" && !isMetadataOnly && !binaryArtifact.url.endsWith(".pom") && !isSkippedNamespace()
+
+    private fun Package.isSkippedNamespace() =
+        skipNamespaces.any { id.namespace == it || id.namespace.startsWith("$it.") }
 
     @Suppress("TooGenericExceptionCaught")
     private fun check(
