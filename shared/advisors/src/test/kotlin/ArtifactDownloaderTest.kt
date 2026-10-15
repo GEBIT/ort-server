@@ -23,6 +23,7 @@ import io.kotest.core.spec.style.StringSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 
+import java.io.IOException
 import java.util.Base64
 
 import org.ossreviewtoolkit.model.Hash
@@ -58,6 +59,13 @@ class ArtifactDownloaderTest : StringSpec({
         exception.message shouldContain "checksum"
     }
 
+    "skipping bytes still verifies the whole artifact" {
+        downloader().download(artifact) {
+            it.skip(100) shouldBe 100L
+            it.readAllBytes().size
+        } shouldBe jar.size - 100
+    }
+
     "a hash with an unknown algorithm is not verified" {
         val unverified = artifact.copy(hash = Hash.NONE)
 
@@ -74,6 +82,21 @@ class ArtifactDownloaderTest : StringSpec({
         shouldThrow<ArtifactException> {
             downloader(maxBytes = 100).download(artifact) { it.readAllBytes() }
         }.message shouldContain "maximum size"
+    }
+
+    "the size limit is enforced when the processing function reads only part of the artifact" {
+        shouldThrow<ArtifactException> {
+            downloader(maxBytes = 100).download(artifact) { it.read() }
+        }.message shouldContain "maximum size"
+    }
+
+    "IOExceptions while processing are reported as ArtifactException" {
+        val exception = shouldThrow<ArtifactException> {
+            downloader().download(artifact) { throw IOException("processing failed") }
+        }
+
+        exception.message shouldContain "Download of ${artifact.url} failed: processing failed"
+        exception.cause?.message shouldBe "processing failed"
     }
 
     "an invalid URL is reported as ArtifactException" {

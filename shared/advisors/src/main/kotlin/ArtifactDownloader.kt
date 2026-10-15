@@ -62,11 +62,21 @@ class ArtifactDownloader(
             }
 
             val digest = createDigest(artifact)
-            val limited = LimitedInputStream(body, maxBytes)
-            val input = if (digest != null) DigestInputStream(limited, digest) else limited
+            val input = if (digest != null) {
+                LimitedInputStream(DigestInputStream(body, digest), maxBytes)
+            } else {
+                LimitedInputStream(body, maxBytes)
+            }
 
-            val result = process(input)
-            input.copyTo(OutputStream.nullOutputStream())
+            val result = try {
+                val processed = process(input)
+                input.copyTo(OutputStream.nullOutputStream())
+                processed
+            } catch (e: ArtifactException) {
+                throw e
+            } catch (e: IOException) {
+                throw ArtifactException("Download of ${artifact.url} failed: ${e.message ?: e::class.simpleName}", e)
+            }
 
             if (digest != null) {
                 val actual = HexFormat.of().formatHex(digest.digest())
@@ -122,6 +132,8 @@ class ArtifactDownloader(
 /** Fails with an [ArtifactException] once more than [maxBytes] have been read. */
 private class LimitedInputStream(input: InputStream, private val maxBytes: Long) : FilterInputStream(input) {
     private var count = 0L
+
+    override fun markSupported(): Boolean = false
 
     override fun read(): Int = super.read().also { if (it >= 0) add(1) }
 
