@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# Builds the Docker images required to run the ORT Server Analyzer and Advisor
+# Builds the Docker images required to run the ORT Server Analyzer and Reporter
 # workers with our custom plugins:
 #
 #   - Analyzer worker: GebitPackageCurationProvider, NpmNoDevDependencies,
 #     MavenNoTestDependencies, Ivy
-#   - Advisor worker: LicenseObligation
+#   - Reporter worker: CycloneDxLicenseObligation
 #
 # Images built:
 #
@@ -13,11 +13,11 @@
 #   2. ort-server-analyzer-worker-base-image - Analyzer tooling on top of the base image
 #                                              (analyzer only)
 #   3. ort-server-analyzer-worker            - the Analyzer worker, built via Gradle/Jib
-#   4. ort-server-advisor-worker             - the Advisor worker, built via Gradle/Jib
-#                                              directly on the common base image
+#   4. ort-server-reporter-worker-base-image - Reporter tooling on top of the base image
+#   5. ort-server-reporter-worker            - the Reporter worker, built via Gradle/Jib
 #
 # Usage:
-#   ./build-worker-images.sh [analyzer|advisor|all] [ORT_SERVER_DIR]
+#   ./build-worker-images.sh [analyzer|reporter|all] [ORT_SERVER_DIR]
 #
 # The first argument selects the worker(s) to build and defaults to "all".
 # ORT_SERVER_DIR defaults to the directory of this script.
@@ -30,9 +30,9 @@ TARGET="${1:-all}"
 ORT_SERVER_DIR="${2:-${SCRIPT_DIR}}"
 
 case "${TARGET}" in
-    analyzer|advisor|all) ;;
+    analyzer|reporter|all) ;;
     *)
-        echo "Unknown target: ${TARGET} (expected analyzer, advisor or all)" >&2
+        echo "Unknown target: ${TARGET} (expected analyzer, reporter or all)" >&2
         exit 1
         ;;
 esac
@@ -41,6 +41,7 @@ esac
 BASE_IMAGE_TAG="0.91.0"
 BASE_IMAGE_NAME="ort-server-base-image:${BASE_IMAGE_TAG}"
 ANALYZER_BASE_IMAGE_NAME="ort-server-analyzer-worker-base-image:${BASE_IMAGE_TAG}"
+REPORTER_BASE_IMAGE_NAME="ort-server-reporter-worker-base-image:${BASE_IMAGE_TAG}"
 
 # Overrides the Go version of Analyzer.Dockerfile (1.25.0): it installs buildozer@latest, which now requires Go 1.26.
 GO_VERSION="1.26.0"
@@ -81,16 +82,24 @@ if [[ "${TARGET}" == "analyzer" || "${TARGET}" == "all" ]]; then
     BUILT_IMAGES+=("${ANALYZER_BASE_IMAGE_NAME}" "ort-server-analyzer-worker:latest")
 fi
 
-if [[ "${TARGET}" == "advisor" || "${TARGET}" == "all" ]]; then
-    echo "==> Building Advisor worker image via Gradle/Jib"
+if [[ "${TARGET}" == "reporter" || "${TARGET}" == "all" ]]; then
+    echo "==> Building Reporter base image: ${REPORTER_BASE_IMAGE_NAME}"
+    docker build \
+        "${ORT_SERVER_DIR}/workers/reporter/docker" \
+        -f "${ORT_SERVER_DIR}/workers/reporter/docker/Reporter.Dockerfile" \
+        --build-arg BASE_REGISTRY= \
+        --build-arg BASE_IMAGE_TAG="${BASE_IMAGE_TAG}" \
+        -t "${REPORTER_BASE_IMAGE_NAME}"
+
+    echo "==> Building Reporter worker image via Gradle/Jib"
     (
         cd "${ORT_SERVER_DIR}"
-        ./gradlew :workers:advisor:tinyJibDocker --rerun \
-            -Djib.from.image="docker://${BASE_IMAGE_NAME}" \
-            -Djib.to.image=ort-server-advisor-worker:latest
+        ./gradlew :workers:reporter:tinyJibDocker --rerun \
+            -Djib.from.image="docker://${REPORTER_BASE_IMAGE_NAME}" \
+            -Djib.to.image=ort-server-reporter-worker:latest
     )
 
-    BUILT_IMAGES+=("ort-server-advisor-worker:latest")
+    BUILT_IMAGES+=("${REPORTER_BASE_IMAGE_NAME}" "ort-server-reporter-worker:latest")
 fi
 
 echo "==> Done. Built images:"

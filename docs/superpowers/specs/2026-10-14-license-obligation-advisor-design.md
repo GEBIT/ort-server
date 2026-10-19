@@ -1,5 +1,10 @@
 # License Obligation Advisor Design
 
+> **Superseded:** Findings are now produced by the `CycloneDxLicenseObligation`
+> reporter as component properties named `gebit:lic-obl-*`. Dependency-Track
+> does not import BOM vulnerabilities (it only applies VEX analysis to existing
+> ones); policies read `component.properties`.
+
 ## Goal
 
 ORT Server is used solely as an SBOM generator; all violation and policy

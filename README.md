@@ -53,8 +53,9 @@ Analyzer:
   [deployment example](https://gitlab.local.gebit.de/gebit-build/services/ort-server-service/-/blob/master/scripts/compose/config/ort-server.params.kts?ref_type=heads).
 
 The custom plugins are packaged in shared modules and included in the Analyzer
-and Advisor workers. `build-worker-images.sh [analyzer|advisor|all]` builds the
-base, Analyzer base, and final worker images needed to run these extensions.
+and Reporter workers. `build-worker-images.sh [analyzer|reporter|all]` builds
+the common base, the selected worker base images, and final worker images needed
+to run these extensions.
 
 The [Eclipse Apoapsis](https://projects.eclipse.org/projects/technology.apoapsis) project's **ORT Server** is a
 standalone application to deploy the [OSS Review Toolkit](https://github.com/oss-review-toolkit/ort) as a service in the
