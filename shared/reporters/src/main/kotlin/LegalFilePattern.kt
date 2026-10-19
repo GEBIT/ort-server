@@ -16,7 +16,7 @@
  * SPDX-License-Identifier: Apache-2.0
  * License-Filename: LICENSE
  */
-package org.eclipse.apoapsis.ortserver.shared.advisors
+package org.eclipse.apoapsis.ortserver.shared.reporters
 
 private const val META_INF = "meta-inf/"
 private val EXTENSIONS = listOf(".txt", ".md", ".html", ".htm")

@@ -16,7 +16,7 @@
  * SPDX-License-Identifier: Apache-2.0
  * License-Filename: LICENSE
  */
-package org.eclipse.apoapsis.ortserver.shared.advisors
+package org.eclipse.apoapsis.ortserver.shared.reporters
 
 import io.kotest.core.spec.style.StringSpec
 import io.kotest.matchers.collections.shouldBeEmpty

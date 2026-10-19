@@ -23,6 +23,7 @@ plugins {
     id("ort-server-publication-conventions")
 
     // Apply third-party plugins.
+    alias(libs.plugins.kotlinSerialization)
     alias(libs.plugins.ksp)
 }
 
@@ -32,7 +33,9 @@ dependencies {
     api(ortLibs.downloader)
     api(ortLibs.reporter)
 
+    implementation(libs.kotlinx.serialization.json)
     implementation(libs.slf4j)
+    implementation(ortLibs.ortPlugins.reporters.cyclonedx)
     implementation(ortLibs.utils.common)
 
     ksp(ortLibs.ortPlugins.compiler)

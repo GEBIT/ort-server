@@ -16,7 +16,7 @@
  * SPDX-License-Identifier: Apache-2.0
  * License-Filename: LICENSE
  */
-package org.eclipse.apoapsis.ortserver.shared.advisors
+package org.eclipse.apoapsis.ortserver.shared.reporters
 
 import io.kotest.core.spec.style.StringSpec
 import io.kotest.matchers.nulls.shouldBeNull
@@ -25,7 +25,6 @@ import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 
 import java.io.File
-import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 
 import org.ossreviewtoolkit.model.Hash
@@ -34,10 +33,14 @@ import org.ossreviewtoolkit.model.RemoteArtifact
 
 class LicenseObligationCacheTest : StringSpec({
     val tempDirs = mutableListOf<File>()
+    val cacheRoot = File("build/license-obligation-cache-test").apply {
+        deleteRecursively()
+        mkdirs()
+    }
 
-    fun tempDir() = Files.createTempDirectory("lic-obl-cache").toFile().also { tempDirs += it }
+    fun tempDir() = cacheRoot.resolve("cache-${tempDirs.size}").apply { mkdirs() }.also { tempDirs += it }
 
-    afterSpec { tempDirs.forEach { dir -> dir.deleteRecursively() } }
+    afterSpec { cacheRoot.deleteRecursively() }
 
     val facts = ArtifactLegalFacts(
         entryCount = 7,

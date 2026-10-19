@@ -16,7 +16,7 @@
  * SPDX-License-Identifier: Apache-2.0
  * License-Filename: LICENSE
  */
-package org.eclipse.apoapsis.ortserver.shared.advisors
+package org.eclipse.apoapsis.ortserver.shared.reporters
 
 import java.io.File
 import java.io.IOException

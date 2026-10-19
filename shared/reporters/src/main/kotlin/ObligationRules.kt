@@ -16,7 +16,7 @@
  * SPDX-License-Identifier: Apache-2.0
  * License-Filename: LICENSE
  */
-package org.eclipse.apoapsis.ortserver.shared.advisors
+package org.eclipse.apoapsis.ortserver.shared.reporters
 
 import org.ossreviewtoolkit.utils.spdxexpression.SpdxCompoundExpression
 import org.ossreviewtoolkit.utils.spdxexpression.SpdxExpression
