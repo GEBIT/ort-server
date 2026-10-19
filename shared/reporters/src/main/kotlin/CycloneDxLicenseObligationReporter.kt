@@ -141,60 +141,106 @@ class CycloneDxLicenseObligationReporter(
         targetDir.mkdirs()
 
         return try {
-            val formats = config.outputFileFormats.joinToString(",") { it.uppercase() }
-            val findings = findFindings(input.ortResult.getPackages(omitExcluded = true))
-            val stockResults = runCatching {
-                ReporterFactory.ALL.getValue("CycloneDX").create(
+            runCatching {
+                val formats = config.outputFileFormats.joinToString(",") { it.uppercase() }
+                val findings = findFindings(input.ortResult.getPackages(omitExcluded = true)).getOrThrow()
+                val stockResults = ReporterFactory.ALL.getValue("CycloneDX").create(
                     PluginConfig(options = mapOf("outputFileFormats" to formats, "singleBom" to "true"))
                 ).generateReport(input, targetDir)
-            }.getOrElse { return listOf(Result.failure(it)) }
 
-            stockResults.map { stockResult ->
-                stockResult.fold(
-                    onSuccess = { stockFile ->
-                        runCatching {
-                            val format = if (stockFile.extension.equals("xml", ignoreCase = true)) {
-                                Format.XML
-                            } else {
-                                Format.JSON
+                stockResults.map { stockResult ->
+                    stockResult.fold(
+                        onSuccess = { stockFile ->
+                            runCatching {
+                                val format = if (stockFile.extension.equals("xml", ignoreCase = true)) {
+                                    Format.XML
+                                } else {
+                                    Format.JSON
+                                }
+                                val bom = parseBom(stockFile, format)
+                                addProperties(bom, findings)
+                                bom.vulnerabilities = null
+
+                                val reportFile = outputDir.resolve(stockFile.name)
+                                reportFile.writeText(bom.toString(format))
+                                reportFile
                             }
-                            val bom = parseBom(stockFile, format)
-                            addProperties(bom, findings)
-                            bom.vulnerabilities = null
-
-                            val reportFile = outputDir.resolve(stockFile.name)
-                            reportFile.writeText(bom.toString(format))
-                            reportFile
-                        }
-                    },
-                    onFailure = { Result.failure(it) }
-                )
-            }
+                        },
+                        onFailure = { Result.failure(it) }
+                    )
+                }
+            }.getOrElse { listOf(Result.failure(it)) }
         } finally {
             targetDir.deleteRecursively()
         }
     }
 
-    private fun findFindings(packages: Set<CuratedPackage>): Map<String, List<ObligationFinding>> {
+    @Suppress("TooGenericExceptionCaught")
+    private fun findFindings(packages: Set<CuratedPackage>): Result<Map<String, List<ObligationFinding>>> {
         val candidates = packages.map { it.metadata }.filter { it.isCandidate() }
-        val executor = Executors.newFixedThreadPool(config.maxParallelDownloads.coerceAtLeast(1))
+        val executor = Executors.newFixedThreadPool(config.maxParallelDownloads.coerceAtLeast(1)) { task ->
+            Thread(task, "license-obligation-check").apply { isDaemon = true }
+        }
+        var completedNormally = false
 
         return try {
             val futures: List<Future<Pair<String, List<ObligationFinding>>>> = candidates.map { pkg ->
                 executor.submit<Pair<String, List<ObligationFinding>>> {
-                    pkg.id.toCoordinates() to check(pkg)
+                    val packageFindings = try {
+                        check(pkg)
+                    } catch (e: Throwable) {
+                        if (e is InterruptedException) {
+                            Thread.currentThread().interrupt()
+                            throw e
+                        }
+
+                        val reason = "unexpected error: ${e::class.simpleName ?: "Throwable"}"
+                        logger.warn(
+                            "Unexpected error while checking artifact for '{}': {}",
+                            pkg.id.toCoordinates(),
+                            reason
+                        )
+                        listOf(rules.unavailable(reason, pkg.binaryArtifact.url))
+                    }
+
+                    pkg.id.toCoordinates() to packageFindings
                 }
             }
 
-            futures.mapNotNull { future ->
-                try {
-                    future.get().takeIf { (_, packageFindings) -> packageFindings.isNotEmpty() }
+            val findings = mutableMapOf<String, List<ObligationFinding>>()
+
+            for (future in futures) {
+                val (coordinates, packageFindings) = try {
+                    future.get()
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    executor.shutdownNow()
+                    return Result.failure(e)
                 } catch (e: ExecutionException) {
-                    throw e.cause ?: e
+                    val cause = e.cause ?: e
+
+                    if (cause is InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        executor.shutdownNow()
+                        return Result.failure(cause)
+                    }
+
+                    throw cause
                 }
-            }.toMap()
+
+                if (packageFindings.isNotEmpty()) {
+                    findings[coordinates] = packageFindings
+                }
+            }
+
+            completedNormally = true
+            Result.success(findings)
         } finally {
-            executor.shutdown()
+            if (completedNormally) {
+                executor.shutdown()
+            } else {
+                executor.shutdownNow()
+            }
         }
     }
 

@@ -24,7 +24,12 @@ import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 
+import io.mockk.every
+import io.mockk.mockkConstructor
+import io.mockk.unmockkConstructor
+
 import java.io.File
+import java.io.InputStream
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -214,6 +219,28 @@ class CycloneDxLicenseObligationReporterTest : StringSpec({
         val goodProperties =
             obligationProperties(failureComponents.single { it.getValue("name").jsonPrimitive.content == "still-good" })
         goodProperties shouldBe emptyList()
+    }
+
+    "an error while checking a package still produces an unavailable property" {
+        mockkConstructor(ArtifactDownloader::class)
+
+        try {
+            every {
+                anyConstructed<ArtifactDownloader>().download(any(), any<(InputStream) -> ArtifactLegalFacts>())
+            } throws LinkageError("simulated missing class")
+
+            val affected = pkg("linkage-error", "LICENSE" to "license")
+            val reportFile = report(setOf(affected))
+            val bom = Json.parseToJsonElement(reportFile.readText()).jsonObject
+            val component = bom.getValue("components").jsonArray.map { it.jsonObject }
+                .single { it.getValue("name").jsonPrimitive.content == "linkage-error" }
+            val finding = obligationProperties(component).single()
+
+            finding.getValue("name").jsonPrimitive.content shouldBe "gebit:lic-obl-artifact-unavailable"
+            finding.getValue("value").jsonPrimitive.content shouldContain "unexpected error: LinkageError"
+        } finally {
+            unmockkConstructor(ArtifactDownloader::class)
+        }
     }
 
     "XML output is generated with obligation properties" {
