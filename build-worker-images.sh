@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 #
-# Builds the Docker images required to run the ORT Server Analyzer and Reporter
-# workers with our custom plugins:
+# Builds the Docker images required to run the ORT Server Analyzer, Config and
+# Reporter workers with our custom plugins:
 #
 #   - Analyzer worker: GebitPackageCurationProvider, NpmNoDevDependencies,
 #     MavenNoTestDependencies, Ivy
+#   - Config worker: CycloneDxLicenseObligation (needed to validate the report
+#     format requested by the run's job configuration)
 #   - Reporter worker: CycloneDxLicenseObligation
 #
 # Images built:
@@ -15,9 +17,11 @@
 #   3. ort-server-analyzer-worker            - the Analyzer worker, built via Gradle/Jib
 #   4. ort-server-reporter-worker-base-image - Reporter tooling on top of the base image
 #   5. ort-server-reporter-worker            - the Reporter worker, built via Gradle/Jib
+#   6. ort-server-config-worker              - the Config worker, built via Gradle/Jib on top of
+#                                              the common base image
 #
 # Usage:
-#   ./build-worker-images.sh [analyzer|reporter|all] [ORT_SERVER_DIR]
+#   ./build-worker-images.sh [analyzer|config|reporter|all] [ORT_SERVER_DIR]
 #
 # The first argument selects the worker(s) to build and defaults to "all".
 # ORT_SERVER_DIR defaults to the directory of this script.
@@ -30,9 +34,9 @@ TARGET="${1:-all}"
 ORT_SERVER_DIR="${2:-${SCRIPT_DIR}}"
 
 case "${TARGET}" in
-    analyzer|reporter|all) ;;
+    analyzer|config|reporter|all) ;;
     *)
-        echo "Unknown target: ${TARGET} (expected analyzer, reporter or all)" >&2
+        echo "Unknown target: ${TARGET} (expected analyzer, config, reporter or all)" >&2
         exit 1
         ;;
 esac
@@ -80,6 +84,18 @@ if [[ "${TARGET}" == "analyzer" || "${TARGET}" == "all" ]]; then
     )
 
     BUILT_IMAGES+=("${ANALYZER_BASE_IMAGE_NAME}" "ort-server-analyzer-worker:latest")
+fi
+
+if [[ "${TARGET}" == "config" || "${TARGET}" == "all" ]]; then
+    echo "==> Building Config worker image via Gradle/Jib"
+    (
+        cd "${ORT_SERVER_DIR}"
+        ./gradlew :workers:config:tinyJibDocker --rerun \
+            -Djib.from.image="docker://${BASE_IMAGE_NAME}" \
+            -Djib.to.image=ort-server-config-worker:latest
+    )
+
+    BUILT_IMAGES+=("ort-server-config-worker:latest")
 fi
 
 if [[ "${TARGET}" == "reporter" || "${TARGET}" == "all" ]]; then
