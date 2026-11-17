@@ -6,6 +6,7 @@ It also shortly describes the configuration mechanism in place.
 :::note
 In this context, the term _configuration_ refers to the static configuration of an ORT Server deployment, such as database settings, service credentials, etc.
 It does not cover the configuration of single ORT runs that can be specified by users when triggering a run.
+Settings that apply to all ORT runs, such as rule sets, report definitions, and notification servers, are defined in the [admin configuration](admin-config.md).
 :::
 
 ## Configuration Mechanism
@@ -48,6 +49,18 @@ If so, it returns the value of this setting; otherwise, it delegates to the secr
 This means that the values of secrets can be set via environment variables in the same way as other configuration options.
 The fallback mechanism is active by default, but can be disabled to enforce that secrets can only be obtained from a provider.
 Refer to the [documentation](https://github.com/eclipse-apoapsis/ort-server/blob/main/config/README.md) of the configuration component for further information on how to control this setting.
+
+### JVM Options
+
+The container images of the ORT Server components set the `JDK_JAVA_OPTIONS` environment variable to JVM options that the components require.
+The `java` launcher reads this variable however it is invoked, so the options also apply if a deployment overrides the command of a container.
+Currently, the variable contains `--add-opens=java.base/sun.net.www.protocol.http=ALL-UNNAMED`, which the Git config file provider needs to clear the HTTP authentication cache of JGit.
+
+:::caution
+If a deployment sets `JDK_JAVA_OPTIONS` for a container, the value replaces the default of the image.
+Include the default options in the new value to keep them.
+With the Kubernetes transport, the Orchestrator passes its environment variables to the worker jobs, so a value set for the Orchestrator also replaces the defaults of the workers.
+:::
 
 ## Available Configuration Options
 

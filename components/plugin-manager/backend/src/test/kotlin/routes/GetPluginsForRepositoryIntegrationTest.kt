@@ -20,10 +20,14 @@
 package org.eclipse.apoapsis.ortserver.components.pluginmanager.routes
 
 import io.kotest.assertions.ktor.client.shouldHaveStatus
+import io.kotest.matchers.collections.beEmpty
+import io.kotest.matchers.collections.shouldBeSingleton
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldNotContain
+import io.kotest.matchers.nulls.beNull
 import io.kotest.matchers.nulls.shouldNotBeNull
+import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
 import io.ktor.client.call.body
@@ -31,7 +35,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.http.HttpStatusCode
 
-import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.mockk
 
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.ADMIN_SECRET_PLACEHOLDER
@@ -403,7 +407,7 @@ class GetPluginsForRepositoryIntegrationTest : PluginManagerIntegrationTest({
             )
 
             val mockedPluginService = mockk<PluginService> {
-                every { getPlugins() } returns listOf(descriptor)
+                coEvery { getPlugins() } returns listOf(descriptor)
             }
 
             pluginTemplateService = PluginTemplateService(
@@ -411,7 +415,8 @@ class GetPluginsForRepositoryIntegrationTest : PluginManagerIntegrationTest({
                 PluginTemplateEventStore(dbExtension.db),
                 mockedPluginService,
                 dbExtension.fixtures.organizationRepository,
-                dbExtension.fixtures.repositoryRepository
+                dbExtension.fixtures.repositoryRepository,
+                adminConfigService
             )
 
             pluginManagerTestApplication { client ->
@@ -425,6 +430,54 @@ class GetPluginsForRepositoryIntegrationTest : PluginManagerIntegrationTest({
                             defaultValue shouldBe null
                         }
                     }
+            }
+        }
+
+        "include plugins based on report definitions in the admin config file" {
+            pluginManagerTestApplication { client ->
+                val configPath = "src/test/resources/config"
+                val response = client.get("/repositories/${repositoryId.value}/plugins?configContext=$configPath")
+
+                response shouldHaveStatus HttpStatusCode.OK
+
+                val plugins = response.body<List<PreconfiguredPluginDescriptor>>()
+
+                // Validate that the PdfTemplate report was replaced by a reporter definition.
+                plugins.find { it.id.lowercase() == "pdftemplate" } should beNull()
+                plugins.filter { it.id == "customTemplate" }.shouldBeSingleton {
+                    it.displayName shouldBe "customTemplate"
+                    it.type shouldBe PluginType.REPORTER
+                    it.summary shouldBe "Custom template report."
+                    it.description should beNull()
+                    it.options should beEmpty()
+                }
+
+                // Validate that the WebApp report was overwritten by a report definition.
+                plugins.filter { it.id.lowercase() == "webapp" }.shouldBeSingleton {
+                    it.id shouldBe "webApp"
+                    it.displayName shouldBe "webApp"
+                    it.type shouldBe PluginType.REPORTER
+                    it.summary shouldBe "Web app report."
+                    it.description should beNull()
+                    it.options should beEmpty()
+                }
+            }
+        }
+
+        "not include report definitions using a disabled reporter" {
+            pluginManagerTestApplication { client ->
+                client.post("/admin/plugins/${PluginType.REPORTER}/PdfTemplate/disable")
+
+                val configPath = "src/test/resources/config"
+                val response = client.get("/repositories/${repositoryId.value}/plugins?configContext=$configPath")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                val reporterIds = response.body<List<PreconfiguredPluginDescriptor>>()
+                    .filter { it.type == PluginType.REPORTER }
+                    .map { it.id }
+
+                reporterIds shouldNotContain "customTemplate"
+                reporterIds shouldNotContain "PdfTemplate"
             }
         }
     }

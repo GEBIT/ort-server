@@ -19,6 +19,7 @@
 
 package org.eclipse.apoapsis.ortserver.components.pluginmanager.routes
 
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -29,18 +30,19 @@ import org.eclipse.apoapsis.ortserver.components.authorization.routes.requireSup
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginTemplateService
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginType
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.handleTemplateResult
+import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireEnumParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 
 internal fun Route.deleteTemplate(
     pluginTemplateService: PluginTemplateService
 ) = delete("admin/plugins/{pluginType}/{pluginId}/templates/{templateName}", {
-    operationId = "DeletePluginTemplate"
+    operationId = "deletePluginTemplate"
     summary = "Delete a plugin template"
     description = "Delete a plugin template for a specific plugin. This will remove the template and its configuration."
     tags = listOf("Plugins")
 
     request {
-        pathParameter<String>("pluginType") {
+        pathParameter<PluginType>("pluginType") {
             description = "The type of the plugin this template is for."
             required = true
         }
@@ -59,19 +61,26 @@ internal fun Route.deleteTemplate(
     response {
         HttpStatusCode.OK to {
             description = "The plugin template was deleted successfully."
+            body<String> {
+                mediaTypes = setOf(ContentType.Text.Plain)
+                example("Success message") {
+                    value = "Template deleted successfully."
+                }
+            }
         }
 
         HttpStatusCode.BadRequest to {
-            description = "The specified plugin is not installed."
+            description = "The specified plugin is not installed or the template was already deleted. An invalid " +
+                    "plugin type also results in this status."
         }
 
         HttpStatusCode.NotFound to {
-            description = "The specified plugin or template was not found."
+            description = "The template does not exist."
         }
     }
 }, requireSuperuser()) {
     val userId = requirePrincipal().userId
-    val pluginType = enumValueOf<PluginType>(call.requireParameter("pluginType"))
+    val pluginType = call.requireEnumParameter<PluginType>("pluginType")
     val pluginId = call.requireParameter("pluginId")
     val templateName = call.requireParameter("templateName")
 

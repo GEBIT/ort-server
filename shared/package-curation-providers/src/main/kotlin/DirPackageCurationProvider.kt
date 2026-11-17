@@ -25,6 +25,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
+
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.Package
 import org.ossreviewtoolkit.model.PackageCuration
@@ -71,15 +73,13 @@ class DirPackageCurationProvider(
     private val root = File(config.path)
 
     override fun getCurationsFor(packages: Collection<Package>): Set<PackageCuration> =
-        runBlocking(Dispatchers.IO) {
+        runBlocking(Dispatchers.Virtual) {
             packages.map { pkg ->
                 async { lookupCurations(pkg) }
             }.awaitAll().flatten().toSet()
         }
 
-    /**
-     * Lookup the curations file for the given [pkg]. If it exists, load it and return the applicable curations.
-     */
+    /** Lookup the curations file for the given [pkg]. If it exists, load it and return the applicable curations. */
     private fun lookupCurations(pkg: Package): List<PackageCuration> {
         val curationFile = root.resolve(pkg.id.toCurationPath())
         logger.debug("Looking up curation file '{}'.", curationFile.absolutePath)
@@ -90,9 +90,7 @@ class DirPackageCurationProvider(
     }
 }
 
-/**
- * A data class defining the configuration options supported by [DirPackageCurationProvider].
- */
+/** A data class defining the configuration options supported by [DirPackageCurationProvider]. */
 data class DirPackageCurationProviderConfig(
     /** The root path of the folder structure to be searched by the provider. */
     val path: String

@@ -19,9 +19,10 @@
 
 package org.eclipse.apoapsis.ortserver.dao.repositories.repository
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
-import org.eclipse.apoapsis.ortserver.dao.entityQuery
+import org.eclipse.apoapsis.ortserver.dao.getEntityOrNull
 import org.eclipse.apoapsis.ortserver.dao.repositories.product.ProductsTable
+import org.eclipse.apoapsis.ortserver.dao.transaction
+import org.eclipse.apoapsis.ortserver.dao.transactionCatching
 import org.eclipse.apoapsis.ortserver.dao.utils.apply
 import org.eclipse.apoapsis.ortserver.dao.utils.applyIRegex
 import org.eclipse.apoapsis.ortserver.dao.utils.extractIds
@@ -50,13 +51,13 @@ import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.select
 
 class DaoRepositoryRepository(private val db: Database) : RepositoryRepository {
-    override fun create(
+    override suspend fun create(
         type: RepositoryType,
         url: String,
         productId: Long,
         name: String?,
         description: String?
-    ) = db.blockingQuery {
+    ) = db.transaction {
         RepositoryDao.new {
             this.type = type.name
             this.url = url
@@ -66,9 +67,9 @@ class DaoRepositoryRepository(private val db: Database) : RepositoryRepository {
         }.mapToModel()
     }
 
-    override fun get(id: Long) = db.entityQuery { RepositoryDao[id].mapToModel() }
+    override suspend fun get(id: Long) = db.transactionCatching { RepositoryDao[id].mapToModel() }.getEntityOrNull()
 
-    override fun getHierarchy(id: Long): Hierarchy = db.blockingQuery {
+    override suspend fun getHierarchy(id: Long): Hierarchy = db.transaction {
         val repository = RepositoryDao[id]
         val product = repository.product
         val organization = product.organization
@@ -76,8 +77,12 @@ class DaoRepositoryRepository(private val db: Database) : RepositoryRepository {
         Hierarchy(repository.mapToModel(), product.mapToModel(), organization.mapToModel())
     }
 
-    override fun list(parameters: ListQueryParameters, filter: FilterParameter?, hierarchyFilter: HierarchyFilter) =
-        db.blockingQuery {
+    override suspend fun list(
+        parameters: ListQueryParameters,
+        filter: FilterParameter?,
+        hierarchyFilter: HierarchyFilter
+    ) =
+        db.transaction {
             val filterCondition = filter?.let {
                 RepositoriesTable.url.applyIRegex(it.value) or
                     (
@@ -93,8 +98,8 @@ class DaoRepositoryRepository(private val db: Database) : RepositoryRepository {
             RepositoryDao.listQuery(parameters, RepositoryDao::mapToModel, builder)
         }
 
-    override fun listForProduct(productId: Long, parameters: ListQueryParameters, filter: FilterParameter?) =
-        db.blockingQuery {
+    override suspend fun listForProduct(productId: Long, parameters: ListQueryParameters, filter: FilterParameter?) =
+        db.transaction {
             RepositoryDao.listQuery(parameters, RepositoryDao::mapToModel) {
                 if (filter != null) {
                     RepositoriesTable.productId eq productId and
@@ -111,14 +116,14 @@ class DaoRepositoryRepository(private val db: Database) : RepositoryRepository {
             }
         }
 
-    override fun update(
+    override suspend fun update(
         id: Long,
         type: OptionalValue<RepositoryType>,
         url: OptionalValue<String>,
         name: OptionalValue<String?>,
         description: OptionalValue<String?>,
         productId: OptionalValue<Long>
-    ) = db.blockingQuery {
+    ) = db.transaction {
         val repository = RepositoryDao[id]
 
         type.ifPresent { repository.type = it.name }
@@ -130,16 +135,14 @@ class DaoRepositoryRepository(private val db: Database) : RepositoryRepository {
         RepositoryDao[id].mapToModel()
     }
 
-    override fun delete(id: Long) = db.blockingQuery { RepositoryDao[id].delete() }
+    override suspend fun delete(id: Long) = db.transaction { RepositoryDao[id].delete() }
 
-    override fun deleteByProduct(productId: Long): Int = db.blockingQuery {
+    override suspend fun deleteByProduct(productId: Long): Int = db.transaction {
         RepositoriesTable.deleteWhere { RepositoriesTable.productId eq productId }
     }
 }
 
-/**
- * Generate a condition defined by a [HierarchyFilter] for the given [level] and [ids].
- */
+/** Generate a condition defined by a [HierarchyFilter] for the given [level] and [ids]. */
 private fun generateHierarchyCondition(
     level: HierarchyLevel,
     ids: List<CompoundHierarchyId>

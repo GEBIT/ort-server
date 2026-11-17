@@ -26,6 +26,7 @@ import org.eclipse.apoapsis.ortserver.components.authorization.rights.HierarchyP
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.RepositoryPermission
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.AuthorizationChecker
 import org.eclipse.apoapsis.ortserver.components.authorization.service.AuthorizationService
+import org.eclipse.apoapsis.ortserver.components.authorization.service.InvalidHierarchyIdException
 import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.repositories.OrtRunRepository
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
@@ -35,15 +36,17 @@ fun requireRunReadPermission(ortRunRepository: OrtRunRepository): AuthorizationC
         override suspend fun loadEffectiveRole(
             service: AuthorizationService,
             userId: String,
+            userSub: String,
             call: ApplicationCall
         ): EffectiveRole? {
             val runId = call.requireIdParameter("runId")
-            val ortRun = ortRunRepository.get(runId) ?: return null
+            val ortRun = ortRunRepository.get(runId) ?: throw InvalidHierarchyIdException(RepositoryId(runId))
 
             return service.checkPermissions(
                 userId,
                 RepositoryId(ortRun.repositoryId),
-                HierarchyPermissions.permissions(RepositoryPermission.READ_ORT_RUNS)
+                HierarchyPermissions.permissions(RepositoryPermission.READ_ORT_RUNS),
+                userSub
             )
         }
     }

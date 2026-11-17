@@ -60,6 +60,7 @@ import org.eclipse.apoapsis.ortserver.components.authorization.routes.get
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.requireSuperuser
 import org.eclipse.apoapsis.ortserver.components.authorization.service.AuthorizationService
 import org.eclipse.apoapsis.ortserver.components.authorization.service.InvalidHierarchyIdException
+import org.eclipse.apoapsis.ortserver.components.reportstorage.ReportStorageService
 import org.eclipse.apoapsis.ortserver.core.apiDocs.deleteRun
 import org.eclipse.apoapsis.ortserver.core.apiDocs.getRun
 import org.eclipse.apoapsis.ortserver.core.apiDocs.getRunIssues
@@ -81,6 +82,7 @@ import org.eclipse.apoapsis.ortserver.core.utils.vulnerabilityExternalIdFilter
 import org.eclipse.apoapsis.ortserver.core.utils.vulnerabilityIdentifierFilter
 import org.eclipse.apoapsis.ortserver.core.utils.vulnerabilityPurlFilter
 import org.eclipse.apoapsis.ortserver.core.utils.vulnerabilityRatingFilter
+import org.eclipse.apoapsis.ortserver.dao.QueryParametersException
 import org.eclipse.apoapsis.ortserver.logaccess.LogFileService
 import org.eclipse.apoapsis.ortserver.model.JobStatus
 import org.eclipse.apoapsis.ortserver.model.LogLevel
@@ -91,16 +93,17 @@ import org.eclipse.apoapsis.ortserver.model.repositories.OrtRunRepository
 import org.eclipse.apoapsis.ortserver.model.runs.Issue
 import org.eclipse.apoapsis.ortserver.model.runs.Project
 import org.eclipse.apoapsis.ortserver.model.runs.RuleViolation
-import org.eclipse.apoapsis.ortserver.services.ReportStorageService
 import org.eclipse.apoapsis.ortserver.services.RepositoryService
 import org.eclipse.apoapsis.ortserver.services.ortrun.IssueService
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrtRunService
 import org.eclipse.apoapsis.ortserver.services.ortrun.PackageService
 import org.eclipse.apoapsis.ortserver.services.ortrun.ProjectService
 import org.eclipse.apoapsis.ortserver.services.ortrun.RuleViolationService
+import org.eclipse.apoapsis.ortserver.services.ortrun.RunVulnerabilitiesResult
 import org.eclipse.apoapsis.ortserver.services.ortrun.VulnerabilityService
 import org.eclipse.apoapsis.ortserver.shared.apimappings.mapToApi
 import org.eclipse.apoapsis.ortserver.shared.apimappings.mapToModel
+import org.eclipse.apoapsis.ortserver.shared.apimodel.ErrorResponse
 import org.eclipse.apoapsis.ortserver.shared.apimodel.SortDirection
 import org.eclipse.apoapsis.ortserver.shared.apimodel.SortProperty
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.pagingOptions
@@ -110,9 +113,13 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.stringSetFilter
 
 import org.koin.ktor.ext.inject
 
-/**
- * API for the run's endpoint. This endpoint provides information related to ORT runs and their results.
- */
+/** The number of seconds after which clients should retry a request for data that is being prepared. */
+private const val PREPARING_RETRY_AFTER_SECONDS = "1"
+
+/** The preference of a client to receive an asynchronous response, as defined in RFC 7240. */
+private const val RESPOND_ASYNC = "respond-async"
+
+/** API for the run's endpoint. This endpoint provides information related to ORT runs and their results. */
 @Suppress("LongMethod")
 fun Route.runs() = route("runs") {
     val issueService by inject<IssueService>()
@@ -135,6 +142,7 @@ fun Route.runs() = route("runs") {
             override suspend fun loadEffectiveRole(
                 service: AuthorizationService,
                 userId: String,
+                userSub: String,
                 call: ApplicationCall
             ): EffectiveRole? {
                 val runId = call.requireIdParameter("runId")
@@ -143,7 +151,8 @@ fun Route.runs() = route("runs") {
                 return service.checkPermissions(
                     userId,
                     RepositoryId(ortRun.repositoryId),
-                    HierarchyPermissions.permissions(permission)
+                    HierarchyPermissions.permissions(permission),
+                    userSub
                 ).also {
                     // Store the current run, so that it is directly available to route handlers.
                     call.attributes.put(keyOrtRun, ortRun)
@@ -239,16 +248,32 @@ fun Route.runs() = route("runs") {
                 val pagingOptions = call.pagingOptions(SortProperty("rating", SortDirection.DESCENDING))
                 val filters = call.vulnerabilityFilters()
 
-                val vulnerabilitiesForOrtRun =
-                    vulnerabilityService.listForOrtRunId(
-                        call.ortRun.id,
-                        pagingOptions.mapToModel(),
-                        filters.mapToModel()
+                val respondAsync = call.prefersRespondAsync()
+                if (respondAsync) call.response.header(HttpHeaders.PreferenceApplied, RESPOND_ASYNC)
+
+                val result = vulnerabilityService.getForOrtRunId(
+                    call.ortRun.id,
+                    pagingOptions.mapToModel(),
+                    filters.mapToModel(),
+                    respondAsync
+                )
+
+                when (result) {
+                    is RunVulnerabilitiesResult.Available ->
+                        call.respond(HttpStatusCode.OK, result.vulnerabilities.mapToApi { it })
+
+                    RunVulnerabilitiesResult.Preparing -> {
+                        call.response.header(HttpHeaders.RetryAfter, PREPARING_RETRY_AFTER_SECONDS)
+                        call.respond(
+                            if (respondAsync) HttpStatusCode.Accepted else HttpStatusCode.ServiceUnavailable
+                        )
+                    }
+
+                    is RunVulnerabilitiesResult.Failed -> call.respond(
+                        HttpStatusCode.InternalServerError,
+                        ErrorResponse("Failed to prepare the vulnerabilities of the ORT run.", result.error)
                     )
-
-                val pagedResponse = vulnerabilitiesForOrtRun.mapToApi { it }
-
-                call.respond(HttpStatusCode.OK, pagedResponse)
+                }
             }
 
             route("advisors") {
@@ -538,9 +563,7 @@ private fun ApplicationCall.status(): FilterOperatorAndValue<Set<OrtRunStatus>>?
     )
 }
 
-/**
- * Extract the filters for the run's endpoint from this [ApplicationCall].
- */
+/** Extract the filters for the run's endpoint from this [ApplicationCall]. */
 private fun ApplicationCall.filters(): OrtRunFilters =
     OrtRunFilters(
         status = status()
@@ -563,30 +586,45 @@ private fun ApplicationCall.severityFilter(): FilterOperatorAndValue<Set<Severit
         FilterOperatorAndValue(operator, severities.mapTo(mutableSetOf()) { findByName<Severity>(it) })
     }
 
-/**
- * Extract the package filters from this [ApplicationCall].
- */
+/** Extract the package filters from this [ApplicationCall]. */
 private fun ApplicationCall.packageFilters(): PackageFilters =
     PackageFilters(
-        identifier = parameters["identifier"]?.let { FilterOperatorAndValue(ComparisonOperator.ILIKE, it) },
+        identifier = identifierFilter(),
         purl = parameters["purl"]?.let { FilterOperatorAndValue(ComparisonOperator.ILIKE, it) },
         declaredLicense = declaredLicense(),
         isDirectDependency = parameters["isDirectDependency"]?.lowercase()?.toBooleanStrictOrNull()
     )
 
+/**
+ * Extract the filter for the full identifier from this [ApplicationCall]. The 'identifierMatchType' parameter selects
+ * a case-insensitive substring match ('substring', the default) or case-sensitive equality ('exact').
+ */
+private fun ApplicationCall.identifierFilter(): FilterOperatorAndValue<String>? =
+    parameters["identifier"]?.let { value ->
+        val operator = when (val matchType = parameters["identifierMatchType"] ?: "substring") {
+            "substring" -> ComparisonOperator.ILIKE
+
+            "exact" -> ComparisonOperator.EQUALS
+
+            else -> throw QueryParametersException(
+                "Unsupported 'identifierMatchType' value '$matchType'. Supported values are 'substring' and 'exact'."
+            )
+        }
+
+        FilterOperatorAndValue(operator, value)
+    }
+
 /** Extract the project filters from this [ApplicationCall]. */
 private fun ApplicationCall.projectFilters(): ProjectFilters =
     ProjectFilters(
-        identifier = parameters["identifier"]?.let { FilterOperatorAndValue(ComparisonOperator.ILIKE, it) },
+        identifier = identifierFilter(),
         declaredLicense = stringSetFilter("declaredLicense"),
         definitionFilePath = parameters["definitionFilePath"]?.let {
             FilterOperatorAndValue(ComparisonOperator.ILIKE, it)
         }
     )
 
-/**
- * Extract the rule violation filters from this [ApplicationCall].
- */
+/** Extract the rule violation filters from this [ApplicationCall]. */
 private fun ApplicationCall.ruleViolationFilters(): RuleViolationFilters =
     RuleViolationFilters(
         resolved = parameters["resolved"]?.lowercase()?.toBooleanStrictOrNull(),
@@ -596,9 +634,7 @@ private fun ApplicationCall.ruleViolationFilters(): RuleViolationFilters =
         rule = stringSetFilter("rule")
     )
 
-/**
- * Extract the issue filters from this [ApplicationCall].
- */
+/** Extract the issue filters from this [ApplicationCall]. */
 private fun ApplicationCall.issueFilters(): IssueFilter =
     IssueFilter(
         resolved = parameters["resolved"]?.lowercase()?.toBooleanStrictOrNull(),
@@ -611,9 +647,7 @@ private fun ApplicationCall.issueFilters(): IssueFilter =
         severity = severityFilter()
     )
 
-/**
- * Extract the vulnerability filters from this [ApplicationCall].
- */
+/** Extract the vulnerability filters from this [ApplicationCall]. */
 private fun ApplicationCall.vulnerabilityFilters() =
     VulnerabilityFilters(
         resolved = parameters["resolved"]?.lowercase()?.toBooleanStrictOrNull(),
@@ -625,13 +659,15 @@ private fun ApplicationCall.vulnerabilityFilters() =
         advisors = vulnerabilityAdvisorFilter()
     )
 
-/**
- * A key under which the current [OrtRun] is stored in the current call.
- */
+/** Return whether the client of this [ApplicationCall] prefers an asynchronous response, as defined in RFC 7240. */
+private fun ApplicationCall.prefersRespondAsync(): Boolean =
+    request.headers.getAll(HttpHeaders.Prefer).orEmpty()
+        .flatMap { it.split(',') }
+        .any { preference -> preference.substringBefore(';').substringBefore('=').trim().equals(RESPOND_ASYNC, true) }
+
+/** A key under which the current [OrtRun] is stored in the current call. */
 private val keyOrtRun = AttributeKey<OrtRun>("RunsRoute.OrtRun")
 
-/**
- * The current [OrtRun] stored in this [ApplicationCall].
- */
+/** The current [OrtRun] stored in this [ApplicationCall]. */
 private val ApplicationCall.ortRun: OrtRun
     get() = attributes[keyOrtRun]

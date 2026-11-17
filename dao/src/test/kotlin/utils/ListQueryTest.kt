@@ -37,12 +37,16 @@ import org.eclipse.apoapsis.ortserver.dao.repositories.ortrun.DaoOrtRunRepositor
 import org.eclipse.apoapsis.ortserver.dao.repositories.product.DaoProductRepository
 import org.eclipse.apoapsis.ortserver.dao.repositories.repository.DaoRepositoryRepository
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.JobConfigurations
 import org.eclipse.apoapsis.ortserver.model.Organization
 import org.eclipse.apoapsis.ortserver.model.RepositoryType
+import org.eclipse.apoapsis.ortserver.model.util.FilterParameter
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
 import org.eclipse.apoapsis.ortserver.model.util.OrderDirection
 import org.eclipse.apoapsis.ortserver.model.util.OrderField
+import org.eclipse.apoapsis.ortserver.model.util.asPresent
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 
@@ -63,6 +67,8 @@ class ListQueryTest : StringSpec() {
     private lateinit var ortRunRepository: DaoOrtRunRepository
 
     init {
+        tags(Integration)
+
         beforeEach {
             organizationRepository = dbExtension.fixtures.organizationRepository
             productRepository = dbExtension.fixtures.productRepository
@@ -132,11 +138,34 @@ class ListQueryTest : StringSpec() {
                 )
             )
 
-            val repositories = transaction {
+            val repositories = dbExtension.db.transaction {
                 repositoryRepository.listForProduct(product.id, parameters)
             }
 
             repositories.data should containExactly(repo2, repo1, repo3)
+        }
+
+        "Entities with equal sort values are ordered by their ID across pages" {
+            val products = (1..3).map { index ->
+                val organization = organizationRepository.create("Shared Organization $index", null)
+                productRepository.create("Shared Product", null, organization.id)
+            }
+
+            // Updating a row stores a new version of it after the others, so that the table no longer returns the
+            // products in the order of their IDs.
+            productRepository.update(products.first().id, description = "updated".asPresent())
+
+            val pages = (0..2).flatMap { offset ->
+                val parameters = ListQueryParameters(
+                    sortFields = listOf(OrderField("name", OrderDirection.ASCENDING)),
+                    limit = 1,
+                    offset = offset.toLong()
+                )
+
+                productRepository.list(parameters, FilterParameter("^Shared Product$")).data
+            }
+
+            pages.map { it.id } shouldContainExactly products.map { it.id }
         }
 
         "Sorting is only allowed for properties marked as sortable" {
@@ -184,7 +213,7 @@ class ListQueryTest : StringSpec() {
                 )
             )
 
-            val runsFromQuery = transaction {
+            val runsFromQuery = dbExtension.db.transaction {
                 ortRunRepository.listForRepository(repo.id, parameters)
             }
 
@@ -215,25 +244,19 @@ class ListQueryTest : StringSpec() {
         }
     }
 
-    /**
-     * Insert a number of synthetic test organizations in random order.
-     */
-    private fun insertTestOrganizations() {
-        (1..COUNT).toList().shuffled().forEach { index ->
+    /** Insert a number of synthetic test organizations in random order. */
+    private suspend fun insertTestOrganizations() {
+        (1..COUNT).shuffled().forEach { index ->
             organizationRepository.create(ORGANIZATION_NAME.appendIndex(index), ORGANIZATION_DESC.appendIndex(index))
         }
     }
 
-    /**
-     * Return the results of a query for organizations that applies the given [parameters].
-     */
+    /** Return the results of a query for organizations that applies the given [parameters]. */
     private fun query(parameters: ListQueryParameters): List<Organization> = transaction {
         OrganizationDao.list(parameters).map { it.mapToModel() }
     }
 
-    /**
-     * Check whether the given [list] contains the test entities in the expected [range].
-     */
+    /** Check whether the given [list] contains the test entities in the expected [range]. */
     private fun checkOrganizations(list: List<Organization>, range: IntProgression) {
         list shouldHaveSize range.count()
 

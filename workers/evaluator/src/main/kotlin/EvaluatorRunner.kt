@@ -53,9 +53,7 @@ import org.slf4j.LoggerFactory
 private val logger = LoggerFactory.getLogger(EvaluatorRunner::class.java)
 
 class EvaluatorRunner(
-    /**
-     * The file archiver is used to resolve license files which is optional input for the rules.
-     */
+    /** The file archiver is used to resolve license files which is optional input for the rules. */
     private val fileArchiver: FileArchiver,
 
     /** The service for obtaining the admin configuration. */
@@ -110,7 +108,7 @@ class EvaluatorRunner(
             add(SimplePackageConfigurationProvider(configurations = repositoryPackageConfigurations))
 
             val packageConfigurationProviderConfigs = workerContext
-                .resolveProviderPluginConfigSecrets(config.packageConfigurationProviders)
+                .resolveProviderPluginConfigSecrets(config.packageConfigurationProviders.orEmpty())
                 .map { it.mapToOrt() }
 
             addAll(PackageConfigurationProviderFactory.create(packageConfigurationProviderConfigs).map { it.second })

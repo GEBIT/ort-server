@@ -28,18 +28,28 @@ import kotlinx.serialization.json.Json
 
 import org.eclipse.apoapsis.ortserver.clients.keycloak.DefaultKeycloakClient
 import org.eclipse.apoapsis.ortserver.clients.keycloak.KeycloakClient
+import org.eclipse.apoapsis.ortserver.clients.keycloak.KeycloakClientConfiguration
+import org.eclipse.apoapsis.ortserver.components.adminconfig.AdminConfigService
 import org.eclipse.apoapsis.ortserver.components.authorization.keycloak.migration.RolesToDbMigration
 import org.eclipse.apoapsis.ortserver.components.authorization.service.AuthorizationService
 import org.eclipse.apoapsis.ortserver.components.authorization.service.DbAuthorizationService
 import org.eclipse.apoapsis.ortserver.components.authorization.service.KeycloakUserService
+import org.eclipse.apoapsis.ortserver.components.authorization.service.UserRegistrationService
 import org.eclipse.apoapsis.ortserver.components.authorization.service.UserService
 import org.eclipse.apoapsis.ortserver.components.dependencygraph.backend.DependencyGraphService
 import org.eclipse.apoapsis.ortserver.components.infrastructureservices.InfrastructureServiceService
 import org.eclipse.apoapsis.ortserver.components.licensefindings.LicenseFindingService
+import org.eclipse.apoapsis.ortserver.components.pluginmanager.DefaultPluginsEventStore
+import org.eclipse.apoapsis.ortserver.components.pluginmanager.DefaultPluginsService
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginEventStore
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginService
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginTemplateEventStore
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginTemplateService
+import org.eclipse.apoapsis.ortserver.components.projections.ProjectionBuilder
+import org.eclipse.apoapsis.ortserver.components.projections.ProjectionConfig
+import org.eclipse.apoapsis.ortserver.components.projections.ProjectionRegistry
+import org.eclipse.apoapsis.ortserver.components.projections.ProjectionService
+import org.eclipse.apoapsis.ortserver.components.reportstorage.reportStorageModule
 import org.eclipse.apoapsis.ortserver.components.resolutions.issues.IssueResolutionEventStore
 import org.eclipse.apoapsis.ortserver.components.resolutions.issues.IssueResolutionService
 import org.eclipse.apoapsis.ortserver.components.resolutions.ruleviolations.RuleViolationResolutionEventStore
@@ -52,7 +62,6 @@ import org.eclipse.apoapsis.ortserver.components.snippetfindings.SnippetFindingS
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
 import org.eclipse.apoapsis.ortserver.core.plugins.customSerializersModule
 import org.eclipse.apoapsis.ortserver.core.services.OrchestratorService
-import org.eclipse.apoapsis.ortserver.core.utils.createKeycloakClientConfiguration
 import org.eclipse.apoapsis.ortserver.dao.DataSourceConfig
 import org.eclipse.apoapsis.ortserver.dao.connect
 import org.eclipse.apoapsis.ortserver.dao.createDataSource
@@ -75,7 +84,7 @@ import org.eclipse.apoapsis.ortserver.dao.repositories.repositoryconfiguration.D
 import org.eclipse.apoapsis.ortserver.dao.repositories.resolvedconfiguration.DaoResolvedConfigurationRepository
 import org.eclipse.apoapsis.ortserver.dao.repositories.scannerjob.DaoScannerJobRepository
 import org.eclipse.apoapsis.ortserver.dao.repositories.scannerrun.DaoScannerRunRepository
-import org.eclipse.apoapsis.ortserver.dao.repositories.secret.DaoSecretRepository
+import org.eclipse.apoapsis.ortserver.dao.repositories.user.DaoUserRepository
 import org.eclipse.apoapsis.ortserver.logaccess.LogFileService
 import org.eclipse.apoapsis.ortserver.model.repositories.AdvisorJobRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.AdvisorRunRepository
@@ -95,11 +104,10 @@ import org.eclipse.apoapsis.ortserver.model.repositories.RepositoryRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.ResolvedConfigurationRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.ScannerJobRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.ScannerRunRepository
-import org.eclipse.apoapsis.ortserver.model.repositories.SecretRepository
+import org.eclipse.apoapsis.ortserver.model.repositories.UserRepository
 import org.eclipse.apoapsis.ortserver.secrets.SecretStorage
 import org.eclipse.apoapsis.ortserver.services.OrganizationService
 import org.eclipse.apoapsis.ortserver.services.ProductService
-import org.eclipse.apoapsis.ortserver.services.ReportStorageService
 import org.eclipse.apoapsis.ortserver.services.RepositoryService
 import org.eclipse.apoapsis.ortserver.services.ortrun.IssueService
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrtRunService
@@ -107,12 +115,14 @@ import org.eclipse.apoapsis.ortserver.services.ortrun.OrtServerFileListStorage
 import org.eclipse.apoapsis.ortserver.services.ortrun.PackageService
 import org.eclipse.apoapsis.ortserver.services.ortrun.ProjectService
 import org.eclipse.apoapsis.ortserver.services.ortrun.RuleViolationService
+import org.eclipse.apoapsis.ortserver.services.ortrun.RunVulnerabilitiesProjectionBuilder
 import org.eclipse.apoapsis.ortserver.services.ortrun.VulnerabilityService
 import org.eclipse.apoapsis.ortserver.storage.Storage
 
 import org.jetbrains.exposed.v1.jdbc.Database
 
 import org.koin.core.module.dsl.singleOf
+import org.koin.dsl.bind
 import org.koin.dsl.module
 
 import org.ossreviewtoolkit.downloader.DefaultWorkingTreeCache
@@ -125,6 +135,8 @@ import org.ossreviewtoolkit.scanner.utils.FileListResolver
  * integration tests, the [database][db] from the testcontainer and an [authorizationService] can be provided directly.
  */
 fun ortServerModule(config: ApplicationConfig, db: Database?, authorizationService: AuthorizationService?) = module {
+    includes(reportStorageModule)
+
     single { config }
     single { ConfigFactory.parseMap(config.toMap()) }
     singleOf(ConfigManager::create)
@@ -139,7 +151,7 @@ fun ortServerModule(config: ApplicationConfig, db: Database?, authorizationServi
     }
 
     single<KeycloakClient> {
-        DefaultKeycloakClient.create(get<ConfigManager>().createKeycloakClientConfiguration(), get())
+        DefaultKeycloakClient.create(KeycloakClientConfiguration.create(get()), get())
     }
 
     if (db != null) {
@@ -175,18 +187,19 @@ fun ortServerModule(config: ApplicationConfig, db: Database?, authorizationServi
     single<ResolvedConfigurationRepository> { DaoResolvedConfigurationRepository(get()) }
     single<ScannerJobRepository> { DaoScannerJobRepository(get()) }
     single<ScannerRunRepository> { DaoScannerRunRepository(get()) }
-    single<SecretRepository> { DaoSecretRepository(get()) }
+    single<UserRepository> { DaoUserRepository(get()) }
 
     singleOf(SecretStorage::createStorage)
 
     single {
-        val storage = Storage.create(OrtServerFileListStorage.STORAGE_TYPE, get())
+        val storage = Storage.create(OrtServerFileListStorage.STORAGE_TYPE, get(), get())
         FileListResolver(
             OrtServerFileListStorage(storage),
             DefaultProvenanceDownloader(DownloaderConfiguration(), DefaultWorkingTreeCache())
         )
     }
 
+    singleOf(::AdminConfigService)
     singleOf(::DependencyGraphService)
     singleOf(::InfrastructureServiceService)
     singleOf(::IssueService)
@@ -218,18 +231,21 @@ fun ortServerModule(config: ApplicationConfig, db: Database?, authorizationServi
     }
 
     single<UserService> {
-        KeycloakUserService(get())
+        KeycloakUserService(get(), get(), get())
     }
 
-    single {
-        val storage = Storage.create("reportStorage", get())
-        ReportStorageService(storage, get())
-    }
+    single { UserRegistrationService(get()) }
 
+    singleOf(::DefaultPluginsEventStore)
+    singleOf(::DefaultPluginsService)
     singleOf(::PluginEventStore)
     singleOf(::PluginService)
     singleOf(::PluginTemplateEventStore)
     singleOf(::PluginTemplateService)
+
+    singleOf(::ProjectionRegistry)
+    single { RunVulnerabilitiesProjectionBuilder() } bind ProjectionBuilder::class
+    single { ProjectionService(get(), get(), getAll(), ProjectionConfig.create(get<ConfigManager>())) }
 
     single { RolesToDbMigration(get(), get(), getKeycloakGroupPrefix(config), get()) }
 }

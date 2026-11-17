@@ -9,30 +9,28 @@ on:
 
 jobs:
   website-test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
     - name: Checkout Repository
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
     - name: Generate OpenAPI spec
       run: ./gradlew --stacktrace :core:generateOpenApiSpec
 
-    - name: Install Node
-      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+    - name: Setup pnpm
+      uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
       with:
-        node-version: 24
-        cache-dependency-path: website/pnpm-lock.yaml
-
-    - name: Enable Corepack
-      run: corepack enable
-
-    - name: Install dependencies
-      working-directory: website
-      run: pnpm ci
+        cache: true
+        require-lockfile: true
+        working-directory: website
 
     - name: Test build
       working-directory: website
       run: pnpm build
+
+    - name: Type check
+      working-directory: website
+      run: pnpm typecheck

@@ -24,12 +24,12 @@ import com.typesafe.config.ConfigFactory
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.matchers.nulls.beNull
-import io.kotest.matchers.result.shouldBeFailure
-import io.kotest.matchers.result.shouldBeSuccess
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.beInstanceOf
+
+import io.mockk.mockk
 
 import kotlin.IllegalArgumentException
 
@@ -46,7 +46,7 @@ class SecretStorageTest : WordSpec({
             val configManager = ConfigManager.create(ConfigFactory.empty())
 
             val exception = shouldThrow<SecretStorageException> {
-                SecretStorage.createStorage(configManager)
+                SecretStorage.createStorage(configManager, mockk())
             }
 
             exception.message shouldContain (SecretStorage.NAME_PROPERTY)
@@ -61,7 +61,7 @@ class SecretStorageTest : WordSpec({
             )
 
             val exception = shouldThrow<SecretStorageException> {
-                SecretStorage.createStorage(configManager)
+                SecretStorage.createStorage(configManager, mockk())
             }
 
             exception.message shouldContain providerName
@@ -102,47 +102,6 @@ class SecretStorageTest : WordSpec({
         }
     }
 
-    "readSecretCatching" should {
-        "return a Result with an existing secret" {
-            val result = createStorage().readSecretCatching(PASSWORD_PATH)
-
-            result shouldBeSuccess PASSWORD_SECRET
-        }
-
-        "return a Result with null for a non-existing secret" {
-            val result = createStorage().readSecretCatching(Path("non-existing"))
-
-            result shouldBeSuccess null
-        }
-
-        "return a failed Result if the SecretsProvider throws an exception" {
-            val result = createStorage().readSecretCatching(ERROR_PATH)
-
-            result shouldBeFailure { exception ->
-                exception.cause should beInstanceOf<IllegalArgumentException>()
-            }
-        }
-    }
-
-    "getSecretCatching" should {
-        "return a Result with an existing secret" {
-            val result = createStorage().getSecretCatching(PASSWORD_PATH)
-
-            result shouldBeSuccess PASSWORD_SECRET
-        }
-
-        "return a failed Result for a non existing secret" {
-            val path = Path("unresolvable")
-
-            val result = createStorage().getSecretCatching(path)
-
-            result shouldBeFailure { exception ->
-                exception should beInstanceOf<SecretStorageException>()
-                exception.message shouldContain path.path
-            }
-        }
-    }
-
     "writeSecret" should {
         "write a secret successfully" {
             val newPath = Path("new-secret")
@@ -163,28 +122,6 @@ class SecretStorageTest : WordSpec({
         }
     }
 
-    "writeSecretCatching" should {
-        "return a success result if the operation is successful" {
-            val newPath = Path("new-secret")
-            val newSecret = SecretValue("BrandNewSecret")
-            val storage = createStorage()
-
-            val result = storage.writeSecretCatching(newPath, newSecret)
-
-            result.isSuccess shouldBe true
-            storage.getSecret(newPath) shouldBe newSecret
-        }
-
-        "return a failure result for a failing operation" {
-            val result = createStorage().writeSecretCatching(ERROR_PATH, SecretValue("?"))
-
-            result shouldBeFailure { exception ->
-                exception should beInstanceOf<SecretStorageException>()
-                exception.cause should beInstanceOf<IllegalArgumentException>()
-            }
-        }
-    }
-
     "removeSecret" should {
         "successfully remove a secret" {
             val storage = createStorage()
@@ -200,25 +137,6 @@ class SecretStorageTest : WordSpec({
             }
 
             exception.cause should beInstanceOf<IllegalArgumentException>()
-        }
-    }
-
-    "removeSecretCatching" should {
-        "return a success result if the operation is successful" {
-            val storage = createStorage()
-            val result = storage.removeSecretCatching(PASSWORD_PATH)
-
-            result.isSuccess shouldBe true
-            storage.readSecret(PASSWORD_PATH) should beNull()
-        }
-
-        "return a failure result for a failed operation" {
-            val result = createStorage().removeSecretCatching(ERROR_PATH)
-
-            result shouldBeFailure { exception ->
-                exception should beInstanceOf<SecretStorageException>()
-                exception.cause should beInstanceOf<IllegalArgumentException>()
-            }
         }
     }
 
@@ -249,9 +167,7 @@ class SecretStorageTest : WordSpec({
 /** The path that causes errors. */
 private val ERROR_PATH = Path("error")
 
-/**
- * Return a [SecretStorage] object wrapping the test provider.
- */
+/** Return a [SecretStorage] object wrapping the test provider. */
 private fun createStorage(): SecretStorage {
     val properties = mapOf(
         "${SecretStorage.CONFIG_PREFIX}.${SecretStorage.NAME_PROPERTY}" to SecretsProviderFactoryForTesting.NAME,
@@ -259,5 +175,5 @@ private fun createStorage(): SecretStorage {
     )
     val configManager = ConfigManager.create(ConfigFactory.parseMap(properties))
 
-    return SecretStorage.createStorage(configManager)
+    return SecretStorage.createStorage(configManager, mockk())
 }

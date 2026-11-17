@@ -39,6 +39,8 @@ import org.eclipse.apoapsis.ortserver.components.serversettings.serverSettingsRo
 import org.eclipse.apoapsis.ortserver.components.snippetfindings.snippetFindingRoutes
 import org.eclipse.apoapsis.ortserver.compositions.secretsroutes.secretsCompositionRoutes
 import org.eclipse.apoapsis.ortserver.core.api.admin
+import org.eclipse.apoapsis.ortserver.core.api.allProducts
+import org.eclipse.apoapsis.ortserver.core.api.allRepositories
 import org.eclipse.apoapsis.ortserver.core.api.authentication
 import org.eclipse.apoapsis.ortserver.core.api.downloads
 import org.eclipse.apoapsis.ortserver.core.api.healthChecks
@@ -61,12 +63,14 @@ fun Application.configureRouting() {
             authenticate(AuthenticationProviders.TOKEN_PROVIDER) {
                 rateLimit(RateLimitName("authorized")) {
                     admin()
+                    allProducts()
+                    allRepositories()
                     authorizationRoutes()
                     dependencyGraphRoutes(get(), get(), get(), get())
                     infrastructureServicesRoutes(get())
                     licenseFindingRoutes(get(), get())
                     organizations()
-                    pluginManagerRoutes(get(), get(), get())
+                    pluginManagerRoutes(get(), get(), get(), get(), get())
                     products()
                     repositories()
                     resolutionRoutes(get(), get(), get())

@@ -18,9 +18,6 @@
  */
 
 plugins {
-    // Apply core plugins.
-    application
-
     // Apply precompiled plugins.
     id("ort-server-kotlin-jvm-conventions")
     id("ort-server-publication-conventions")
@@ -36,29 +33,31 @@ repositories {
 }
 
 dependencies {
+    api(projects.components.adminConfig.adminConfigBackend)
+    api(projects.components.infrastructureServices.infrastructureServicesBackend)
+    api(projects.components.resolutions.resolutionsBackend)
+    api(projects.components.secrets.secretsBackend)
+    api(projects.config.configSpi)
+    api(projects.model)
+    api(projects.secrets.secretsSpi)
+    api(projects.shared.authenticator)
+    api(projects.storage.storageSpi)
+    api(projects.transport.transportSpi)
+    api(projects.utils.logging)
+
     api(libs.koin.core)
+    api(ortLibs.model)
 
-    implementation(projects.components.adminConfig.adminConfigBackend)
-    implementation(projects.components.infrastructureServices.infrastructureServicesBackend)
-    implementation(projects.components.resolutions.resolutionsBackend)
-    implementation(projects.components.secrets.secretsBackend)
-    implementation(projects.config.configSpi)
     implementation(projects.dao)
-    implementation(projects.model)
-    implementation(projects.secrets.secretsSpi)
     implementation(projects.services.ortRunService)
-    implementation(projects.storage.storageSpi)
-    implementation(projects.transport.transportSpi)
+    implementation(projects.shared.coroutines)
     implementation(projects.utils.config)
-    implementation(projects.utils.logging)
 
-    implementation(libs.commons.text)
     implementation(libs.kaml)
     implementation(libs.kotlinx.coroutines)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.typesafeConfig)
     implementation(ortLibs.downloader)
-    implementation(ortLibs.model)
     implementation(ortLibs.scanner)
     implementation(ortLibs.utils.authentication)
     implementation(ortLibs.utils.common)

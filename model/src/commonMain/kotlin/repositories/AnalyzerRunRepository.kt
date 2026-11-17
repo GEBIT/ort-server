@@ -31,15 +31,11 @@ import org.eclipse.apoapsis.ortserver.model.runs.Package
 import org.eclipse.apoapsis.ortserver.model.runs.Project
 import org.eclipse.apoapsis.ortserver.model.runs.ShortestDependencyPath
 
-/**
- * A repository of [analyzer runs][AnalyzerRun].
- */
+/** A repository of [analyzer runs][AnalyzerRun]. */
 interface AnalyzerRunRepository {
-    /**
-     * Create an analyzer run.
-     */
+    /** Create an analyzer run. */
     @Suppress("LongParameterList")
-    fun create(
+    suspend fun create(
         analyzerJobId: Long,
         startTime: Instant,
         endTime: Instant,
@@ -54,13 +50,9 @@ interface AnalyzerRunRepository {
         excludedProjectIds: Set<Identifier> = emptySet()
     ): AnalyzerRun
 
-    /**
-     * Get an analyzer run by [id]. Returns null if the analyzer run is not found.
-     */
-    fun get(id: Long): AnalyzerRun?
+    /** Get an analyzer run by [id]. Returns null if the analyzer run is not found. */
+    suspend fun get(id: Long): AnalyzerRun?
 
-    /**
-     * Get an analyzer run by [analyzerJobId]. Returns null if the analyzer run is not found.
-     */
-    fun getByJobId(analyzerJobId: Long): AnalyzerRun?
+    /** Get an analyzer run by [analyzerJobId]. Returns null if the analyzer run is not found. */
+    suspend fun getByJobId(analyzerJobId: Long): AnalyzerRun?
 }

@@ -19,13 +19,12 @@
 
 package org.eclipse.apoapsis.ortserver.workers.config
 
+import kotlin.coroutines.cancellation.CancellationException
+
 import org.eclipse.apoapsis.ortserver.components.adminconfig.AdminConfigService
-import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginService
-import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginTemplateService
 import org.eclipse.apoapsis.ortserver.config.Path
-import org.eclipse.apoapsis.ortserver.config.RequestedConfigContext
 import org.eclipse.apoapsis.ortserver.config.ResolvedConfigContext
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.JobConfigurations
 import org.eclipse.apoapsis.ortserver.model.OrganizationId
 import org.eclipse.apoapsis.ortserver.model.OrtRun
@@ -56,11 +55,8 @@ class ConfigWorker(
     /** The service to access the admin configuration. */
     private val adminConfigService: AdminConfigService,
 
-    /** The service for accessing plugin information. */
-    private val pluginService: PluginService,
-
-    /** The service for accessing plugin templates. */
-    private val pluginTemplateService: PluginTemplateService
+    /** The applicator for the default plugins and plugin templates configured by administrators. */
+    private val pluginTemplateApplicator: PluginTemplateApplicator
 ) {
     companion object {
         /** Constant for the path to the script that validates and transforms parameters. */
@@ -69,62 +65,33 @@ class ConfigWorker(
         private val logger = LoggerFactory.getLogger(ConfigWorker::class.java)
     }
 
-    /**
-     * Execute the config validation on the ORT run with the given [ortRunId].
-     */
+    /** Execute the config validation on the ORT run with the given [ortRunId]. */
     suspend fun run(ortRunId: Long): RunResult = runCatching {
         logger.info("Running config worker for run '$ortRunId'.")
 
         contextFactory.withContext(ortRunId) { context ->
-            val jobConfigContext = context.ortRun.jobConfigContext?.let(::RequestedConfigContext)
-                ?: RequestedConfigContext.EMPTY
-            val resolvedJobConfigContext = context.configManager.resolveContext(jobConfigContext)
-
-            logger.info(
-                "Provided configuration context '{}' was resolved to '{}'.",
-                context.ortRun.jobConfigContext,
-                resolvedJobConfigContext.name
-            )
-
-            // Resolve the default package managers before the validation script runs so the script can see and
-            // potentially override them.
-            val baseConfigs = context.resolveDefaultPackageManagers(context.ortRun.jobConfigs)
-
-            // TODO: Currently the path to the validation script is hard-coded. It may make sense to have it
-            //       configurable.
-            val validationScriptExists = context.configManager.containsFile(
-                resolvedJobConfigContext,
-                VALIDATION_SCRIPT_PATH
-            )
-
-            val validationScriptResult = if (validationScriptExists) {
-                logger.info("Running validation script.")
-
-                val validationScript = context.configManager.getFileAsString(
-                    resolvedJobConfigContext,
-                    VALIDATION_SCRIPT_PATH
-                )
-                val validationScriptRunner = ValidationScriptRunner(
-                    createValidationWorkerContext(context, resolvedJobConfigContext, baseConfigs)
-                )
-
-                validationScriptRunner.runScript(validationScript).also {
-                    logger.debug("Issues returned by validation script: {}.", it.issues)
+            val resolvedJobConfigContext = ResolvedConfigContext(
+                checkNotNull(context.ortRun.resolvedJobConfigContext) {
+                    "The config context of ORT run '$ortRunId' was not resolved when the run was created."
                 }
-            } else {
-                logger.info("Skipping validation as no script exists.")
+            )
 
-                ConfigValidationResultSuccess(baseConfigs)
-            }
+            logger.info("Using the configuration context '{}'.", resolvedJobConfigContext.name)
 
-            val validationResult = when (validationScriptResult) {
-                is ConfigValidationResultSuccess ->
-                    validateAdminConfig(resolvedJobConfigContext, validationScriptResult)
+            // Resolve the default plugins and apply the plugin templates before the validation script runs so that the
+            // script can override any value an administrator has configured.
+            val validationResult = runCatching {
+                pluginTemplateApplicator.applyTemplates(
+                    context.ortRun.jobConfigs,
+                    OrganizationId(context.ortRun.organizationId),
+                    resolvedJobConfigContext
+                )
+            }.fold(
+                onSuccess = { baseConfigs -> validateConfigs(context, resolvedJobConfigContext, baseConfigs) },
+                onFailure = ::createPluginTemplateFailure
+            )
 
-                is ConfigValidationResultFailure -> validationScriptResult
-            }
-
-            storeResult(ortRunId, resolvedJobConfigContext, validationResult)
+            storeResult(ortRunId, validationResult)
 
             when (validationResult) {
                 is ConfigValidationResultSuccess -> RunResult.Success
@@ -135,7 +102,65 @@ class ConfigWorker(
         }
     }.getOrElse { RunResult.Failed(it) }
 
-    private fun validateAdminConfig(
+    /**
+     * Validate and transform the given [baseConfigs] by running the validation script found in the given
+     * [resolvedJobConfigContext] - if any - and afterwards checking the result against the admin configuration.
+     */
+    private suspend fun validateConfigs(
+        context: WorkerContext,
+        resolvedJobConfigContext: ResolvedConfigContext,
+        baseConfigs: JobConfigurations
+    ): ConfigValidationResult {
+        // TODO: Currently the path to the validation script is hard-coded. It may make sense to have it
+        //       configurable.
+        val validationScriptExists = context.configManager.containsFile(
+            resolvedJobConfigContext,
+            VALIDATION_SCRIPT_PATH
+        )
+
+        val validationScriptResult = if (validationScriptExists) {
+            logger.info("Running validation script.")
+
+            val validationScript = context.configManager.getFileAsString(
+                resolvedJobConfigContext,
+                VALIDATION_SCRIPT_PATH
+            )
+            val validationScriptRunner = ValidationScriptRunner(
+                createValidationWorkerContext(context, baseConfigs)
+            )
+
+            validationScriptRunner.runScript(validationScript).also {
+                logger.debug("Issues returned by validation script: {}.", it.issues)
+            }
+        } else {
+            logger.info("Skipping validation as no script exists.")
+
+            ConfigValidationResultSuccess(baseConfigs)
+        }
+
+        return when (validationScriptResult) {
+            is ConfigValidationResultSuccess -> validateAdminConfig(resolvedJobConfigContext, validationScriptResult)
+            is ConfigValidationResultFailure -> validationScriptResult
+        }
+    }
+
+    /**
+     * Create a [ConfigValidationResultFailure] with an issue for the given [exception] that was thrown while applying
+     * the default plugins or plugin templates.
+     */
+    private fun createPluginTemplateFailure(exception: Throwable): ConfigValidationResultFailure {
+        logger.error("Error while applying the default plugins or plugin templates.", exception)
+
+        val issue = createIssue(
+            message = "Could not apply the default plugins or plugin templates: '${exception.message}'. This is a " +
+                    "problem with the configuration of ORT Server, please contact the administrator.",
+            source = PLUGIN_TEMPLATE_SOURCE
+        )
+
+        return ConfigValidationResultFailure(listOf(issue))
+    }
+
+    private suspend fun validateAdminConfig(
         resolvedJobConfigContext: ResolvedConfigContext,
         validationScriptResult: ConfigValidationResultSuccess
     ) = runCatching {
@@ -152,6 +177,8 @@ class ConfigWorker(
             validationScriptResult
         }
     }.getOrElse { e ->
+        if (e is CancellationException) throw e
+
         logger.error("Error during admin configuration validation.", e)
 
         val issue = createIssue(
@@ -165,7 +192,6 @@ class ConfigWorker(
 
     private suspend fun storeResult(
         ortRunId: Long,
-        resolvedJobConfigContext: ResolvedConfigContext,
         validationResult: ConfigValidationResult
     ) {
         val labels: OptionalValue<Map<String, String>>
@@ -183,11 +209,10 @@ class ConfigWorker(
             }
         }
 
-        db.dbQuery {
+        db.transaction {
             ortRunRepository.update(
                 id = ortRunId,
                 resolvedJobConfigs = resolvedJobConfigs,
-                resolvedJobConfigContext = resolvedJobConfigContext.name.asPresent(),
                 issues = validationResult.optionalIssues,
                 labels = labels
             )
@@ -195,47 +220,16 @@ class ConfigWorker(
     }
 
     /**
-     * Create a [WorkerContext] that delegates to the given [context], but returns the provided
-     * [resolvedJobConfigContext] and [baseConfigs]. This is needed because the [WorkerContext.ortRun] object contained
-     * in the original [WorkerContext] does not have the resolved configuration context yet; it is updated at the end
-     * of the worker execution. However, the config validation script needs the right configuration context. The
-     * [baseConfigs] override ensures the script sees the pre-resolved job configurations, including the default
-     * package managers.
+     * Create a [WorkerContext] that delegates to the given [context], but returns the provided [baseConfigs] as the
+     * job configurations of the [WorkerContext.ortRun]. This ensures the validation script sees the pre-resolved job
+     * configurations, including the values contributed by the plugin templates.
      */
-    private fun createValidationWorkerContext(
-        context: WorkerContext,
-        resolvedJobConfigContext: ResolvedConfigContext,
-        baseConfigs: JobConfigurations
-    ): WorkerContext {
-        val runWithConfigContext = context.ortRun.copy(
-            resolvedJobConfigContext = resolvedJobConfigContext.name,
-            jobConfigs = baseConfigs
-        )
+    private fun createValidationWorkerContext(context: WorkerContext, baseConfigs: JobConfigurations): WorkerContext {
+        val runWithBaseConfigs = context.ortRun.copy(jobConfigs = baseConfigs)
 
         return object : WorkerContext by context {
             override val ortRun: OrtRun
-                get() = runWithConfigContext
+                get() = runWithBaseConfigs
         }
-    }
-
-    /**
-     * Return a copy of the given [jobConfigs] with the default package managers filled in for the analyzer
-     * configuration if [AnalyzerJobConfiguration.enabledPackageManagers][org.eclipse.apoapsis.ortserver.model
-     * .AnalyzerJobConfiguration.enabledPackageManagers] is null or empty.
-     */
-    private fun WorkerContext.resolveDefaultPackageManagers(jobConfigs: JobConfigurations): JobConfigurations {
-        if (!jobConfigs.analyzer.enabledPackageManagers.isNullOrEmpty()) return jobConfigs
-
-        val defaults = getDefaultPackageManagers(
-            pluginService,
-            pluginTemplateService,
-            OrganizationId(ortRun.organizationId)
-        )
-
-        logger.info("Determined default package managers: $defaults")
-
-        return jobConfigs.copy(
-            analyzer = jobConfigs.analyzer.copy(enabledPackageManagers = defaults)
-        )
     }
 }

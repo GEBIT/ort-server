@@ -65,6 +65,7 @@ import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolutionReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseChoices
 import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseFindingCuration
+import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseFindingCurationReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageConfiguration
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCuration
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCurationData
@@ -79,6 +80,7 @@ import org.eclipse.apoapsis.ortserver.model.runs.repository.Resolutions
 import org.eclipse.apoapsis.ortserver.model.runs.repository.RuleViolationResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.RuleViolationResolutionReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeInclude
 import org.eclipse.apoapsis.ortserver.model.runs.repository.SpdxLicenseChoice
 import org.eclipse.apoapsis.ortserver.model.runs.repository.VcsInfoCurationData
 import org.eclipse.apoapsis.ortserver.model.runs.repository.VcsMatcher
@@ -177,6 +179,8 @@ import org.ossreviewtoolkit.model.config.RuleViolationResolutionReason as OrtRul
 import org.ossreviewtoolkit.model.config.ScannerConfiguration as OrtScannerConfiguration
 import org.ossreviewtoolkit.model.config.ScopeExclude as OrtScopeExclude
 import org.ossreviewtoolkit.model.config.ScopeExcludeReason as OrtScopeExcludeReason
+import org.ossreviewtoolkit.model.config.ScopeInclude as OrtScopeInclude
+import org.ossreviewtoolkit.model.config.ScopeIncludeReason as OrtScopeIncludeReason
 import org.ossreviewtoolkit.model.config.VcsMatcher as OrtVcsMatcher
 import org.ossreviewtoolkit.model.config.VulnerabilityResolution as OrtVulnerabilityResolution
 import org.ossreviewtoolkit.model.config.VulnerabilityResolutionReason as OrtVulnerabilityResolutionReason
@@ -310,7 +314,7 @@ fun Excludes.mapToOrt() = OrtExcludes(
 
 fun Identifier.mapToOrt() = OrtIdentifier(type = type, namespace = namespace, name = name, version = version)
 
-fun Includes.mapToOrt() = OrtIncludes(paths.map(PathInclude::mapToOrt))
+fun Includes.mapToOrt() = OrtIncludes(paths.map(PathInclude::mapToOrt), scopes.map(ScopeInclude::mapToOrt))
 
 fun Issue.mapToOrt() = OrtIssue(
     timestamp = timestamp.toJavaInstant(),
@@ -358,9 +362,18 @@ fun LicenseFindingCuration.mapToOrt() = OrtLicenseFindingCuration(
     lineCount = lineCount,
     detectedLicense = detectedLicense?.toSpdx(),
     concludedLicense = concludedLicense.toSpdx(),
-    reason = OrtLicenseFindingCurationReason.valueOf(reason),
+    reason = reason.mapToOrt(),
     comment = comment
 )
+
+fun LicenseFindingCurationReason.mapToOrt() = when (this) {
+    LicenseFindingCurationReason.CODE -> OrtLicenseFindingCurationReason.CODE
+    LicenseFindingCurationReason.DATA_OF -> OrtLicenseFindingCurationReason.DATA_OF
+    LicenseFindingCurationReason.DOCUMENTATION_OF -> OrtLicenseFindingCurationReason.DOCUMENTATION_OF
+    LicenseFindingCurationReason.INCORRECT -> OrtLicenseFindingCurationReason.INCORRECT
+    LicenseFindingCurationReason.NOT_DETECTED -> OrtLicenseFindingCurationReason.NOT_DETECTED
+    LicenseFindingCurationReason.REFERENCE -> OrtLicenseFindingCurationReason.REFERENCE
+}
 
 fun LicenseSource.mapToOrt() = when (this) {
     LicenseSource.CONCLUDED -> OrtLicenseSource.CONCLUDED
@@ -416,7 +429,8 @@ fun Package.mapToOrt() =
         isMetadataOnly = isMetadataOnly,
         isModified = isModified,
         sourceCodeOrigins = sourceCodeOrigins?.map { it.mapToOrt() },
-        labels = labels
+        labels = labels,
+        publishedAt = publishedAt?.toJavaInstant()
     )
 
 fun PackageConfiguration.mapToOrt() =
@@ -445,7 +459,8 @@ fun PackageCurationData.mapToOrt() = OrtPackageCurationData(
     isModified = isModified,
     declaredLicenseMapping = declaredLicenseMapping.mapValues { it.value.toSpdx() },
     sourceCodeOrigins = sourceCodeOrigins?.map { it.mapToOrt() },
-    labels = labels.entries.associate { (key, value) -> key to value }
+    labels = labels.entries.associate { (key, value) -> key to value },
+    publishedAt = publishedAt?.toJavaInstant()
 )
 
 fun PackageCurationProviderConfig.mapToOrt() = OrtResolvedPackageCurations.Provider(id = name)
@@ -678,6 +693,12 @@ fun ScanSummary.mapToOrt() =
 fun ScopeExclude.mapToOrt() = OrtScopeExclude(
     pattern = pattern,
     reason = OrtScopeExcludeReason.valueOf(reason),
+    comment = comment
+)
+
+fun ScopeInclude.mapToOrt() = OrtScopeInclude(
+    pattern = pattern,
+    reason = OrtScopeIncludeReason.valueOf(reason),
     comment = comment
 )
 

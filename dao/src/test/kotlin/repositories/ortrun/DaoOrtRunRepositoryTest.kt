@@ -19,9 +19,11 @@
 
 package org.eclipse.apoapsis.ortserver.dao.repositories.ortrun
 
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.matchers.collections.beEmpty
 import io.kotest.matchers.collections.containExactlyInAnyOrder
+import io.kotest.matchers.collections.shouldBeSingleton
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.longs.shouldBeInRange
 import io.kotest.matchers.nulls.beNull
@@ -35,15 +37,21 @@ import io.mockk.mockkObject
 import io.mockk.unmockkAll
 
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+
+import org.eclipse.apoapsis.ortserver.dao.repositories.user.UserDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifierDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.IssueDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.OrtRunIssueDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.OrtRunsIssuesTable
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.ActiveOrtRun
 import org.eclipse.apoapsis.ortserver.model.AnalyzerJobConfiguration
 import org.eclipse.apoapsis.ortserver.model.JobConfigurations
@@ -51,8 +59,16 @@ import org.eclipse.apoapsis.ortserver.model.OrtRun
 import org.eclipse.apoapsis.ortserver.model.OrtRunFilters
 import org.eclipse.apoapsis.ortserver.model.OrtRunStatus
 import org.eclipse.apoapsis.ortserver.model.Severity
+import org.eclipse.apoapsis.ortserver.model.User
 import org.eclipse.apoapsis.ortserver.model.runs.Identifier
 import org.eclipse.apoapsis.ortserver.model.runs.Issue
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathInclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathIncludesExcludes
+import org.eclipse.apoapsis.ortserver.model.runs.repository.RunIncludesExcludes
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeInclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeIncludesExcludes
 import org.eclipse.apoapsis.ortserver.model.util.ComparisonOperator
 import org.eclipse.apoapsis.ortserver.model.util.FilterOperatorAndValue
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
@@ -61,12 +77,15 @@ import org.eclipse.apoapsis.ortserver.model.util.OrderDirection
 import org.eclipse.apoapsis.ortserver.model.util.OrderField
 import org.eclipse.apoapsis.ortserver.model.util.asPresent
 import org.eclipse.apoapsis.ortserver.utils.system.ORT_SERVER_VERSION
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.select
 
 @Suppress("LargeClass")
 class DaoOrtRunRepositoryTest : WordSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     lateinit var ortRunRepository: DaoOrtRunRepository
@@ -149,6 +168,54 @@ class DaoOrtRunRepositoryTest : WordSpec({
             )
         }
 
+        "store the resolved config context" {
+            val createdOrtRun = ortRunRepository.create(
+                repositoryId,
+                "revision",
+                null,
+                jobConfigurations,
+                "someConfigContext",
+                labelsMap,
+                traceId = null,
+                null,
+                resolvedJobConfigContext = "resolvedConfigContext"
+            )
+
+            ortRunRepository.get(createdOrtRun.id) shouldNotBeNull {
+                jobConfigContext shouldBe "someConfigContext"
+                resolvedJobConfigContext shouldBe "resolvedConfigContext"
+            }
+        }
+
+        "store the requested includes and excludes" {
+            val includesExcludes = RunIncludesExcludes(
+                paths = PathIncludesExcludes(
+                    includes = listOf(PathInclude("src/**", "SOURCE_OF", "The sources.")),
+                    excludes = listOf(PathExclude("test/**", "TEST_OF", "The tests."))
+                ),
+                scopes = ScopeIncludesExcludes(
+                    includes = listOf(ScopeInclude("compile", "SOURCE_OF")),
+                    excludes = listOf(ScopeExclude("test.*", "TEST_DEPENDENCY_OF", "Test scopes."))
+                )
+            )
+
+            val createdOrtRun = ortRunRepository.create(
+                repositoryId,
+                "revision",
+                null,
+                jobConfigurations,
+                null,
+                labelsMap,
+                traceId = null,
+                null,
+                includesExcludes = includesExcludes
+            )
+
+            ortRunRepository.get(createdOrtRun.id) shouldNotBeNull {
+                this.includesExcludes shouldBe includesExcludes
+            }
+        }
+
         "create sequential indexes for different repositories" {
             val otherRepository = dbExtension.fixtures.createRepository(url = "https://example.com/repo2.git")
 
@@ -192,6 +259,97 @@ class DaoOrtRunRepositoryTest : WordSpec({
                 traceId = null,
                 null
             ).index shouldBe 2
+        }
+
+        "create sequential indexes for concurrent requests for the same repository" {
+            val runCount = 20
+            val user = User("user-id", "john.doe", "John Doe")
+
+            val runs = coroutineScope {
+                (1..runCount).map { idx ->
+                    async {
+                        ortRunRepository.create(
+                            repositoryId,
+                            "revision-$idx",
+                            null,
+                            jobConfigurations,
+                            null,
+                            mapOf("new-label" to "value-$idx", "shared-label" to "value"),
+                            traceId = null,
+                            null,
+                            user
+                        )
+                    }
+                }.awaitAll()
+            }
+
+            runs.map { it.index } shouldContainExactlyInAnyOrder (1L..runCount).toList()
+        }
+
+        "create runs for different users with the same username" {
+            val formerUser = User("former-user-id", "john.doe", "John Doe")
+            val currentUser = User("current-user-id", "john.doe", "John Smith")
+
+            val runOfFormerUser = ortRunRepository.create(
+                repositoryId,
+                "revision",
+                null,
+                jobConfigurations,
+                null,
+                labelsMap,
+                traceId = null,
+                null,
+                userDisplayName = formerUser
+            )
+            val runOfCurrentUser = ortRunRepository.create(
+                repositoryId,
+                "revision",
+                null,
+                jobConfigurations,
+                null,
+                labelsMap,
+                traceId = null,
+                null,
+                userDisplayName = currentUser
+            )
+
+            ortRunRepository.get(runOfFormerUser.id)?.userDisplayName shouldBe formerUser
+            ortRunRepository.get(runOfCurrentUser.id)?.userDisplayName shouldBe currentUser
+        }
+
+        "keep the time when the user was first stored" {
+            val user = User("user-id", "john.doe", "John Doe")
+
+            ortRunRepository.create(
+                repositoryId,
+                "revision",
+                null,
+                jobConfigurations,
+                null,
+                labelsMap,
+                traceId = null,
+                null,
+                userDisplayName = user
+            )
+            val firstCreatedAt = dbExtension.db.transaction { UserDao[user.userId].createdAt }
+
+            ortRunRepository.create(
+                repositoryId,
+                "revision",
+                null,
+                jobConfigurations,
+                null,
+                labelsMap,
+                traceId = null,
+                null,
+                userDisplayName = user.copy(fullName = "John Smith")
+            )
+
+            dbExtension.db.transaction {
+                val userDao = UserDao[user.userId]
+                userDao.fullName shouldBe "John Smith"
+                userDao.createdAt shouldBe firstCreatedAt
+            }
         }
     }
 
@@ -500,7 +658,7 @@ class DaoOrtRunRepositoryTest : WordSpec({
                 Clock.System.now()
             } returnsMany mockTimes
 
-            fun createFinishedRun(): OrtRun =
+            suspend fun createFinishedRun(): OrtRun =
                 ortRunRepository.create(
                     repositoryId,
                     "revision",
@@ -552,7 +710,7 @@ class DaoOrtRunRepositoryTest : WordSpec({
                 Clock.System.now()
             } returnsMany mockTimes
 
-            fun createFinishedRun(): OrtRun =
+            suspend fun createFinishedRun(): OrtRun =
                 ortRunRepository.create(
                     repositoryId,
                     "revision",
@@ -575,7 +733,7 @@ class DaoOrtRunRepositoryTest : WordSpec({
 
     "update" should {
         "update an entry in the database" {
-            val identifier = dbExtension.db.dbQuery {
+            val identifier = dbExtension.db.transaction {
                 IdentifierDao.getOrPut(Identifier("test", "ns", "name", "1.0"))
             }
 
@@ -652,7 +810,7 @@ class DaoOrtRunRepositoryTest : WordSpec({
         }
 
         "add new issues to a run" {
-            val identifier = dbExtension.db.dbQuery {
+            val identifier = dbExtension.db.transaction {
                 IdentifierDao.getOrPut(Identifier("test", "ns", "name", "1.0"))
             }
 
@@ -707,10 +865,10 @@ class DaoOrtRunRepositoryTest : WordSpec({
         }
 
         "deduplicate issues added to a run" {
-            val identifier1 = dbExtension.db.dbQuery {
+            val identifier1 = dbExtension.db.transaction {
                 IdentifierDao.getOrPut(Identifier("test", "ns", "name", "1.0"))
             }
-            val identifier2 = dbExtension.db.dbQuery {
+            val identifier2 = dbExtension.db.transaction {
                 IdentifierDao.getOrPut(Identifier("test", "ns", "name2", "2.0"))
             }
 
@@ -767,7 +925,7 @@ class DaoOrtRunRepositoryTest : WordSpec({
                 issues = listOf(issue3).asPresent()
             )
 
-            dbExtension.db.dbQuery {
+            dbExtension.db.transaction {
                 val issueTime = Instant.parse("2024-10-18T09:42:31Z")
                 val expectedIssues = listOf(
                     issue1.copy(timestamp = issueTime, worker = null, identifier = null),
@@ -816,6 +974,158 @@ class DaoOrtRunRepositoryTest : WordSpec({
         }
     }
 
+    "updateIssueHowToFixTexts" should {
+        var ortRunId = -1L
+        val issue = Issue(
+            timestamp = Instant.parse("2026-01-01T12:00:00Z"),
+            source = "Analyzer",
+            message = "A test issue",
+            severity = Severity.WARNING,
+            affectedPath = "test/path",
+            identifier = Identifier("Maven", "org.example", "package1", "1.0"),
+            howToFix = "Upgrade to **2.0**."
+        )
+
+        beforeEach {
+            ortRunId = dbExtension.fixtures.ortRun.id
+            ortRunRepository.update(ortRunId, issues = listOf(issue).asPresent())
+        }
+
+        "reload how-to-fix text from the run association" {
+            ortRunRepository.get(ortRunId).shouldNotBeNull().issues.shouldBeSingleton {
+                it shouldBe issue
+            }
+        }
+
+        "deduplicate inputs by matched issue content" {
+            val updatedIssue = issue.copy(howToFix = "Use `version 3.0`.")
+            val sameIssueWithDifferentIdentifier = updatedIssue.copy(
+                timestamp = updatedIssue.timestamp + 123.nanoseconds,
+                identifier = updatedIssue.identifier!!.copy(name = "package2")
+            )
+
+            ortRunRepository.updateIssueHowToFixTexts(
+                ortRunId,
+                listOf(updatedIssue, sameIssueWithDifferentIdentifier)
+            ) shouldBe 1
+
+            ortRunRepository.get(ortRunId).shouldNotBeNull().issues.shouldBeSingleton {
+                it shouldBe updatedIssue
+            }
+        }
+
+        "reject conflicting texts for the same matched issue content" {
+            val updatedIssue = issue.copy(howToFix = "Use `version 3.0`.")
+            val conflictingIssue = updatedIssue.copy(
+                identifier = updatedIssue.identifier!!.copy(name = "package2"),
+                howToFix = "Remove the package."
+            )
+
+            val exception = shouldThrow<IllegalArgumentException> {
+                ortRunRepository.updateIssueHowToFixTexts(ortRunId, listOf(updatedIssue, conflictingIssue))
+            }
+
+            exception.message shouldBe "Issues with the same timestamp=2026-01-01T12:00:00Z, source='Analyzer', " +
+                "message='A test issue', severity=WARNING, affectedPath='test/path' " +
+                "have different how-to-fix texts: \"Use `version 3.0`.\", \"Remove the package.\"."
+
+            ortRunRepository.get(ortRunId).shouldNotBeNull().issues.shouldBeSingleton {
+                it shouldBe issue
+            }
+        }
+
+        "update all identifiers sharing the same issue occurrence" {
+            val otherIssue = issue.copy(identifier = issue.identifier!!.copy(name = "package2"), howToFix = null)
+            ortRunRepository.update(ortRunId, issues = listOf(otherIssue).asPresent())
+
+            ortRunRepository.get(ortRunId).shouldNotBeNull().issues shouldContainExactlyInAnyOrder
+                listOf(issue, otherIssue)
+
+            val updatedIssue = issue.copy(identifier = null, howToFix = "Updated guidance")
+            ortRunRepository.updateIssueHowToFixTexts(ortRunId, listOf(updatedIssue)) shouldBe 2
+
+            ortRunRepository.get(ortRunId).shouldNotBeNull().issues shouldContainExactlyInAnyOrder listOf(
+                issue.copy(howToFix = updatedIssue.howToFix),
+                otherIssue.copy(howToFix = updatedIssue.howToFix)
+            )
+            dbExtension.db.transaction {
+                IssueDao.all().count() shouldBe 1L
+            }
+        }
+
+        "leave the same issue in another run unchanged" {
+            val otherRun = ortRunRepository.create(
+                repositoryId, "other", null, jobConfigurations, null, emptyMap(), null, null
+            )
+            ortRunRepository.update(otherRun.id, issues = listOf(issue).asPresent())
+
+            val updatedIssue = issue.copy(howToFix = "New guidance")
+            ortRunRepository.updateIssueHowToFixTexts(ortRunId, listOf(updatedIssue)) shouldBe 1
+
+            ortRunRepository.get(otherRun.id).shouldNotBeNull().issues.shouldBeSingleton {
+                it shouldBe issue
+            }
+        }
+
+        "leave occurrences with different timestamps unchanged" {
+            val laterIssue = issue.copy(timestamp = issue.timestamp + 1.seconds)
+            ortRunRepository.update(ortRunId, issues = listOf(laterIssue).asPresent())
+            val updatedIssue = issue.copy(howToFix = "New guidance")
+
+            ortRunRepository.updateIssueHowToFixTexts(ortRunId, listOf(updatedIssue)) shouldBe 1
+
+            ortRunRepository.get(ortRunId).shouldNotBeNull().issues shouldContainExactlyInAnyOrder
+                listOf(updatedIssue, laterIssue)
+        }
+
+        "normalize timestamps to database precision" {
+            val updatedIssue = issue.copy(timestamp = issue.timestamp + 123.nanoseconds, howToFix = "New guidance")
+
+            ortRunRepository.updateIssueHowToFixTexts(ortRunId, listOf(updatedIssue)) shouldBe 1
+
+            ortRunRepository.get(ortRunId).shouldNotBeNull().issues.shouldBeSingleton {
+                it shouldBe issue.copy(howToFix = updatedIssue.howToFix)
+            }
+        }
+
+        "clear previously stored text" {
+            val updatedIssue = issue.copy(howToFix = null)
+
+            ortRunRepository.updateIssueHowToFixTexts(ortRunId, listOf(updatedIssue)) shouldBe 1
+
+            ortRunRepository.get(ortRunId).shouldNotBeNull().issues.shouldBeSingleton {
+                it shouldBe updatedIssue
+            }
+        }
+
+        "not insert unknown issues or match different issue content" {
+            val unknownIssues = listOf(
+                issue.copy(source = "Scanner"),
+                issue.copy(message = "Another issue"),
+                issue.copy(severity = Severity.ERROR),
+                issue.copy(affectedPath = null)
+            )
+
+            ortRunRepository.updateIssueHowToFixTexts(ortRunId, unknownIssues) shouldBe 0
+
+            ortRunRepository.get(ortRunId).shouldNotBeNull().issues.shouldBeSingleton {
+                it shouldBe issue
+            }
+            dbExtension.db.transaction {
+                IssueDao.all().count() shouldBe 1L
+                OrtRunIssueDao.all().count() shouldBe 1L
+            }
+        }
+
+        "ignore an empty collection" {
+            ortRunRepository.updateIssueHowToFixTexts(ortRunId, emptyList()) shouldBe 0
+
+            ortRunRepository.get(ortRunId).shouldNotBeNull().issues.shouldBeSingleton {
+                it shouldBe issue
+            }
+        }
+    }
+
     "delete" should {
         "delete the database entries" {
             with(dbExtension.fixtures) {
@@ -849,7 +1159,7 @@ class DaoOrtRunRepositoryTest : WordSpec({
                 notifierJobRepository.getForOrtRun(ortRun.id) should beNull()
             }
 
-            dbExtension.db.dbQuery {
+            dbExtension.db.transaction {
                 val runIssues = OrtRunIssueDao.find {
                     OrtRunsIssuesTable.ortRunId eq dbExtension.fixtures.ortRun.id
                 }.toList()
@@ -864,9 +1174,7 @@ class DaoOrtRunRepositoryTest : WordSpec({
     }
 })
 
-/**
- * Check whether the given [timestamp] is rather close to the current system time.
- */
+/** Check whether the given [timestamp] is rather close to the current system time. */
 private fun assertCurrentTime(timestamp: Instant?) {
     with(Clock.System.now() - timestamp.shouldNotBeNull()) {
         inWholeMilliseconds shouldBeInRange 0L..3000L

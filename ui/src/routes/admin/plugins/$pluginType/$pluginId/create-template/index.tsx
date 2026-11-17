@@ -18,12 +18,8 @@
  */
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useMutation } from '@tanstack/react-query';
-import {
-  createFileRoute,
-  useLoaderData,
-  useNavigate,
-} from '@tanstack/react-router';
+import { useMutation, useSuspenseQuery } from '@tanstack/react-query';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
 import { FieldValues, useForm, UseFormReturn } from 'react-hook-form';
 import { z } from 'zod';
@@ -31,8 +27,10 @@ import { z } from 'zod';
 import { PluginOption } from '@/api';
 import {
   createPluginTemplateMutation,
+  getInstalledPluginsOptions,
   getPluginTemplatesQueryKey,
 } from '@/api/@tanstack/react-query.gen';
+import { zPluginType } from '@/api/zod.gen';
 import { ToastError } from '@/components/toast-error';
 import { Button } from '@/components/ui/button';
 import {
@@ -54,7 +52,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { ApiError } from '@/lib/api-error';
-import { queryClient } from '@/lib/query-client';
+import { queryClient, routePrefetchStaleTime } from '@/lib/query-client';
 import { toast, toastError } from '@/lib/toast';
 import { getPluginTypeLabel } from '@/lib/types';
 import { PluginOptionFormFields } from '@/routes/admin/plugins/$pluginType/$pluginId/-components/plugin-option-form-fields.tsx';
@@ -63,7 +61,6 @@ import {
   buildPluginTemplateRequestBody,
   parseStoredPluginOptionValue,
 } from '../-helpers.ts';
-import { Route as LayoutRoute } from '../../../route.tsx';
 
 const templateName = 'Template Name';
 
@@ -80,7 +77,10 @@ type FormValues = {
 
 const CreateTemplate = () => {
   const navigate = useNavigate();
-  const { plugins } = useLoaderData({ from: LayoutRoute.id });
+  const { data: plugins } = useSuspenseQuery({
+    ...getInstalledPluginsOptions(),
+    staleTime: routePrefetchStaleTime,
+  });
   const params = Route.useParams();
 
   const plugin = plugins.find(
@@ -250,5 +250,17 @@ const CreateTemplate = () => {
 export const Route = createFileRoute(
   '/admin/plugins/$pluginType/$pluginId/create-template/'
 )({
+  params: {
+    parse: (params) => ({
+      ...params,
+      pluginType: zPluginType.parse(params.pluginType),
+    }),
+  },
+  loader: async ({ context: { queryClient } }) => {
+    await queryClient.ensureQueryData({
+      ...getInstalledPluginsOptions(),
+      staleTime: routePrefetchStaleTime,
+    });
+  },
   component: CreateTemplate,
 });

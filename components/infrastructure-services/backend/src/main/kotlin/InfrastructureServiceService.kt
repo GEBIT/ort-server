@@ -22,12 +22,11 @@ package org.eclipse.apoapsis.ortserver.components.infrastructureservices
 import org.eclipse.apoapsis.ortserver.components.infrastructureservices.InfrastructureServiceDeclarationsRunsTable.infrastructureServiceDeclarationId
 import org.eclipse.apoapsis.ortserver.components.infrastructureservices.InfrastructureServiceDeclarationsRunsTable.ortRunId
 import org.eclipse.apoapsis.ortserver.dao.UniqueConstraintException
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.findSingle
 import org.eclipse.apoapsis.ortserver.dao.repositories.product.ProductsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.repository.RepositoriesTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.secret.SecretsTable
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.dao.utils.apply
 import org.eclipse.apoapsis.ortserver.dao.utils.listQuery
 import org.eclipse.apoapsis.ortserver.model.CredentialsType
@@ -64,9 +63,7 @@ class InfrastructureServiceService(
     /** Reference to the database. */
     private val db: Database
 ) {
-    /**
-     * Create an [InfrastructureService] with the given properties for the hierarchy entity [id].
-     */
+    /** Create an [InfrastructureService] with the given properties for the hierarchy entity [id]. */
     suspend fun createForId(
         id: HierarchyId,
         name: String,
@@ -75,7 +72,7 @@ class InfrastructureServiceService(
         usernameSecretRef: String,
         passwordSecretRef: String,
         credentialsTypes: Set<CredentialsType>
-    ): InfrastructureService = db.dbQuery {
+    ): InfrastructureService = db.transaction {
         if (getDaoForId(id, name) != null) {
             throw UniqueConstraintException(
                 "An infrastructure service with name '$name' already exists for the given hierarchy entity."
@@ -95,9 +92,7 @@ class InfrastructureServiceService(
         }.mapToModel()
     }
 
-    /**
-     * Update the [InfrastructureService] with the given [name] and hierarchy entity [id].
-     */
+    /** Update the [InfrastructureService] with the given [name] and hierarchy entity [id]. */
     suspend fun updateForId(
         id: HierarchyId,
         name: String,
@@ -106,7 +101,7 @@ class InfrastructureServiceService(
         usernameSecretRef: OptionalValue<String>,
         passwordSecretRef: OptionalValue<String>,
         credentialsTypes: OptionalValue<Set<CredentialsType>>
-    ): InfrastructureService = db.dbQuery {
+    ): InfrastructureService = db.transaction {
         val service = InfrastructureServicesDao.findSingle(selectByIdAndName(id, name))
 
         url.ifPresent { service.url = it }
@@ -118,20 +113,16 @@ class InfrastructureServiceService(
         service.mapToModel()
     }
 
-    /**
-     * Delete the [InfrastructureService] with the given [name] and hierarchy entity [id].
-     */
+    /** Delete the [InfrastructureService] with the given [name] and hierarchy entity [id]. */
     suspend fun deleteForId(id: HierarchyId, name: String) {
-        db.dbQuery {
+        db.transaction {
             InfrastructureServicesDao.findSingle(selectByIdAndName(id, name)).delete()
         }
     }
 
-    /**
-     * Return the [InfrastructureService] for the given [name] and hierarchy entity [id].
-     */
+    /** Return the [InfrastructureService] for the given [name] and hierarchy entity [id]. */
     suspend fun getForId(id: HierarchyId, name: String): InfrastructureService? =
-        db.dbQuery { getDaoForId(id, name)?.mapToModel() }
+        db.transaction { getDaoForId(id, name)?.mapToModel() }
 
     /**
      * Return an [InfrastructureServiceDeclaration] with properties matching the ones
@@ -141,24 +132,20 @@ class InfrastructureServiceService(
      */
     suspend fun getOrCreateDeclarationForRun(
         service: InfrastructureServiceDeclaration, runId: Long
-    ): InfrastructureServiceDeclaration = db.dbQuery {
+    ): InfrastructureServiceDeclaration = db.transaction {
         service.validate()
 
-        db.blockingQuery {
-            val serviceDao = InfrastructureServiceDeclarationDao.getOrPut(service)
-            InfrastructureServiceDeclarationsRunsTable.insert {
-                it[infrastructureServiceDeclarationId] = serviceDao.id
-                it[ortRunId] = runId
-            }
-
-            serviceDao.mapToModel()
+        val serviceDao = InfrastructureServiceDeclarationDao.getOrPut(service)
+        InfrastructureServiceDeclarationsRunsTable.insert {
+            it[infrastructureServiceDeclarationId] = serviceDao.id
+            it[ortRunId] = runId
         }
+
+        serviceDao.mapToModel()
     }
 
-    /**
-     * Return the [InfrastructureServiceDeclaration]s associated to the given [ORT Run][runId].
-     */
-    suspend fun listDeclarationsForRun(runId: Long): List<InfrastructureServiceDeclaration> = db.dbQuery {
+    /** Return the [InfrastructureServiceDeclaration]s associated to the given [ORT Run][runId]. */
+    suspend fun listDeclarationsForRun(runId: Long): List<InfrastructureServiceDeclaration> = db.transaction {
         val subQuery = InfrastructureServiceDeclarationsRunsTable
             .select(infrastructureServiceDeclarationId)
             .where { ortRunId eq runId }
@@ -189,7 +176,7 @@ class InfrastructureServiceService(
     suspend fun listForId(
         id: HierarchyId,
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT
-    ): ListQueryResult<InfrastructureService> = db.dbQuery {
+    ): ListQueryResult<InfrastructureService> = db.transaction {
         InfrastructureServicesDao.listQuery(parameters, InfrastructureServicesDao::mapToModel) {
             (InfrastructureServicesTable.organizationId eq (id as? OrganizationId)?.value) and
                     (InfrastructureServicesTable.productId eq (id as? ProductId)?.value) and
@@ -202,7 +189,7 @@ class InfrastructureServiceService(
      * If there are multiple services with the same URL, instances on a lower level of the hierarchy are preferred,
      * and others are dropped.
      */
-    suspend fun listForHierarchy(hierarchy: Hierarchy): List<InfrastructureService> = db.dbQuery {
+    suspend fun listForHierarchy(hierarchy: Hierarchy): List<InfrastructureService> = db.transaction {
         list(ListQueryParameters.DEFAULT) {
             (InfrastructureServicesTable.repositoryId eq hierarchy.repository.id) or
                     (InfrastructureServicesTable.productId eq hierarchy.product.id) or
@@ -222,7 +209,7 @@ class InfrastructureServiceService(
      * Return a list with the [InfrastructureService]s referencing [secretName] at [id]'s hierarchy level,
      * including lower-level services that would inherit the secret via hierarchy resolution.
      */
-    suspend fun listForSecret(secretName: String, id: HierarchyId): List<InfrastructureService> = db.dbQuery {
+    suspend fun listForSecret(secretName: String, id: HierarchyId): List<InfrastructureService> = db.transaction {
         val secretFilter = (InfrastructureServicesTable.usernameSecret eq secretName) or
                 (InfrastructureServicesTable.passwordSecret eq secretName)
 
@@ -376,8 +363,6 @@ private fun selectByIdAndName(
         InfrastructureServicesTable.name eq name
     }
 
-/**
- * An exception class that is thrown if the reference to a secret cannot be resolved.
- */
+/** An exception class that is thrown if the reference to a secret cannot be resolved. */
 class InvalidSecretReferenceException(reference: String) :
     Exception("Could not resolve secret reference '$reference'.")

@@ -18,19 +18,19 @@
  */
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Loader2, PlusIcon, TrashIcon } from 'lucide-react';
-import { useState } from 'react';
-import { useFieldArray, useForm } from 'react-hook-form';
+import { Loader2, PlusIcon, TrashIcon, TriangleAlert } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useFieldArray, useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
 
 import type {
+  DefaultPlugins,
   OrtRun,
   PostRepositoryRun,
   PreconfiguredPluginDescriptor,
   Secret,
 } from '@/api';
-import { CopyToClipboard } from '@/components/copy-to-clipboard';
-import { InlineCode } from '@/components/typography.tsx';
+import { PayloadView } from '@/components/payload-view';
 import { Accordion } from '@/components/ui/accordion';
 import { Button } from '@/components/ui/button';
 import {
@@ -52,7 +52,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
+import { useDebounce } from '@/hooks/use-debounce';
+import { jobConfigFields, runConfigFields } from '@/lib/job-config-fields';
 import type {
   OrganizationPermissions,
   ProductPermissions,
@@ -66,8 +67,15 @@ import {
   ReporterFields,
   ScannerFields,
 } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/-components';
-import { defaultValues } from './default-values';
+import {
+  defaultValues,
+  getDefaultPluginSelections,
+  type PluginGroups,
+} from './default-values';
+import { IncludesExcludesSection } from './includes-excludes-section';
 import { formValuesToPayload } from './payload';
+import { UNMANAGED_PACKAGE_MANAGER_ID } from './plugin-utils';
+import type { ProjectSuggestions } from './project-suggestions';
 import {
   createRunFormSchema,
   flattenErrors,
@@ -75,7 +83,14 @@ import {
 } from './run-schema';
 
 type AccordionSection =
-  'analyzer' | 'advisor' | 'scanner' | 'evaluator' | 'reporter' | 'notifier';
+  | 'scopes'
+  | 'paths'
+  | 'analyzer'
+  | 'advisor'
+  | 'scanner'
+  | 'evaluator'
+  | 'reporter'
+  | 'notifier';
 
 type CreateRunPermissions = {
   organization: OrganizationPermissions | undefined;
@@ -84,39 +99,75 @@ type CreateRunPermissions = {
 };
 
 export type CreateRunFormProps = {
+  /**
+   * The plugins that are enabled by default for each plugin type. They are undefined only while
+   * they are loading or if they could not be loaded, when creating a run is blocked.
+   */
+  defaultPlugins?: DefaultPlugins[];
   isSubmitting: boolean;
   isSuperuser: boolean;
+  onConfigContextChange?: (configContext: string) => void;
   onSubmit: (payload: PostRepositoryRun) => Promise<void> | void;
   permissions: CreateRunPermissions;
   plugins: PreconfiguredPluginDescriptor[];
+  pluginsLoading?: boolean;
+  pluginsLoadFailed?: boolean;
+  /**
+   * The suggestions for includes and excludes from the projects of the last analyzed run of the
+   * repository. Null if there is no such run, undefined if they are not available.
+   */
+  projectSuggestions?: ProjectSuggestions | null;
+  projectSuggestionsLoading?: boolean;
   rerun: OrtRun | null;
   secrets: Secret[];
 };
 
 export const CreateRunForm = ({
+  defaultPlugins,
   isSubmitting,
   isSuperuser,
+  onConfigContextChange,
   onSubmit,
   permissions,
   plugins,
+  pluginsLoading = false,
+  pluginsLoadFailed = false,
+  projectSuggestions,
+  projectSuggestionsLoading = false,
   rerun,
   secrets,
 }: CreateRunFormProps) => {
   const [isTest, setIsTest] = useState(false);
-  const isRerun = rerun !== null;
   const [openAccordions, setOpenAccordions] = useState<AccordionSection[]>([]);
+  // A run must not be created without knowing which plugins are available.
+  const pluginsUnavailable = pluginsLoading || pluginsLoadFailed;
 
-  const advisorPlugins = plugins.filter((plugin) => plugin.type === 'ADVISOR');
-  const reporterPlugins = plugins.filter(
-    (plugin) => plugin.type === 'REPORTER'
-  );
-  const scannerPlugins = plugins.filter((plugin) => plugin.type === 'SCANNER');
-  const packageCurationProviderPlugins = plugins.filter(
-    (plugin) => plugin.type === 'PACKAGE_CURATION_PROVIDER'
-  );
-  const packageConfigurationProviderPlugins = plugins.filter(
-    (plugin) => plugin.type === 'PACKAGE_CONFIGURATION_PROVIDER'
-  );
+  // Memoize the grouping so that its identity only changes with the plugins.
+  const pluginGroups = useMemo((): PluginGroups => {
+    const byType = (type: PreconfiguredPluginDescriptor['type']) =>
+      plugins.filter((plugin) => plugin.type === type);
+    return {
+      advisorPlugins: byType('ADVISOR'),
+      reporterPlugins: byType('REPORTER'),
+      scannerPlugins: byType('SCANNER'),
+      packageCurationProviderPlugins: byType('PACKAGE_CURATION_PROVIDER'),
+      packageConfigurationProviderPlugins: byType(
+        'PACKAGE_CONFIGURATION_PROVIDER'
+      ),
+      // The 'Unmanaged' package manager is always enabled and therefore not offered for selection.
+      packageManagerPlugins: byType('PACKAGE_MANAGER').filter(
+        (plugin) => plugin.id !== UNMANAGED_PACKAGE_MANAGER_ID
+      ),
+    };
+  }, [plugins]);
+  const {
+    advisorPlugins,
+    reporterPlugins,
+    scannerPlugins,
+    packageCurationProviderPlugins,
+    packageConfigurationProviderPlugins,
+    packageManagerPlugins,
+  } = pluginGroups;
 
   // Manually toggle accordion open/close state
   const toggleAccordionOpen = (value: AccordionSection) => {
@@ -131,23 +182,162 @@ export const CreateRunForm = ({
   const formSchema = createRunFormSchema(
     advisorPlugins,
     scannerPlugins,
+    reporterPlugins,
     packageCurationProviderPlugins,
-    packageConfigurationProviderPlugins
+    packageConfigurationProviderPlugins,
+    packageManagerPlugins
+  );
+
+  // The plugins selected by default, independent of a rerun, once they are loaded.
+  const defaultPluginSelections = useMemo(
+    () =>
+      defaultPlugins &&
+      getDefaultPluginSelections(defaultPlugins, pluginGroups),
+    [defaultPlugins, pluginGroups]
+  );
+
+  // `values` lets React Hook Form update untouched fields when the plugins change.
+  // Memoize them so unrelated form renders do not trigger a reset.
+  const pluginDefaults = useMemo(
+    () =>
+      defaultValues(rerun, pluginGroups, isSuperuser, defaultPluginSelections),
+    [pluginGroups, rerun, isSuperuser, defaultPluginSelections]
   );
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
-    defaultValues: defaultValues(
-      rerun,
-      advisorPlugins,
-      scannerPlugins,
-      isSuperuser,
-      packageCurationProviderPlugins,
-      packageConfigurationProviderPlugins
-    ),
+    values: pluginDefaults,
+    resetOptions: { keepDirtyValues: true, keepTouched: true },
   });
 
-  const watchedValues = form.watch();
+  // Dirty values kept by React Hook Form can still refer to removed plugins.
+  const appliedPluginGroups = useRef(pluginGroups);
+  useEffect(() => {
+    if (appliedPluginGroups.current === pluginGroups) return;
+    appliedPluginGroups.current = pluginGroups;
+
+    // Prune these references even when their accordion is collapsed / unmounted.
+    const ids = (descriptors: PreconfiguredPluginDescriptor[]) =>
+      new Set(descriptors.map((plugin) => plugin.id));
+    const pruneSelection = (
+      path:
+        | 'jobConfigs.analyzer.packageManagers'
+        | 'jobConfigs.analyzer.packageCurationProviders'
+        | 'jobConfigs.advisor.advisors'
+        | 'jobConfigs.scanner.scanners'
+        | 'jobConfigs.evaluator.packageConfigurationProviders'
+        | 'jobConfigs.reporter.packageConfigurationProviders'
+        | 'jobConfigs.reporter.formats',
+      available: Set<string>
+    ) => {
+      const selected = form.getValues(path);
+      const retained = selected.filter((id) => available.has(id));
+      if (retained.length !== selected.length) form.setValue(path, retained);
+    };
+    const pruneMap = (
+      path:
+        | 'jobConfigs.analyzer.packageManagerConfig'
+        | 'jobConfigs.analyzer.packageCurationProviderConfig'
+        | 'jobConfigs.advisor.config'
+        | 'jobConfigs.scanner.config'
+        | 'jobConfigs.scanner.scannerScopes'
+        | 'jobConfigs.evaluator.packageConfigurationProviderConfig'
+        | 'jobConfigs.reporter.packageConfigurationProviderConfig'
+        | 'jobConfigs.reporter.config',
+      available: Set<string>
+    ) => {
+      const current = form.getValues(path);
+      if (!current) return;
+      const retained = Object.fromEntries(
+        Object.entries(current).filter(([id]) => available.has(id))
+      );
+      if (Object.keys(retained).length !== Object.keys(current).length) {
+        form.setValue(path, retained);
+      }
+    };
+
+    const managerIds = ids(pluginGroups.packageManagerPlugins);
+    const advisorIds = ids(pluginGroups.advisorPlugins);
+    const scannerIds = ids(pluginGroups.scannerPlugins);
+    const reporterIds = ids(pluginGroups.reporterPlugins);
+    const curationIds = ids(pluginGroups.packageCurationProviderPlugins);
+    const configurationIds = ids(
+      pluginGroups.packageConfigurationProviderPlugins
+    );
+
+    pruneSelection('jobConfigs.analyzer.packageManagers', managerIds);
+    pruneSelection('jobConfigs.analyzer.packageCurationProviders', curationIds);
+    pruneSelection('jobConfigs.advisor.advisors', advisorIds);
+    pruneSelection('jobConfigs.scanner.scanners', scannerIds);
+    pruneSelection(
+      'jobConfigs.evaluator.packageConfigurationProviders',
+      configurationIds
+    );
+    pruneSelection(
+      'jobConfigs.reporter.packageConfigurationProviders',
+      configurationIds
+    );
+    pruneSelection('jobConfigs.reporter.formats', reporterIds);
+
+    pruneMap('jobConfigs.analyzer.packageManagerConfig', managerIds);
+    pruneMap('jobConfigs.analyzer.packageCurationProviderConfig', curationIds);
+    pruneMap('jobConfigs.advisor.config', advisorIds);
+    pruneMap('jobConfigs.scanner.config', scannerIds);
+    pruneMap('jobConfigs.scanner.scannerScopes', scannerIds);
+    pruneMap(
+      'jobConfigs.evaluator.packageConfigurationProviderConfig',
+      configurationIds
+    );
+    pruneMap(
+      'jobConfigs.reporter.packageConfigurationProviderConfig',
+      configurationIds
+    );
+    pruneMap('jobConfigs.reporter.config', reporterIds);
+
+    const mustRunAfter = form.getValues(
+      'jobConfigs.analyzer.packageManagerMustRunAfter'
+    );
+    const retainedMustRunAfter = Object.fromEntries(
+      Object.entries(mustRunAfter)
+        .filter(([id]) => managerIds.has(id))
+        .map(([id, dependencies]) => [
+          id,
+          dependencies?.filter((dependency) => managerIds.has(dependency)),
+        ])
+    );
+    const mustRunAfterChanged =
+      Object.keys(retainedMustRunAfter).length !==
+        Object.keys(mustRunAfter).length ||
+      Object.entries(mustRunAfter).some(
+        ([id, dependencies]) =>
+          retainedMustRunAfter[id]?.length !== dependencies?.length
+      );
+    if (mustRunAfterChanged) {
+      form.setValue(
+        'jobConfigs.analyzer.packageManagerMustRunAfter',
+        retainedMustRunAfter
+      );
+    }
+  }, [pluginGroups, form]);
+
+  // `values` supplies a complete form, including on plugin refresh. Deriving the
+  // full value keeps the preview typed without treating useWatch's partial return
+  // as a complete payload; it also follows setValue when selections are pruned.
+  const watchedValues = useWatch({
+    control: form.control,
+    compute: (values) => values,
+  });
+
+  // Reload the available plugins when the configuration context changes, as it
+  // may influence which plugins are available for the repository. The value is
+  // debounced so that the plugins are not reloaded on every keystroke.
+  const watchedConfigContext =
+    useWatch({ control: form.control, name: 'jobConfigContext' }) ?? '';
+  const debouncedConfigContext = useDebounce(watchedConfigContext);
+
+  useEffect(() => {
+    onConfigContextChange?.(debouncedConfigContext);
+  }, [debouncedConfigContext, onConfigContextChange]);
 
   const {
     fields: parametersFields,
@@ -168,13 +358,20 @@ export const CreateRunForm = ({
   });
 
   async function submitForm(values: CreateRunFormValues) {
-    await onSubmit(formValuesToPayload(values));
+    if (pluginsUnavailable) return;
+    await onSubmit(formValuesToPayload(values, plugins));
   }
 
   const onValidationFailed = (errors: typeof form.formState.errors) => {
     // Determine which accordions contain errors
     const accordionsWithErrors: AccordionSection[] = [];
 
+    if (errors.scopes) {
+      accordionsWithErrors.push('scopes');
+    }
+    if (errors.paths) {
+      accordionsWithErrors.push('paths');
+    }
     if (errors.jobConfigs?.analyzer) {
       accordionsWithErrors.push('analyzer');
     }
@@ -206,6 +403,15 @@ export const CreateRunForm = ({
       <Form {...form}>
         <form
           onSubmit={form.handleSubmit(submitForm, onValidationFailed)}
+          // Only the create button creates a run, not Enter in a text field.
+          onKeyDown={(event) => {
+            if (
+              event.key === 'Enter' &&
+              event.target instanceof HTMLInputElement
+            ) {
+              event.preventDefault();
+            }
+          }}
           className='space-y-8'
         >
           <CardContent>
@@ -214,13 +420,12 @@ export const CreateRunForm = ({
               name='revision'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Revision</FormLabel>
+                  <FormLabel>{runConfigFields.revision.label}</FormLabel>
                   <FormControl autoFocus>
                     <Input {...field} />
                   </FormControl>
                   <FormDescription>
-                    The repository revision to use. Can be a branch, tag, or
-                    commit. Uses the default branch if left empty.
+                    {runConfigFields.revision.description}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -231,14 +436,12 @@ export const CreateRunForm = ({
               name='path'
               render={({ field }) => (
                 <FormItem className='pt-4'>
-                  <FormLabel>Path</FormLabel>
+                  <FormLabel>{runConfigFields.path.label}</FormLabel>
                   <FormControl>
                     <Input {...field} placeholder='(optional)' />
                   </FormControl>
                   <FormDescription>
-                    The path (relative to the repository root) to limit the
-                    analysis to, for example{' '}
-                    <InlineCode>path/to/source</InlineCode>.
+                    {runConfigFields.path.description}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -249,18 +452,14 @@ export const CreateRunForm = ({
               name='jobConfigContext'
               render={({ field }) => (
                 <FormItem className='pt-4'>
-                  <FormLabel>Configuration context</FormLabel>
+                  <FormLabel>
+                    {runConfigFields.jobConfigContext.label}
+                  </FormLabel>
                   <FormControl>
                     <Input {...field} placeholder='(optional)' />
                   </FormControl>
                   <FormDescription>
-                    The context to pass to the configuration provider in use.
-                    The configuration provider is responsible for obtaining
-                    configuration for this run and uses the context in an
-                    implementation-specific way. For example, if the{' '}
-                    <InlineCode>GitHubConfigFileProvider</InlineCode> is in use,
-                    the context defines the Git revision of the configuration to
-                    check out.
+                    {runConfigFields.jobConfigContext.description}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -271,15 +470,14 @@ export const CreateRunForm = ({
               name='environmentConfigPath'
               render={({ field }) => (
                 <FormItem className='pt-4'>
-                  <FormLabel>Environment configuration path</FormLabel>
+                  <FormLabel>
+                    {runConfigFields.environmentConfigPath.label}
+                  </FormLabel>
                   <FormControl>
                     <Input {...field} placeholder='(optional)' />
                   </FormControl>
                   <FormDescription>
-                    The optional path to an environment configuration file. If
-                    this is not defined, the environment configuration is read
-                    from the default location
-                    <InlineCode>.ort.env.yml</InlineCode>.
+                    {runConfigFields.environmentConfigPath.description}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -290,26 +488,21 @@ export const CreateRunForm = ({
               name='jobConfigs.ruleSet'
               render={({ field }) => (
                 <FormItem className='pt-4'>
-                  <FormLabel>Rule set</FormLabel>
+                  <FormLabel>{jobConfigFields.ruleSet.label}</FormLabel>
                   <FormControl>
                     <Input {...field} placeholder='(optional)' />
                   </FormControl>
                   <FormDescription>
-                    The rule set to use for the run. This selects a set of
-                    configuration files used by the Evaluator and the Reporter,
-                    such as rules for the Evaluator or license classifications.
-                    If left empty, the default rule set is used.
+                    {jobConfigFields.ruleSet.description}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
-            <h3 className='mt-4'>Configuration parameters</h3>
+            <h3 className='mt-4'>{jobConfigFields.parameters.label}</h3>
             <div className='text-sm text-gray-500'>
-              A map of key-value pairs that serve as input parameters for the
-              configuration's validation script. The script can use these
-              parameters to alter specific job configurations.
+              {jobConfigFields.parameters.description}
             </div>
             {parametersFields.map((field, index) => (
               <div
@@ -353,12 +546,12 @@ export const CreateRunForm = ({
                 <Button
                   type='button'
                   variant='outline'
-                  size='sm'
+                  size='icon'
                   onClick={() => {
                     parametersRemove(index);
                   }}
                 >
-                  <TrashIcon className='h-4 w-4' />
+                  <TrashIcon className='h-4 w-4 text-red-500' />
                 </Button>
               </div>
             ))}
@@ -375,11 +568,9 @@ export const CreateRunForm = ({
               <PlusIcon className='ml-1 h-4 w-4' />
             </Button>
 
-            <h3 className='mt-4'>ORT labels</h3>
+            <h3 className='mt-4'>{runConfigFields.labels.label}</h3>
             <div className='text-sm text-gray-500'>
-              A map of key-value pairs to store as labels in ORT results. ORT
-              does not interpret labels by itself, but leaves interpretation to
-              custom configuration, like evaluator rules.
+              {runConfigFields.labels.description}
             </div>
             {labelsFields.map((field, index) => (
               <div
@@ -423,12 +614,12 @@ export const CreateRunForm = ({
                 <Button
                   type='button'
                   variant='outline'
-                  size='sm'
+                  size='icon'
                   onClick={() => {
                     labelsRemove(index);
                   }}
                 >
-                  <TrashIcon className='h-4 w-4' />
+                  <TrashIcon className='h-4 w-4 text-red-500' />
                 </Button>
               </div>
             ))}
@@ -445,73 +636,90 @@ export const CreateRunForm = ({
               <PlusIcon className='ml-1 h-4 w-4' />
             </Button>
 
+            <IncludesExcludesSection
+              form={form}
+              openItems={openAccordions}
+              onOpenItemsChange={(value) =>
+                setOpenAccordions(value as AccordionSection[])
+              }
+              projectSuggestions={projectSuggestions}
+              projectSuggestionsLoading={projectSuggestionsLoading}
+            />
+
             <h3 className='mt-4'>Enable and configure jobs</h3>
             <div className='text-sm text-gray-500'>
               Configure the jobs to be included in the run.
             </div>
-            <Accordion
-              type='multiple'
-              value={openAccordions}
-              onValueChange={(value) =>
-                setOpenAccordions(value as AccordionSection[])
-              }
-            >
-              <AnalyzerFields
-                form={form}
-                value='analyzer'
-                onToggle={() => toggleAccordionOpen('analyzer')}
-                isSuperuser={isSuperuser}
-                packageCurationProviderPlugins={packageCurationProviderPlugins}
-                pluginSecrets={secrets}
-                isRerun={isRerun}
-                permissions={permissions}
-              />
-              <AdvisorFields
-                form={form}
-                value='advisor'
-                onToggle={() => toggleAccordionOpen('advisor')}
-                advisorPlugins={advisorPlugins}
-                secrets={secrets}
-                isSuperuser={isSuperuser}
-              />
-              <ScannerFields
-                form={form}
-                value='scanner'
-                onToggle={() => toggleAccordionOpen('scanner')}
-                scannerPlugins={scannerPlugins}
-                secrets={secrets}
-                isSuperuser={isSuperuser}
-              />
-              <EvaluatorFields
-                form={form}
-                value='evaluator'
-                onToggle={() => toggleAccordionOpen('evaluator')}
-                isSuperuser={isSuperuser}
-                packageConfigurationProviderPlugins={
-                  packageConfigurationProviderPlugins
+            {pluginsUnavailable ? null : (
+              <Accordion
+                type='multiple'
+                value={openAccordions}
+                onValueChange={(value) =>
+                  setOpenAccordions(value as AccordionSection[])
                 }
-                secrets={secrets}
-                isRerun={isRerun}
-              />
-              <ReporterFields
-                form={form}
-                value='reporter'
-                onToggle={() => toggleAccordionOpen('reporter')}
-                reporterPlugins={reporterPlugins}
-                isSuperuser={isSuperuser}
-                packageConfigurationProviderPlugins={
-                  packageConfigurationProviderPlugins
-                }
-                secrets={secrets}
-                isRerun={isRerun}
-              />
-              <NotifierFields
-                form={form}
-                value='notifier'
-                onToggle={() => toggleAccordionOpen('notifier')}
-                isSuperuser={isSuperuser}
-              />
-            </Accordion>
+              >
+                <AnalyzerFields
+                  form={form}
+                  defaultPluginSelections={defaultPluginSelections}
+                  value='analyzer'
+                  onToggle={() => toggleAccordionOpen('analyzer')}
+                  isSuperuser={isSuperuser}
+                  packageCurationProviderPlugins={
+                    packageCurationProviderPlugins
+                  }
+                  packageManagerPlugins={packageManagerPlugins}
+                  pluginSecrets={secrets}
+                  permissions={permissions}
+                />
+                <AdvisorFields
+                  form={form}
+                  defaultPluginSelections={defaultPluginSelections}
+                  value='advisor'
+                  onToggle={() => toggleAccordionOpen('advisor')}
+                  advisorPlugins={advisorPlugins}
+                  secrets={secrets}
+                  isSuperuser={isSuperuser}
+                />
+                <ScannerFields
+                  form={form}
+                  defaultPluginSelections={defaultPluginSelections}
+                  value='scanner'
+                  onToggle={() => toggleAccordionOpen('scanner')}
+                  scannerPlugins={scannerPlugins}
+                  secrets={secrets}
+                  isSuperuser={isSuperuser}
+                />
+                <EvaluatorFields
+                  form={form}
+                  defaultPluginSelections={defaultPluginSelections}
+                  value='evaluator'
+                  onToggle={() => toggleAccordionOpen('evaluator')}
+                  isSuperuser={isSuperuser}
+                  packageConfigurationProviderPlugins={
+                    packageConfigurationProviderPlugins
+                  }
+                  secrets={secrets}
+                />
+                <ReporterFields
+                  form={form}
+                  defaultPluginSelections={defaultPluginSelections}
+                  value='reporter'
+                  onToggle={() => toggleAccordionOpen('reporter')}
+                  reporterPlugins={reporterPlugins}
+                  isSuperuser={isSuperuser}
+                  packageConfigurationProviderPlugins={
+                    packageConfigurationProviderPlugins
+                  }
+                  secrets={secrets}
+                />
+                <NotifierFields
+                  form={form}
+                  value='notifier'
+                  onToggle={() => toggleAccordionOpen('notifier')}
+                  isSuperuser={isSuperuser}
+                />
+              </Accordion>
+            )}
           </CardContent>
           <CardFooter className='flex flex-col items-start gap-4'>
             {Object.keys(form.formState.errors).length > 0 && (
@@ -526,8 +734,21 @@ export const CreateRunForm = ({
               </div>
             )}
             <div className='flex w-full items-center justify-between'>
-              <Button type='submit' disabled={isSubmitting}>
-                {isSubmitting ? (
+              <Button
+                type='submit'
+                disabled={isSubmitting || pluginsUnavailable}
+              >
+                {pluginsLoading ? (
+                  <>
+                    <Loader2 size={16} className='animate-spin' />
+                    Loading available plugins...
+                  </>
+                ) : pluginsLoadFailed ? (
+                  <>
+                    <TriangleAlert size={16} />
+                    The plugins could not be loaded
+                  </>
+                ) : isSubmitting ? (
                   <>
                     <span className='sr-only'>Creating run...</span>
                     <Loader2 size={16} className='mx-3 animate-spin' />
@@ -540,6 +761,7 @@ export const CreateRunForm = ({
                 <Switch
                   id='test-form'
                   checked={isTest}
+                  disabled={pluginsUnavailable}
                   onCheckedChange={setIsTest}
                 />
                 <Label className='text-muted-foreground' htmlFor='test-form'>
@@ -547,35 +769,13 @@ export const CreateRunForm = ({
                 </Label>
               </div>
             </div>
-            {isTest && (
-              <>
-                <h3 className='mt-4'>Form payload</h3>
-                <Label htmlFor='payload' className='text-muted-foreground'>
-                  You can copy this payload to use it when triggering runs via
-                  the API or CLI.
-                </Label>
-                <div className='relative w-full'>
-                  <Textarea
-                    id='payload'
-                    className='h-96 pr-12 font-mono'
-                    readOnly
-                    value={JSON.stringify(
-                      formValuesToPayload(watchedValues),
-                      null,
-                      2
-                    )}
-                  />
-                  <div className='absolute top-2 right-2 z-10'>
-                    <CopyToClipboard
-                      copyText={JSON.stringify(
-                        formValuesToPayload(watchedValues),
-                        null,
-                        2
-                      )}
-                    />
-                  </div>
-                </div>
-              </>
+            {isTest && !pluginsUnavailable && (
+              <PayloadView
+                id='payload'
+                title='Form payload'
+                description='You can copy this payload to use it when triggering runs via the API or CLI.'
+                payload={formValuesToPayload(watchedValues, plugins)}
+              />
             )}
           </CardFooter>
         </form>

@@ -47,6 +47,7 @@ import org.eclipse.apoapsis.ortserver.model.util.FilterOperatorAndValue
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
 import org.eclipse.apoapsis.ortserver.model.util.OrderDirection
 import org.eclipse.apoapsis.ortserver.model.util.OrderField
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.Database
 
@@ -58,6 +59,8 @@ class ProjectServiceTest : WordSpec() {
     private lateinit var service: ProjectService
 
     init {
+        tags(Integration)
+
         beforeEach {
             db = dbExtension.db
             fixtures = dbExtension.fixtures
@@ -109,6 +112,28 @@ class ProjectServiceTest : WordSpec() {
                 )
 
                 result.data.shouldBeSingleton { it.identifier shouldBe matching }
+                result.totalCount shouldBe 1
+            }
+
+            "only match the full identifier when filtering by an exact identifier" {
+                val target = Identifier("Maven", "com.example", "core", "1.0")
+                val ortRunId = createAnalyzerRunWithProjects(
+                    linkedSetOf(
+                        createProject(target.copy(version = "1.0.1")),
+                        createProject(target.copy(version = "1.0-SNAPSHOT")),
+                        createProject(target)
+                    )
+                ).id
+
+                val result = service.listForOrtRunId(
+                    ortRunId,
+                    parameters = ListQueryParameters(limit = 1),
+                    filters = ProjectFilters(
+                        identifier = FilterOperatorAndValue(ComparisonOperator.EQUALS, "Maven:com.example:core:1.0")
+                    )
+                )
+
+                result.data.shouldBeSingleton { it.identifier shouldBe target }
                 result.totalCount shouldBe 1
             }
 
@@ -217,7 +242,6 @@ class ProjectServiceTest : WordSpec() {
                 val ortRunId = createAnalyzerRunWithProjects(setOf(createProject(identifier("project")))).id
 
                 listOf(
-                    ProjectFilters(identifier = FilterOperatorAndValue(ComparisonOperator.EQUALS, "project")),
                     ProjectFilters(declaredLicense = FilterOperatorAndValue(ComparisonOperator.ILIKE, setOf("MIT"))),
                     ProjectFilters(definitionFilePath = FilterOperatorAndValue(ComparisonOperator.EQUALS, "pom.xml"))
                 ).forEach { filters ->
@@ -399,7 +423,7 @@ class ProjectServiceTest : WordSpec() {
         scopeNames = setOf("Compile")
     )
 
-    private fun createAnalyzerRunWithProjects(projects: Set<Project>): OrtRun {
+    private suspend fun createAnalyzerRunWithProjects(projects: Set<Project>): OrtRun {
         val ortRun = fixtures.createOrtRun()
         val analyzerJob = fixtures.createAnalyzerJob(ortRun.id)
 

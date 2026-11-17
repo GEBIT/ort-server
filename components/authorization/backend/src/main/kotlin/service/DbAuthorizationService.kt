@@ -38,9 +38,9 @@ import org.eclipse.apoapsis.ortserver.components.authorization.rights.Repository
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.RepositoryRole
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.Role
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.RoleInfo
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.repositories.product.ProductsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.repository.RepositoriesTable
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.CompoundHierarchyId
 import org.eclipse.apoapsis.ortserver.model.HierarchyId
 import org.eclipse.apoapsis.ortserver.model.HierarchyLevel
@@ -54,6 +54,7 @@ import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
@@ -78,9 +79,10 @@ class DbAuthorizationService(
     override suspend fun checkPermissions(
         userId: String,
         compoundHierarchyId: CompoundHierarchyId,
-        checker: PermissionChecker
+        checker: PermissionChecker,
+        userSub: String?
     ): EffectiveRole? {
-        val roleAssignments = loadAssignments(userId, compoundHierarchyId)
+        val roleAssignments = loadAssignments(userId, userSub, compoundHierarchyId)
 
         val permissions = HierarchyPermissions.create(roleAssignments, checker)
         return if (permissions.hasPermission(compoundHierarchyId)) {
@@ -97,15 +99,17 @@ class DbAuthorizationService(
     override suspend fun checkPermissions(
         userId: String,
         hierarchyId: HierarchyId,
-        checker: PermissionChecker
+        checker: PermissionChecker,
+        userSub: String?
     ): EffectiveRole? =
-        checkPermissions(userId, resolveCompoundId(hierarchyId), checker)
+        checkPermissions(userId, resolveCompoundId(hierarchyId), checker, userSub)
 
     override suspend fun getEffectiveRole(
         userId: String,
-        compoundHierarchyId: CompoundHierarchyId
+        compoundHierarchyId: CompoundHierarchyId,
+        userSub: String?
     ): EffectiveRole {
-        val roleAssignments = loadAssignments(userId, compoundHierarchyId)
+        val roleAssignments = loadAssignments(userId, userSub, compoundHierarchyId)
 
         return findHighestRole(
             roleAssignments,
@@ -125,16 +129,18 @@ class DbAuthorizationService(
 
     override suspend fun getEffectiveRole(
         userId: String,
-        hierarchyId: HierarchyId
+        hierarchyId: HierarchyId,
+        userSub: String?
     ): EffectiveRole =
-        getEffectiveRole(userId, resolveCompoundId(hierarchyId))
+        getEffectiveRole(userId, resolveCompoundId(hierarchyId), userSub)
 
     override suspend fun assignRole(
         userId: String,
         role: Role,
-        compoundHierarchyId: CompoundHierarchyId
+        compoundHierarchyId: CompoundHierarchyId,
+        userSub: String?
     ) {
-        db.dbQuery {
+        db.transaction {
             doRemoveAssignment(userId, compoundHierarchyId)
 
             logger.info(
@@ -146,6 +152,7 @@ class DbAuthorizationService(
 
             RoleAssignmentsTable.insert {
                 it[RoleAssignmentsTable.userId] = userId
+                it[RoleAssignmentsTable.userSub] = userSub
                 it[RoleAssignmentsTable.organizationId] = compoundHierarchyId.organizationId?.value
                 it[RoleAssignmentsTable.productId] = compoundHierarchyId.productId?.value
                 it[RoleAssignmentsTable.repositoryId] = compoundHierarchyId.repositoryId?.value
@@ -159,7 +166,7 @@ class DbAuthorizationService(
     override suspend fun removeAssignment(
         userId: String,
         compoundHierarchyId: CompoundHierarchyId
-    ): Boolean = db.dbQuery {
+    ): Boolean = db.transaction {
         doRemoveAssignment(userId, compoundHierarchyId)
     }
 
@@ -178,17 +185,23 @@ class DbAuthorizationService(
             compoundHierarchyId.toFilterCondition()
         }
 
-        return db.dbQuery {
+        return db.transaction {
             RoleAssignmentsTable.deleteWhere {
                 condition
             }
         }
     }
 
+    override suspend fun removeUserAssignments(userId: String): Int = db.transaction {
+        RoleAssignmentsTable.deleteWhere {
+            RoleAssignmentsTable.userId eq userId
+        }
+    }
+
     override suspend fun listUsersWithRole(
         role: Role,
         compoundHierarchyId: CompoundHierarchyId
-    ): Set<String> = db.dbQuery {
+    ): Set<String> = db.transaction {
         RoleAssignmentsTable.select(RoleAssignmentsTable.userId)
             .where {
                 compoundHierarchyId.toFilterCondition() and roleCondition(role)
@@ -197,7 +210,7 @@ class DbAuthorizationService(
 
     override suspend fun listUsers(compoundHierarchyId: CompoundHierarchyId): Map<String, RoleInfo> =
         withContext(Dispatchers.Default) {
-            db.dbQuery {
+            db.transaction {
                 logger.debug("Loading role assignments on element {}...", compoundHierarchyId)
 
                 RoleAssignmentsTable.selectAll()
@@ -221,9 +234,10 @@ class DbAuthorizationService(
         organizationPermissions: Set<OrganizationPermission>,
         productPermissions: Set<ProductPermission>,
         repositoryPermissions: Set<RepositoryPermission>,
-        containedIn: HierarchyId?
+        containedIn: HierarchyId?,
+        userSub: String?
     ): HierarchyFilter {
-        val assignments = loadAssignments(userId, null)
+        val assignments = loadAssignments(userId, userSub, null)
         val checker = PermissionChecker(
             organizationPermissions,
             productPermissions,
@@ -290,7 +304,7 @@ class DbAuthorizationService(
      * product does not exist.
      */
     private suspend fun resolveOrganization(productId: ProductId): OrganizationId =
-        db.dbQuery {
+        db.transaction {
             ProductsTable.select(ProductsTable.organizationId)
                 .where { ProductsTable.id eq productId.value }
                 .singleOrNull()?.let {
@@ -303,7 +317,7 @@ class DbAuthorizationService(
      * Return *null* if IDs cannot be resolved.
      */
     private suspend fun resolveOrganizationAndProduct(repositoryId: RepositoryId): Pair<OrganizationId, ProductId> =
-        db.dbQuery {
+        db.transaction {
             RepositoriesTable.join(ProductsTable, JoinType.INNER)
                 .select(ProductsTable.organizationId, RepositoriesTable.productId)
                 .where { RepositoriesTable.id eq repositoryId.value }
@@ -319,12 +333,14 @@ class DbAuthorizationService(
      * Load all role assignments for the given [userId] in the hierarchy defined by [compoundHierarchyId]. Return a
      * list with pairs of IDs and assigned roles for the entities that were found. The function selects assignments in
      * the whole hierarchy below the organization referenced by [compoundHierarchyId] or all assignments of the given
-     * [userId] if no ID is specified. This makes sure that all relevant assignments are found.
+     * [userId] if no ID is specified. This makes sure that all relevant assignments are found. If [userSub] is given,
+     * assignments stored with another user ID are ignored.
      */
     private suspend fun loadAssignments(
         userId: String,
+        userSub: String?,
         compoundHierarchyId: CompoundHierarchyId?
-    ): List<Pair<CompoundHierarchyId, Role>> = db.dbQuery {
+    ): List<Pair<CompoundHierarchyId, Role>> = db.transaction {
         logger.debug("Loading role assignments for user '{}' on element {}...", userId, compoundHierarchyId)
 
         RoleAssignmentsTable.selectAll()
@@ -333,7 +349,10 @@ class DbAuthorizationService(
                     (RoleAssignmentsTable.organizationId eq id.organizationId?.value) or
                             (RoleAssignmentsTable.organizationId eq null)
                 } ?: Op.TRUE
-                (RoleAssignmentsTable.userId eq userId) and hierarchyCondition
+                val userSubCondition = userSub?.let {
+                    RoleAssignmentsTable.userSub.isNull() or (RoleAssignmentsTable.userSub eq it)
+                } ?: Op.TRUE
+                (RoleAssignmentsTable.userId eq userId) and userSubCondition and hierarchyCondition
             }.mapNotNull { row ->
                 row.extractRole()?.let { role ->
                     row.extractHierarchyId() to role
@@ -360,14 +379,10 @@ class DbAuthorizationService(
         }
 }
 
-/**
- * Constant to represent an invalid ID in the database. This is used to determine whether resolving an ID failed.
- */
+/** Constant to represent an invalid ID in the database. This is used to determine whether resolving an ID failed. */
 private const val INVALID_ID = -1L
 
-/**
- * An implementation of the [EffectiveRole] interface used by [DbAuthorizationService].
- */
+/** An implementation of the [EffectiveRole] interface used by [DbAuthorizationService]. */
 private class EffectiveRoleImpl(
     override val elementId: CompoundHierarchyId,
 
@@ -383,25 +398,19 @@ private class EffectiveRoleImpl(
     override fun getRepositoryPermissions(): Set<RepositoryPermission> = permissions.repositoryPermissions
 }
 
-/**
- * Check whether this [CompoundHierarchyId] is invalid. This means that its components could not be resolved.
- */
+/** Check whether this [CompoundHierarchyId] is invalid. This means that its components could not be resolved. */
 private fun CompoundHierarchyId.isInvalid() =
     organizationId?.value == INVALID_ID ||
             productId?.value == INVALID_ID ||
             repositoryId?.value == INVALID_ID
 
-/**
- * Generate a filter condition that matches exactly all role assignments for this [CompoundHierarchyId].
- */
+/** Generate a filter condition that matches exactly all role assignments for this [CompoundHierarchyId]. */
 private fun CompoundHierarchyId.toFilterCondition(): Op<Boolean> =
     (RoleAssignmentsTable.organizationId eq this.organizationId?.value) and
             (RoleAssignmentsTable.productId eq this.productId?.value) and
             (RoleAssignmentsTable.repositoryId eq this.repositoryId?.value)
 
-/**
- * Fetch the concrete [Role] that is referenced by this [ResultRow].
- */
+/** Fetch the concrete [Role] that is referenced by this [ResultRow]. */
 private fun ResultRow.extractRole(): Role? = runCatching {
     listOfNotNull(
         this[RoleAssignmentsTable.organizationRole]?.let(OrganizationRole::valueOf),
@@ -412,9 +421,7 @@ private fun ResultRow.extractRole(): Role? = runCatching {
     logger.error("Failed to extract role from database row: ${this[RoleAssignmentsTable.id]}", it)
 }.getOrNull()
 
-/**
- * Extract the [CompoundHierarchyId] on the correct level from this [ResultRow].
- */
+/** Extract the [CompoundHierarchyId] on the correct level from this [ResultRow]. */
 private fun ResultRow.extractHierarchyId(): CompoundHierarchyId {
     val orgId = this[RoleAssignmentsTable.organizationId]?.let { OrganizationId(it.value) }
     if (orgId == null) {
@@ -448,9 +455,7 @@ private fun computeRoleForUser(
     return findHighestRole(assignments, hierarchyId)?.first
 }
 
-/**
- * Generate the SQL condition to match role assignments for the given [role].
- */
+/** Generate the SQL condition to match role assignments for the given [role]. */
 private fun roleCondition(role: Role): Op<Boolean> =
     when (role) {
         is OrganizationRole -> RoleAssignmentsTable.organizationRole eq role.name

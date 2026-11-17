@@ -19,17 +19,22 @@
 
 package org.eclipse.apoapsis.ortserver.dao.repositories.ortrun
 
+import java.sql.Connection
+
 import kotlin.time.Clock
 import kotlin.time.Instant
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
-import org.eclipse.apoapsis.ortserver.dao.blockingQueryCatching
-import org.eclipse.apoapsis.ortserver.dao.entityQuery
+import org.eclipse.apoapsis.ortserver.dao.getEntityOrNull
 import org.eclipse.apoapsis.ortserver.dao.mapAndDeduplicate
 import org.eclipse.apoapsis.ortserver.dao.repositories.product.ProductsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.repository.RepositoriesTable
-import org.eclipse.apoapsis.ortserver.dao.repositories.userDisplayName.UserDisplayNameDao
+import org.eclipse.apoapsis.ortserver.dao.repositories.user.UserDao
+import org.eclipse.apoapsis.ortserver.dao.tables.shared.IssuesTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.OrtRunIssueDao
+import org.eclipse.apoapsis.ortserver.dao.tables.shared.OrtRunsIssuesTable
+import org.eclipse.apoapsis.ortserver.dao.tables.shared.ortRunIssueContentMatches
+import org.eclipse.apoapsis.ortserver.dao.transaction
+import org.eclipse.apoapsis.ortserver.dao.transactionCatching
 import org.eclipse.apoapsis.ortserver.dao.utils.applyFilter
 import org.eclipse.apoapsis.ortserver.dao.utils.listQuery
 import org.eclipse.apoapsis.ortserver.dao.utils.toDatabasePrecision
@@ -39,9 +44,11 @@ import org.eclipse.apoapsis.ortserver.model.OrtRun
 import org.eclipse.apoapsis.ortserver.model.OrtRunFilters
 import org.eclipse.apoapsis.ortserver.model.OrtRunStatus
 import org.eclipse.apoapsis.ortserver.model.OrtRunSummary
-import org.eclipse.apoapsis.ortserver.model.UserDisplayName
+import org.eclipse.apoapsis.ortserver.model.Severity
+import org.eclipse.apoapsis.ortserver.model.User
 import org.eclipse.apoapsis.ortserver.model.repositories.OrtRunRepository
 import org.eclipse.apoapsis.ortserver.model.runs.Issue
+import org.eclipse.apoapsis.ortserver.model.runs.repository.RunIncludesExcludes
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryResult
 import org.eclipse.apoapsis.ortserver.model.util.OptionalValue
@@ -62,13 +69,30 @@ import org.jetbrains.exposed.v1.jdbc.SizedCollection
 import org.jetbrains.exposed.v1.jdbc.delete
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.update
 
 import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger(DaoOrtRunRepository::class.java)
 
+private data class IssueMatchKey(
+    val timestamp: Instant,
+    val source: String,
+    val message: String,
+    val severity: Severity,
+    val affectedPath: String?
+)
+
+private fun Issue.matchKey() = IssueMatchKey(
+    timestamp = timestamp.toDatabasePrecision(),
+    source = source,
+    message = message,
+    severity = severity,
+    affectedPath = affectedPath
+)
+
 class DaoOrtRunRepository(private val db: Database) : OrtRunRepository {
-    override fun create(
+    override suspend fun create(
         repositoryId: Long,
         revision: String,
         path: String?,
@@ -77,16 +101,15 @@ class DaoOrtRunRepository(private val db: Database) : OrtRunRepository {
         labels: Map<String, String>,
         traceId: String?,
         environmentConfigPath: String?,
-        userDisplayName: UserDisplayName?
-    ): OrtRun = db.blockingQuery {
-        val maxIndex = OrtRunsTable.index.max()
-        val lastIndex = OrtRunsTable
-            .select(maxIndex)
-            .where { OrtRunsTable.repositoryId eq repositoryId }
-            .singleOrNull()
-            ?.get(maxIndex)
-
-        val nextIndex = (lastIndex ?: 0) + 1
+        userDisplayName: User?,
+        resolvedJobConfigContext: String?,
+        includesExcludes: RunIncludesExcludes?
+    ): OrtRun = db.transaction(transactionIsolation = Connection.TRANSACTION_READ_COMMITTED) {
+        // The index allocation locks the row of the repository in the indexes table until the end of the transaction.
+        // This requires the "read committed" isolation level, as with stricter isolation levels concurrent transactions
+        // would fail with serialization errors instead of waiting for the lock. Note that if this function is called
+        // within an existing transaction, the isolation level of that transaction is used.
+        val nextIndex = OrtRunIndexesTable.nextIndex(repositoryId)
 
         OrtRunDao.new {
             this.index = nextIndex
@@ -96,29 +119,32 @@ class DaoOrtRunRepository(private val db: Database) : OrtRunRepository {
             this.createdAt = Clock.System.now().toDatabasePrecision()
             this.jobConfigs = jobConfigs
             this.jobConfigContext = jobConfigContext
+            this.resolvedJobConfigContext = resolvedJobConfigContext
             this.status = OrtRunStatus.CREATED
             this.labels = mapAndDeduplicate(labels.entries, ::getLabelDao)
             this.traceId = traceId
             this.environmentConfigPath = environmentConfigPath
-            this.userDisplayName = UserDisplayNameDao.insertOrUpdate(userDisplayName)
+            this.userDisplayName = UserDao.insertOrUpdate(userDisplayName)
             this.ortServerVersion = ORT_SERVER_VERSION
+            this.includesExcludes = includesExcludes
         }.mapToModel()
     }
 
-    override fun get(id: Long): OrtRun? = db.entityQuery { OrtRunDao[id].mapToModel() }
+    override suspend fun get(id: Long): OrtRun? =
+        db.transactionCatching { OrtRunDao[id].mapToModel() }.getEntityOrNull()
 
-    override fun getByIndex(repositoryId: Long, ortRunIndex: Long): OrtRun? = db.blockingQuery {
+    override suspend fun getByIndex(repositoryId: Long, ortRunIndex: Long): OrtRun? = db.transaction {
         OrtRunDao.find { OrtRunsTable.repositoryId eq repositoryId and (OrtRunsTable.index eq ortRunIndex) }
             .firstOrNull()?.mapToModel()
     }
 
-    override fun getIdByIndex(repositoryId: Long, ortRunIndex: Long): Long? = db.blockingQuery {
+    override suspend fun getIdByIndex(repositoryId: Long, ortRunIndex: Long): Long? = db.transaction {
         OrtRunDao.find { OrtRunsTable.repositoryId eq repositoryId and (OrtRunsTable.index eq ortRunIndex) }
             .firstOrNull()?.id?.value
     }
 
-    override fun list(parameters: ListQueryParameters, filters: OrtRunFilters?): ListQueryResult<OrtRun> =
-        db.blockingQuery {
+    override suspend fun list(parameters: ListQueryParameters, filters: OrtRunFilters?): ListQueryResult<OrtRun> =
+        db.transaction {
             OrtRunDao.listQuery(parameters, OrtRunDao::mapToModel) {
                 var condition: Op<Boolean> = Op.TRUE
 
@@ -133,26 +159,29 @@ class DaoOrtRunRepository(private val db: Database) : OrtRunRepository {
             }
         }
 
-    override fun listForRepository(repositoryId: Long, parameters: ListQueryParameters): ListQueryResult<OrtRun> =
-        db.blockingQueryCatching {
+    override suspend fun listForRepository(
+        repositoryId: Long,
+        parameters: ListQueryParameters
+    ): ListQueryResult<OrtRun> =
+        db.transactionCatching {
             OrtRunDao.listQuery(parameters, OrtRunDao::mapToModel) { OrtRunsTable.repositoryId eq repositoryId }
         }.getOrElse {
             logger.error("Cannot list ORT runs for repository $repositoryId.", it)
             ListQueryResult(emptyList(), parameters, 0L)
         }
 
-    override fun listSummariesForRepository(
+    override suspend fun listSummariesForRepository(
         repositoryId: Long,
         parameters: ListQueryParameters
     ): ListQueryResult<OrtRunSummary> =
-        db.blockingQueryCatching {
+        db.transactionCatching {
             OrtRunDao.listQuery(parameters, OrtRunDao::mapToSummaryModel) { OrtRunsTable.repositoryId eq repositoryId }
         }.getOrElse {
             logger.error("Cannot list ORT runs for repository $repositoryId.", it)
             ListQueryResult(emptyList(), parameters, 0L)
         }
 
-    override fun listActiveRuns(): List<ActiveOrtRun> = db.blockingQuery {
+    override suspend fun listActiveRuns(): List<ActiveOrtRun> = db.transaction {
         OrtRunDao.find {
             OrtRunsTable.status inList activeRunStatuses
         }.map { ActiveOrtRun(it.id.value, it.createdAt, it.traceId) }
@@ -162,7 +191,7 @@ class DaoOrtRunRepository(private val db: Database) : OrtRunRepository {
      * Return a [List] with the IDs of all ORT runs that have finished before [before], except the latest run per
      * repository, in case there is no newer one at all.
      */
-    override fun findRunsBefore(before: Instant): List<Long> = db.blockingQuery {
+    override suspend fun findRunsBefore(before: Instant): List<Long> = db.transaction {
         val maxIdAlias = OrtRunsTable.id.max().alias("max_id")
         val latestRunPerRepository = OrtRunsTable
             .select(OrtRunsTable.repositoryId, maxIdAlias)
@@ -182,7 +211,7 @@ class DaoOrtRunRepository(private val db: Database) : OrtRunRepository {
             .map { it[OrtRunsTable.id].value }
     }
 
-    override fun update(
+    override suspend fun update(
         id: Long,
         status: OptionalValue<OrtRunStatus>,
         jobConfigs: OptionalValue<JobConfigurations>,
@@ -192,7 +221,7 @@ class DaoOrtRunRepository(private val db: Database) : OrtRunRepository {
         resolvedRevision: OptionalValue<String?>,
         issues: OptionalValue<Collection<Issue>>,
         labels: OptionalValue<Map<String, String>>
-    ): OrtRun = db.blockingQuery {
+    ): OrtRun = db.transaction {
         val ortRun = OrtRunDao[id]
 
         status.ifPresent {
@@ -224,15 +253,53 @@ class DaoOrtRunRepository(private val db: Database) : OrtRunRepository {
         OrtRunDao[id].mapToModel()
     }
 
-    override fun delete(id: Long): Int = db.blockingQuery {
+    override suspend fun updateIssueHowToFixTexts(ortRunId: Long, issues: Collection<Issue>): Int {
+        if (issues.isEmpty()) return 0
+
+        val distinctIssues = issues.groupBy { it.matchKey() }.values.map { matchingIssues ->
+            val howToFixTexts = matchingIssues.mapTo(mutableSetOf()) { it.howToFix }
+            val issue = matchingIssues.first()
+
+            require(howToFixTexts.size == 1) {
+                val formattedTexts = howToFixTexts.joinToString { text ->
+                    if (text == null) "null" else "\"$text\""
+                }
+
+                "Issues with the same timestamp=${issue.timestamp}, source='${issue.source}', " +
+                    "message='${issue.message}', severity=${issue.severity}, affectedPath='${issue.affectedPath}' " +
+                    "have different how-to-fix texts: $formattedTexts."
+            }
+
+            issue
+        }
+
+        return db.transaction {
+            distinctIssues.sumOf { issue ->
+                val updatedOccurrences = OrtRunsIssuesTable.innerJoin(IssuesTable)
+                    .update({ ortRunIssueContentMatches(ortRunId, issue) }) {
+                        it[OrtRunsIssuesTable.howToFix] = issue.howToFix
+                    }
+
+                if (updatedOccurrences == 0) {
+                    logger.debug(
+                        "No occurrence found in ORT run {} for issue {}: {}.", ortRunId, issue.source, issue.message
+                    )
+                }
+
+                updatedOccurrences
+            }
+        }
+    }
+
+    override suspend fun delete(id: Long): Int = db.transaction {
         OrtRunsTable.deleteWhere { OrtRunsTable.id eq id }
     }
 
-    override fun deleteByRepository(repositoryId: Long): Int = db.blockingQuery {
+    override suspend fun deleteByRepository(repositoryId: Long): Int = db.transaction {
         OrtRunsTable.deleteWhere { OrtRunsTable.repositoryId eq repositoryId }
     }
 
-    override fun deleteByProduct(productId: Long): Int = db.blockingQuery {
+    override suspend fun deleteByProduct(productId: Long): Int = db.transaction {
         OrtRunsTable
             .innerJoin(RepositoriesTable, { repositoryId }, { id })
             .innerJoin(ProductsTable, { RepositoriesTable.productId }, { id })
@@ -240,9 +307,7 @@ class DaoOrtRunRepository(private val db: Database) : OrtRunRepository {
     }
 }
 
-/**
- * Obtain a [LabelDao] for the given [entry].
- */
+/** Obtain a [LabelDao] for the given [entry]. */
 private fun getLabelDao(entry: Map.Entry<String, String>): LabelDao =
     LabelDao.getOrPut(entry.key, entry.value)
 

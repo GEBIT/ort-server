@@ -37,6 +37,7 @@ import kotlinx.coroutines.withContext
 import org.eclipse.apoapsis.ortserver.components.adminconfig.AdminConfigService
 import org.eclipse.apoapsis.ortserver.components.adminconfig.ReporterAsset
 import org.eclipse.apoapsis.ortserver.components.adminconfig.ReporterConfig
+import org.eclipse.apoapsis.ortserver.components.reportstorage.ReportStorageService
 import org.eclipse.apoapsis.ortserver.config.Path
 import org.eclipse.apoapsis.ortserver.model.EvaluatorJobConfiguration
 import org.eclipse.apoapsis.ortserver.model.PluginConfig
@@ -44,13 +45,16 @@ import org.eclipse.apoapsis.ortserver.model.ReporterJobConfiguration
 import org.eclipse.apoapsis.ortserver.model.Severity
 import org.eclipse.apoapsis.ortserver.model.resolvedconfiguration.ResolvedItemsResult
 import org.eclipse.apoapsis.ortserver.model.runs.Issue
+import org.eclipse.apoapsis.ortserver.services.ortrun.mapToModel
 import org.eclipse.apoapsis.ortserver.services.ortrun.mapToOrt
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 import org.eclipse.apoapsis.ortserver.workers.common.context.WorkerContext
 import org.eclipse.apoapsis.ortserver.workers.common.mapOptions
 import org.eclipse.apoapsis.ortserver.workers.common.readConfigFileValueWithDefault
 import org.eclipse.apoapsis.ortserver.workers.common.readConfigFileWithDefault
 import org.eclipse.apoapsis.ortserver.workers.common.resolvedConfigurationContext
 
+import org.ossreviewtoolkit.model.Issue as OrtIssue
 import org.ossreviewtoolkit.model.OrtResult
 import org.ossreviewtoolkit.model.config.CopyrightGarbage
 import org.ossreviewtoolkit.model.config.LicenseFilePatterns
@@ -86,7 +90,7 @@ private val logger = LoggerFactory.getLogger(ReporterRunner::class.java)
 
 class ReporterRunner(
     /** The object to store the generated report files. */
-    private val reportStorage: ReportStorage,
+    private val reportStorageService: ReportStorageService,
 
     /** The file archiver used for resolving license files. */
     private val fileArchiver: FileArchiver,
@@ -127,7 +131,7 @@ class ReporterRunner(
                 add(SimplePackageConfigurationProvider(configurations = repositoryPackageConfigurations))
 
                 val packageConfigurationProviderConfigs = context
-                    .resolveProviderPluginConfigSecrets(config.packageConfigurationProviders)
+                    .resolveProviderPluginConfigSecrets(config.packageConfigurationProviders.orEmpty())
                     .map { it.mapToOrt() }
 
                 addAll(
@@ -166,15 +170,33 @@ class ReporterRunner(
             HowToFixTextProvider.NONE
         }
 
-        val (reportNames, issues) = generateReports(
+        val howToFixTexts = calculateHowToFixTexts(resolvedOrtResult, howToFixTextProvider)
+        val cachingHowToFixTextProvider = HowToFixTextProvider { issue ->
+            if (issue in howToFixTexts.texts) {
+                howToFixTexts.texts[issue]
+            } else {
+                howToFixTextProvider.getHowToFixText(issue)
+            }
+        }
+
+        val (reportNames, reportIssues) = generateReports(
             context,
             config,
             adminConfig.reporterConfig,
             resolvedOrtResult,
             copyrightGarbage,
             licenseClassifications,
-            howToFixTextProvider
+            cachingHowToFixTextProvider
         )
+
+        val issues = buildList {
+            howToFixTexts.failureIssue?.let(::add)
+            addAll(reportIssues)
+        }
+
+        val issuesWithHowToFix = howToFixTexts.texts.mapNotNull { (issue, howToFix) ->
+            howToFix?.let { issue.mapToModel().copy(howToFix = it) }
+        }
 
         // Only return the package configurations if not already resolved by the evaluator.
         // Resolved items are always null here; each worker resolves its own items.
@@ -182,8 +204,51 @@ class ReporterRunner(
             reportNames,
             resolvedOrtResult.resolvedConfiguration.packageConfigurations.takeIf { evaluatorConfig == null },
             null,
-            issues = issues
+            issues = issues,
+            issuesWithHowToFix = issuesWithHowToFix
         )
+    }
+
+    /** Calculate how-to-fix text once for every distinct issue in the given [ortResult]. */
+    private fun calculateHowToFixTexts(
+        ortResult: OrtResult,
+        provider: HowToFixTextProvider
+    ): HowToFixTexts {
+        if (provider === HowToFixTextProvider.NONE) {
+            return HowToFixTexts(emptyMap(), null)
+        }
+
+        val issues = buildSet {
+            ortResult.getIssues().values.forEach(::addAll)
+            addAll(ortResult.getAdvisorProviderIssues())
+        }
+
+        var firstFailure: Throwable? = null
+        var failureCount = 0
+        val texts = issues.associateWith { issue ->
+            runCatching { provider.getHowToFixText(issue) }.getOrElse { exception ->
+                logger.error(
+                    "Could not calculate how-to-fix text for issue from '{}': '{}'.",
+                    issue.source,
+                    issue.message,
+                    exception
+                )
+                failureCount++
+                if (firstFailure == null) firstFailure = exception
+                null
+            }
+        }
+
+        val failureIssue = firstFailure?.let { exception ->
+            Issue(
+                timestamp = Clock.System.now(),
+                source = "Reporter",
+                message = "Could not calculate how-to-fix text for $failureCount issue(s): '${exception.message}'",
+                severity = Severity.WARNING
+            )
+        }
+
+        return HowToFixTexts(texts, failureIssue)
     }
 
     /**
@@ -201,7 +266,7 @@ class ReporterRunner(
         licenseClassifications: LicenseClassifications,
         howToFixTextProvider: HowToFixTextProvider
     ): Pair<Map<String, Long>, List<Issue>> =
-        withContext(Dispatchers.IO) {
+        withContext(Dispatchers.Virtual) {
             val outputDir = context.createTempDir()
             val issues = ConcurrentLinkedQueue<Issue>()
 
@@ -232,7 +297,7 @@ class ReporterRunner(
             val activeReporters = ConcurrentHashMap.newKeySet<String>()
             val monitorJob = launch { logActiveReporters(activeReporters) }
 
-            val success = config.formats.map { format ->
+            val success = config.formats.orEmpty().map { format ->
                 async {
                     logger.info("Generating the '$format' report...")
                     activeReporters += format
@@ -241,12 +306,10 @@ class ReporterRunner(
                         measureTimedValue {
                             val reporterFactory = reporterConfig.getReporterFactory(format)
 
-                            val pluginConfig = reporterConfig.pluginOptionsForDefinition(
-                                format,
-                                transformedOptions
-                            )?.mapToOrt().orEmpty()
+                            val pluginConfig = reporterConfig.pluginOptionsForDefinition(format, transformedOptions)
+                                ?: transformedOptions.entries.find { it.key.equals(format, ignoreCase = true) }?.value
 
-                            val reporter = reporterFactory.create(pluginConfig)
+                            val reporter = reporterFactory.create(pluginConfig?.mapToOrt().orEmpty())
                             val reportFileResults = reporter.generateReport(reporterInput, outputDir)
 
                             val reportFiles = reportFileResults.mapNotNull { result ->
@@ -267,11 +330,11 @@ class ReporterRunner(
 
                     result.getOrNull()?.let { (_, reportFiles) ->
                         val nameMapper = ReportNameMapper.create(
-                            requireNotNull(reporterConfig.getReportDefinition(format))
+                            reporterConfig.getReportDefinition(format)?.nameMapping
                         )
 
                         val namedReportFiles = nameMapper.mapReportNames(reportFiles)
-                        reportStorage.storeReportFiles(context.ortRun.id, namedReportFiles)
+                        reportStorageService.storeReports(context.ortRun.id, namedReportFiles)
 
                         namedReportFiles.mapValues { (_, file) -> file.length() }
                     }.also {
@@ -305,7 +368,7 @@ class ReporterRunner(
         context: WorkerContext,
         config: ReporterJobConfiguration,
         reporterConfig: ReporterConfig
-    ): Map<String, PluginConfig> = withContext(Dispatchers.IO) {
+    ): Map<String, PluginConfig> = withContext(Dispatchers.Virtual) {
         val templateDir = context.createTempDir()
         val (assetFiles, assetDirectories) = reporterConfig.getReporterAssets(config)
 
@@ -346,7 +409,13 @@ data class ReporterRunnerResult(
     val reports: Map<String, Long>,
     val resolvedPackageConfigurations: List<PackageConfiguration>?,
     val resolvedItems: ResolvedItemsResult?,
-    val issues: List<Issue> = emptyList()
+    val issues: List<Issue> = emptyList(),
+    val issuesWithHowToFix: List<Issue> = emptyList()
+)
+
+private data class HowToFixTexts(
+    val texts: Map<OrtIssue, String?>,
+    val failureIssue: Issue?
 )
 
 /** Regular expression to split multiple template paths. */
@@ -471,7 +540,7 @@ private fun ReporterConfig.getReporterAssets(
     val assetFiles = getGlobalAssets(config.assetFilesGroups)
     val assetDirectories = getGlobalAssets(config.assetDirectoriesGroups)
 
-    config.formats.forEach { format ->
+    config.formats.orEmpty().forEach { format ->
         getReportDefinition(format)?.also { definition ->
             assetFiles += definition.assetFiles
             assetDirectories += definition.assetDirectories
@@ -492,12 +561,12 @@ private fun ReporterConfig.getGlobalAssets(groupNames: Collection<String>): Muta
     }
 
 /**
- * Obtain the [ReporterFactory] for the given [format] using the definitions from this [ReporterConfig].
+ * Get the [ReporterFactory] for the given [format]. If this [ReporterConfig] contains a report definition with that
+ * name, the plugin ID of that definition is used, otherwise the format name itself is used as plugin ID. If no reporter
+ * factory can be found for the plugin ID, an exception is thrown.
  */
 private fun ReporterConfig.getReporterFactory(format: String): ReporterFactory {
-    val pluginId = requireNotNull(getReportDefinition(format)?.pluginId) {
-        "No reporter found for the configured format '$format'."
-    }
+    val pluginId = getReportDefinition(format)?.pluginId ?: format
 
     return requireNotNull(ReporterFactory.ALL[pluginId]) {
         "No reporter plugin found with the ID '$pluginId'."

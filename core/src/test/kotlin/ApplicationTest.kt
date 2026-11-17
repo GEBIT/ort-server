@@ -54,12 +54,10 @@ fun Application.testModule(db: Database) {
     configureValidation()
 }
 
-/**
- * A test application configuration that requires Keycloak to be run in the integration test.
- */
+/** A test application configuration that requires Keycloak to be run in the integration test. */
 fun Application.testAuthModule(db: Database) {
     configureKoin(db)
-    configureAuthentication(get(), get())
+    configureAuthentication(get(), get(), get())
     configureRateLimit()
     configureStatusPages()
     configureRouting()

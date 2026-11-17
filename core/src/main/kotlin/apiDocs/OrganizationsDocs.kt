@@ -34,8 +34,7 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.PostProduct
 import org.eclipse.apoapsis.ortserver.api.v1.model.Product
 import org.eclipse.apoapsis.ortserver.api.v1.model.Severity
 import org.eclipse.apoapsis.ortserver.api.v1.model.User
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserGroup
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithGroups
+import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithOrganizationRole
 import org.eclipse.apoapsis.ortserver.api.v1.model.Username
 import org.eclipse.apoapsis.ortserver.api.v1.model.Vulnerability
 import org.eclipse.apoapsis.ortserver.api.v1.model.VulnerabilityForRunsFilters
@@ -73,6 +72,10 @@ val getOrganization: RouteConfig.() -> Unit = {
                 }
             }
         }
+
+        HttpStatusCode.NotFound to {
+            description = "The organization does not exist."
+        }
     }
 }
 
@@ -109,6 +112,10 @@ val getOrganizations: RouteConfig.() -> Unit = {
                 }
             }
         }
+
+        HttpStatusCode.BadRequest to {
+            description = "The filter is not a valid regular expression."
+        }
     }
 }
 
@@ -134,6 +141,10 @@ val postOrganization: RouteConfig.() -> Unit = {
                 }
             }
         }
+
+        HttpStatusCode.Conflict to {
+            description = "An organization with the same name already exists."
+        }
     }
 }
 
@@ -147,7 +158,8 @@ val patchOrganization: RouteConfig.() -> Unit = {
             description = "The organization's ID."
         }
         jsonBody<PatchOrganization> {
-            description = "Set the values that should be updated. To delete a value, set it explicitly to null."
+            description = "Set the values that should be updated. Omitted values are not changed. To delete the " +
+                    "description, set it explicitly to null."
             example("Update Organization") {
                 value = PatchOrganization(
                     name = "My updated Organization".asPresent(),
@@ -166,6 +178,10 @@ val patchOrganization: RouteConfig.() -> Unit = {
                 }
             }
         }
+
+        HttpStatusCode.NotFound to {
+            description = "The organization does not exist."
+        }
     }
 }
 
@@ -183,6 +199,14 @@ val deleteOrganization: RouteConfig.() -> Unit = {
     response {
         HttpStatusCode.NoContent to {
             description = "Success"
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The organization does not exist."
+        }
+
+        HttpStatusCode.Conflict to {
+            description = "The organization still contains products."
         }
     }
 }
@@ -224,6 +248,10 @@ val getOrganizationProducts: RouteConfig.() -> Unit = {
                 }
             }
         }
+
+        HttpStatusCode.BadRequest to {
+            description = "The filter is not a valid regular expression."
+        }
     }
 }
 
@@ -251,6 +279,10 @@ val postProduct: RouteConfig.() -> Unit = {
                     value = Product(id = 1, organizationId = 2, name = "My product", description = "Description")
                 }
             }
+        }
+
+        HttpStatusCode.Conflict to {
+            description = "A product with the same name already exists in the organization."
         }
     }
 }
@@ -283,7 +315,11 @@ val putOrganizationRoleToUser: RouteConfig.() -> Unit = {
         }
 
         HttpStatusCode.NotFound to {
-            description = "Organization or role not found."
+            description = "The organization or the user does not exist."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The role is invalid."
         }
     }
 }
@@ -291,18 +327,21 @@ val putOrganizationRoleToUser: RouteConfig.() -> Unit = {
 val deleteOrganizationRoleFromUser: RouteConfig.() -> Unit = {
     operationId = "deleteOrganizationRoleFromUser"
     summary = "Remove an organization role from a user"
+    description = "Remove the role that the user has on the organization. The role in the path must be " +
+            "a valid role, but it is not compared with the role that is actually assigned."
     tags = listOf("Organizations")
 
     request {
         pathParameter<Long>("organizationId") {
             description = "The organization's ID."
         }
-        pathParameter<String>("role") {
+        pathParameter<OrganizationRole>("role") {
             description = "The role to remove from the user."
         }
 
         queryParameter<String>("username") {
             description = "The username of the user."
+            required = true
         }
     }
 
@@ -312,7 +351,11 @@ val deleteOrganizationRoleFromUser: RouteConfig.() -> Unit = {
         }
 
         HttpStatusCode.NotFound to {
-            description = "Organization or role not found."
+            description = "The organization or the user does not exist."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The role is invalid."
         }
     }
 }
@@ -321,7 +364,7 @@ val getOrganizationVulnerabilities: RouteConfig.() -> Unit = {
     operationId = "getOrganizationVulnerabilities"
     summary = "Get vulnerabilities from an organization"
     description = "Get the vulnerabilities from latest successful advisor runs across the repositories in an " +
-            " organization."
+            "organization."
     tags = listOf("Organizations")
 
     request {
@@ -333,8 +376,9 @@ val getOrganizationVulnerabilities: RouteConfig.() -> Unit = {
 
         queryParameter<String>("rating") {
             description = "Defines the ratings to filter the results by. This is a comma-separated string with the" +
-                    " following allowed ratings: " + VulnerabilityRating.entries.joinToString { "'$it" } + ". Add a " +
-                    "minus as the first item to exclude packages with the specified ratings, e.g. '-,HIGH'."
+                    " following allowed ratings: " + VulnerabilityRating.entries.joinToString { "'$it'" } +
+                    " (ignoring case). Add a minus as the first item to exclude vulnerabilities with the specified " +
+                    "ratings, e.g. '-,HIGH'."
         }
 
         queryParameter<String>("identifier") {
@@ -358,6 +402,7 @@ val getOrganizationVulnerabilities: RouteConfig.() -> Unit = {
 
     response {
         HttpStatusCode.OK to {
+            description = "Success"
             jsonBody<PagedSearchResponse<VulnerabilityWithStats, VulnerabilityForRunsFilters>> {
                 example("Get vulnerabilities for organization") {
                     value = PagedSearchResponse(
@@ -449,6 +494,7 @@ val getOrganizationRunStatistics: RouteConfig.() -> Unit = {
 
     response {
         HttpStatusCode.OK to {
+            description = "Success"
             jsonBody<OrtRunStatistics> {
                 example("Get run statistics across repositories of an organization") {
                     value = OrtRunStatistics(
@@ -507,10 +553,10 @@ val getOrganizationRunStatistics: RouteConfig.() -> Unit = {
 val getOrganizationUsers: RouteConfig.() -> Unit = {
     operationId = "getOrganizationUsers"
     summary = "Get all users for an organization"
-    description = "Get all users that have access rights for an organization, including the user privileges (groups) " +
-            "the user has within the organization. Fields available for sorting: 'username', 'firstName', " +
-            "'lastName', 'email', 'group'. NOTE: This endpoint supports only one sort field. All fields other than " +
-            " the first one are ignored."
+    description = "Get all users that have a role assigned directly on an organization, including their role. " +
+            "Users that only inherit access from a higher level are not included. Fields available for " +
+            "sorting: 'username', 'firstName', 'lastName', 'email', 'role'. NOTE: This endpoint supports " +
+            "exactly one sort field."
     tags = listOf("Organizations")
 
     request {
@@ -524,21 +570,18 @@ val getOrganizationUsers: RouteConfig.() -> Unit = {
     response {
         HttpStatusCode.OK to {
             description = "Success"
-            jsonBody<PagedResponse<UserWithGroups>> {
+            jsonBody<PagedResponse<UserWithOrganizationRole>> {
                 example("Get users for organization") {
                     value = PagedResponse(
                         listOf(
-                            UserWithGroups(
+                            UserWithOrganizationRole(
                                 User(
                                     username = "jdoe",
                                     firstName = "John",
                                     lastName = "Doe",
                                     email = "johndoe@example.com"
                                 ),
-                                listOf(
-                                    UserGroup.READERS,
-                                    UserGroup.WRITERS
-                                )
+                                OrganizationRole.WRITER
                             )
                         ),
                         PagingData(
@@ -550,6 +593,10 @@ val getOrganizationUsers: RouteConfig.() -> Unit = {
                     )
                 }
             }
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "Not exactly one sort field or an unsupported sort field was provided."
         }
     }
 }

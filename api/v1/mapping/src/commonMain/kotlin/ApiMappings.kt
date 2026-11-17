@@ -57,7 +57,13 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.PackageCuration
 import org.eclipse.apoapsis.ortserver.api.v1.model.PackageCurationData as ApiPackageCurationData
 import org.eclipse.apoapsis.ortserver.api.v1.model.PackageFilters as ApiPackageFilters
 import org.eclipse.apoapsis.ortserver.api.v1.model.PackageManagerConfiguration as ApiPackageManagerConfiguration
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathExclude as ApiPathExclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathExcludeReason as ApiPathExcludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathInclude as ApiPathInclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathIncludeReason as ApiPathIncludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathIncludesExcludes as ApiPathIncludesExcludes
 import org.eclipse.apoapsis.ortserver.api.v1.model.PluginConfig as ApiPluginConfig
+import org.eclipse.apoapsis.ortserver.api.v1.model.PostRepositoryRun
 import org.eclipse.apoapsis.ortserver.api.v1.model.ProcessedDeclaredLicense as ApiProcessedDeclaredLicense
 import org.eclipse.apoapsis.ortserver.api.v1.model.Product as ApiProduct
 import org.eclipse.apoapsis.ortserver.api.v1.model.Project as ApiProject
@@ -72,13 +78,16 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.RuleViolation as ApiRuleViola
 import org.eclipse.apoapsis.ortserver.api.v1.model.RuleViolationFilters as ApiRuleViolationFilters
 import org.eclipse.apoapsis.ortserver.api.v1.model.ScannerJob as ApiScannerJob
 import org.eclipse.apoapsis.ortserver.api.v1.model.ScannerJobConfiguration as ApiScannerJobConfiguration
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeExclude as ApiScopeExclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeExcludeReason as ApiScopeExcludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeInclude as ApiScopeInclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeIncludeReason as ApiScopeIncludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeIncludesExcludes as ApiScopeIncludesExcludes
 import org.eclipse.apoapsis.ortserver.api.v1.model.Severity as ApiSeverity
 import org.eclipse.apoapsis.ortserver.api.v1.model.ShortestDependencyPath as ApiShortestDependencyPath
 import org.eclipse.apoapsis.ortserver.api.v1.model.SourceCodeOrigin as ApiSourceCodeOrigin
 import org.eclipse.apoapsis.ortserver.api.v1.model.SubmoduleFetchStrategy as ApiSubmoduleFetchStrategy
-import org.eclipse.apoapsis.ortserver.api.v1.model.User as ApiUser
 import org.eclipse.apoapsis.ortserver.api.v1.model.UserDisplayName as ApiUserDisplayName
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserGroup as ApiUserGroup
 import org.eclipse.apoapsis.ortserver.api.v1.model.VcsInfo as ApiVcsInfo
 import org.eclipse.apoapsis.ortserver.api.v1.model.VcsInfoCurationData as ApiVcsInfoCurationData
 import org.eclipse.apoapsis.ortserver.api.v1.model.Vulnerability as ApiVulnerability
@@ -125,8 +134,6 @@ import org.eclipse.apoapsis.ortserver.model.Severity
 import org.eclipse.apoapsis.ortserver.model.SourceCodeOrigin
 import org.eclipse.apoapsis.ortserver.model.SubmoduleFetchStrategy
 import org.eclipse.apoapsis.ortserver.model.User
-import org.eclipse.apoapsis.ortserver.model.UserDisplayName
-import org.eclipse.apoapsis.ortserver.model.UserGroup
 import org.eclipse.apoapsis.ortserver.model.VulnerabilityFilters
 import org.eclipse.apoapsis.ortserver.model.VulnerabilityForRunsFilters
 import org.eclipse.apoapsis.ortserver.model.VulnerabilityRating
@@ -151,8 +158,15 @@ import org.eclipse.apoapsis.ortserver.model.runs.advisor.VulnerabilityReference
 import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolutionReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCurationData
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathInclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathIncludesExcludes
 import org.eclipse.apoapsis.ortserver.model.runs.repository.RuleViolationResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.RuleViolationResolutionReason
+import org.eclipse.apoapsis.ortserver.model.runs.repository.RunIncludesExcludes
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeInclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeIncludesExcludes
 import org.eclipse.apoapsis.ortserver.model.runs.repository.VcsInfoCurationData
 import org.eclipse.apoapsis.ortserver.model.util.ComparisonOperator
 import org.eclipse.apoapsis.ortserver.model.util.FilterOperatorAndValue
@@ -224,7 +238,7 @@ fun AnalyzerJobConfiguration.mapToApi() =
         enabledPackageManagers = enabledPackageManagers,
         environmentConfig = environmentConfig?.mapToApi(),
         submoduleFetchStrategy = submoduleFetchStrategy?.mapToApi(),
-        packageCurationProviders = packageCurationProviders.map { it.mapToApi() },
+        packageCurationProviders = packageCurationProviders?.map { it.mapToApi() },
         packageManagerOptions = packageManagerOptions?.mapValues { it.value.mapToApi() },
         repositoryConfigPath = repositoryConfigPath,
         skipExcluded = skipExcluded,
@@ -239,7 +253,7 @@ fun ApiAnalyzerJobConfiguration.mapToModel() =
         enabledPackageManagers = enabledPackageManagers,
         environmentConfig = environmentConfig?.mapToModel(),
         submoduleFetchStrategy = submoduleFetchStrategy?.mapToModel(),
-        packageCurationProviders = packageCurationProviders?.map { it.mapToModel() }.orEmpty(),
+        packageCurationProviders = packageCurationProviders?.map { it.mapToModel() },
         packageManagerOptions = packageManagerOptions?.mapValues { it.value.mapToModel() },
         repositoryConfigPath = repositoryConfigPath,
         skipExcluded = skipExcluded,
@@ -268,13 +282,13 @@ fun EvaluatorJob.mapToApiSummary() =
 
 fun EvaluatorJobConfiguration.mapToApi() =
     ApiEvaluatorJobConfiguration(
-        packageConfigurationProviders = packageConfigurationProviders.map { it.mapToApi() },
+        packageConfigurationProviders = packageConfigurationProviders?.map { it.mapToApi() },
         keepAliveWorker = keepAliveWorker
     )
 
 fun ApiEvaluatorJobConfiguration.mapToModel() =
     EvaluatorJobConfiguration(
-        packageConfigurationProviders = packageConfigurationProviders?.map { it.mapToModel() }.orEmpty(),
+        packageConfigurationProviders = packageConfigurationProviders?.map { it.mapToModel() },
         keepAliveWorker = keepAliveWorker
     )
 
@@ -289,7 +303,8 @@ fun Issue.mapToApi() =
         worker = worker,
         resolutions = resolutions.map { it.mapToApi() },
         unappliedResolutions = unappliedResolutions.map { it.mapToApi() },
-        purl = purl
+        purl = purl,
+        howToFix = howToFix
     )
 
 fun ApiIssue.mapToModel() =
@@ -302,7 +317,8 @@ fun ApiIssue.mapToModel() =
         identifier = identifier?.mapToModel(),
         worker = worker,
         resolutions = resolutions.map { it.mapToModel() },
-        unappliedResolutions = unappliedResolutions.map { it.mapToModel() }
+        unappliedResolutions = unappliedResolutions.map { it.mapToModel() },
+        howToFix = howToFix
     )
 
 fun ApiIssueFilter.mapToModel(): IssueFilter = IssueFilter(
@@ -440,7 +456,9 @@ fun OrtRun.mapToApi(jobs: ApiJobs) =
         environmentConfigPath = environmentConfigPath,
         traceId = traceId,
         userDisplayName = userDisplayName?.mapToApi(),
-        ortServerVersion = ortServerVersion
+        ortServerVersion = ortServerVersion,
+        paths = includesExcludes?.paths?.mapToApi(),
+        scopes = includesExcludes?.scopes?.mapToApi()
     )
 
 fun OrtRun.mapToApiSummary(jobs: ApiJobSummaries) =
@@ -565,7 +583,7 @@ fun ReporterJobConfiguration.mapToApi() =
         formats = formats,
         assetFilesGroups = assetFilesGroups,
         assetDirectoriesGroups = assetDirectoriesGroups,
-        packageConfigurationProviders = packageConfigurationProviders.map { it.mapToApi() },
+        packageConfigurationProviders = packageConfigurationProviders?.map { it.mapToApi() },
         config = config?.mapValues { it.value.mapToApi() },
         keepAliveWorker = keepAliveWorker
     )
@@ -597,7 +615,7 @@ fun ApiReporterJobConfiguration.mapToModel() =
         formats = formats,
         assetFilesGroups = assetFilesGroups,
         assetDirectoriesGroups = assetDirectoriesGroups,
-        packageConfigurationProviders = packageConfigurationProviders?.map { it.mapToModel() }.orEmpty(),
+        packageConfigurationProviders = packageConfigurationProviders?.map { it.mapToModel() },
         config = config?.mapValues { it.value.mapToModel() },
         keepAliveWorker = keepAliveWorker
     )
@@ -775,10 +793,6 @@ fun ApiSourceCodeOrigin.mapToModel() =
         ApiSourceCodeOrigin.VCS -> SourceCodeOrigin.VCS
     }
 
-fun User.mapToApi() = ApiUser(username = username, firstName = firstName, lastName = lastName, email = email)
-
-fun UserGroup.mapToApi() = ApiUserGroup.valueOf(name)
-
 fun EcosystemStats.mapToApi() = ApiEcosystemStats(name = name, count = count)
 
 fun VulnerabilityRating.mapToApi() = ApiVulnerabilityRating.valueOf(name)
@@ -836,7 +850,8 @@ fun Package.mapToApi(
     shortestDependencyPaths = shortestDependencyPaths.map { it.mapToApi() },
     curations = curations,
     sourceCodeOrigins = sourceCodeOrigins?.map { it.mapToApi() },
-    labels = labels
+    labels = labels,
+    publishedAt = publishedAt
 )
 
 fun PackageCurationData.mapToApi() = ApiPackageCurationData(
@@ -854,7 +869,8 @@ fun PackageCurationData.mapToApi() = ApiPackageCurationData(
     isModified = isModified,
     declaredLicenseMapping = declaredLicenseMapping,
     sourceCodeOrigins = sourceCodeOrigins?.map { it.mapToApi() },
-    labels = labels
+    labels = labels,
+    publishedAt = publishedAt
 )
 
 fun VcsInfoCurationData.mapToApi() = ApiVcsInfoCurationData(
@@ -912,7 +928,7 @@ fun Project.mapToApi() = ApiProject(
     scopeNames = scopeNames
 )
 
-fun UserDisplayName.mapToApi() = ApiUserDisplayName(username = username, fullName = fullName)
+fun User.mapToApi() = ApiUserDisplayName(username = username, fullName = fullName)
 
 fun OidcConfig.mapToApi() = ApiOidcConfig(accessTokenUrl = accessTokenUrl, clientId = clientId)
 
@@ -927,3 +943,53 @@ fun ApiVulnerabilityForRunsFilters.mapToModel() = VulnerabilityForRunsFilters(
     externalId = externalId?.mapToModel { it },
     advisors = advisors?.mapToModel { it }
 )
+
+fun ApiPathInclude.mapToModel() = PathInclude(pattern, reason.name, comment.orEmpty())
+
+fun ApiPathExclude.mapToModel() = PathExclude(pattern, reason.name, comment.orEmpty())
+
+fun ApiScopeInclude.mapToModel() = ScopeInclude(pattern, reason.name, comment.orEmpty())
+
+fun ApiScopeExclude.mapToModel() = ScopeExclude(pattern, reason.name, comment.orEmpty())
+
+fun PathInclude.mapToApi() =
+    ApiPathInclude(pattern, ApiPathIncludeReason.valueOf(reason), comment.takeUnless { it.isEmpty() })
+
+fun PathExclude.mapToApi() =
+    ApiPathExclude(pattern, ApiPathExcludeReason.valueOf(reason), comment.takeUnless { it.isEmpty() })
+
+fun ScopeInclude.mapToApi() =
+    ApiScopeInclude(pattern, ApiScopeIncludeReason.valueOf(reason), comment.takeUnless { it.isEmpty() })
+
+fun ScopeExclude.mapToApi() =
+    ApiScopeExclude(pattern, ApiScopeExcludeReason.valueOf(reason), comment.takeUnless { it.isEmpty() })
+
+/** Map these includes and excludes requested for a run to the API, or return *null* if there are none. */
+fun PathIncludesExcludes.mapToApi(): ApiPathIncludesExcludes? =
+    ApiPathIncludesExcludes(
+        includes = includes.map(PathInclude::mapToApi),
+        excludes = excludes.map(PathExclude::mapToApi)
+    ).takeUnless { it == ApiPathIncludesExcludes() }
+
+/** Map these includes and excludes requested for a run to the API, or return *null* if there are none. */
+fun ScopeIncludesExcludes.mapToApi(): ApiScopeIncludesExcludes? =
+    ApiScopeIncludesExcludes(
+        includes = includes.map(ScopeInclude::mapToApi),
+        excludes = excludes.map(ScopeExclude::mapToApi)
+    ).takeUnless { it == ApiScopeIncludesExcludes() }
+
+/**
+ * Map the optional [paths][PostRepositoryRun.paths] and [scopes][PostRepositoryRun.scopes] of this request to the
+ * includes and excludes requested for the run, or return *null* if the request contains none.
+ */
+fun PostRepositoryRun.mapIncludesExcludesToModel(): RunIncludesExcludes? =
+    RunIncludesExcludes(
+        paths = PathIncludesExcludes(
+            includes = paths?.includes.orEmpty().map(ApiPathInclude::mapToModel),
+            excludes = paths?.excludes.orEmpty().map(ApiPathExclude::mapToModel)
+        ),
+        scopes = ScopeIncludesExcludes(
+            includes = scopes?.includes.orEmpty().map(ApiScopeInclude::mapToModel),
+            excludes = scopes?.excludes.orEmpty().map(ApiScopeExclude::mapToModel)
+        )
+    ).takeUnless { it == RunIncludesExcludes() }

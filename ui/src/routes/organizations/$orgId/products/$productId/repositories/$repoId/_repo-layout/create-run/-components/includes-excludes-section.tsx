@@ -1,0 +1,406 @@
+/*
+ * Copyright (C) 2026 The ORT Server Authors (See <https://github.com/eclipse-apoapsis/ort-server/blob/main/NOTICE>)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ * License-Filename: LICENSE
+ */
+
+import { TrashIcon, TriangleAlert } from 'lucide-react';
+import { useFieldArray, UseFormReturn, useWatch } from 'react-hook-form';
+
+import { InlineCode } from '@/components/typography.tsx';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
+import { Button } from '@/components/ui/button';
+import {
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { useDebounce } from '@/hooks/use-debounce';
+import { includesExcludesField } from '@/lib/job-config-fields';
+import {
+  getReasonOptions,
+  guessReason,
+  type IncludeExcludeEntry,
+  type IncludeExcludeKind,
+  type IncludeExcludeType,
+} from './includes-excludes';
+import { PatternCombobox } from './pattern-combobox';
+import {
+  countRemaining,
+  describeEffect,
+  describeRun,
+  type ProjectSuggestions,
+} from './project-suggestions';
+import type { CreateRunFormValues } from './run-schema';
+
+type IncludesExcludesSectionProps = {
+  form: UseFormReturn<CreateRunFormValues>;
+  /** The open accordion items of the form; the items of this section are "scopes" and "paths". */
+  openItems: string[];
+  onOpenItemsChange: (openItems: string[]) => void;
+  /** The suggestions from the projects of the last analyzed run, null if there is no such run. */
+  projectSuggestions?: ProjectSuggestions | null;
+  projectSuggestionsLoading?: boolean;
+};
+
+/** The section of the create run form for the path and scope includes and excludes of a run. */
+export const IncludesExcludesSection = ({
+  form,
+  openItems,
+  onOpenItemsChange,
+  projectSuggestions,
+  projectSuggestionsLoading,
+}: IncludesExcludesSectionProps) => (
+  <>
+    <h3 className='mt-4'>{includesExcludesField.label}</h3>
+    <div className='text-sm text-gray-500'>
+      {includesExcludesField.description}
+    </div>
+    <Accordion
+      type='multiple'
+      className='ml-4'
+      value={openItems}
+      onValueChange={onOpenItemsChange}
+    >
+      {(['scopes', 'paths'] as const).map((kind) => (
+        <IncludesExcludesItem
+          key={kind}
+          form={form}
+          kind={kind}
+          projectSuggestions={projectSuggestions}
+          projectSuggestionsLoading={projectSuggestionsLoading}
+        />
+      ))}
+    </Accordion>
+  </>
+);
+
+const texts = {
+  scopes: {
+    title: 'Scopes',
+    description: (
+      <>
+        Scope patterns are regular expressions that must match the whole scope
+        name, for example <InlineCode>test.*</InlineCode>.
+      </>
+    ),
+    includeNote: 'Only scopes matching an include are analyzed.',
+    leavesNothingLabel: 'These patterns exclude all scopes',
+    leavesNothing: (total: number, inRun: string) =>
+      `exclude ${total === 1 ? 'the only scope' : `all ${total} scopes`} found ${inRun}, leaving no dependencies to analyze.`,
+  },
+  paths: {
+    title: 'Paths',
+    description: (
+      <>
+        Path patterns are globs relative to the repository root, for example{' '}
+        <InlineCode>docs/**</InlineCode>.
+      </>
+    ),
+    includeNote: 'Only paths matching an include are analyzed.',
+    leavesNothingLabel: 'These patterns exclude all projects',
+    leavesNothing: (total: number, inRun: string) =>
+      `exclude ${total === 1 ? 'the only project' : `all ${total} projects`} found ${inRun}, leaving nothing to analyze.`,
+  },
+} as const;
+
+// The widths of the columns, shared by the header and the rows so that they line up.
+const columns = {
+  type: 'w-28 shrink-0',
+  pattern: 'min-w-48 flex-1',
+  reason: 'w-80 shrink-0',
+  comment: 'min-w-40 flex-1',
+  // The width of the remove button.
+  actions: 'w-9 shrink-0',
+};
+
+// When the section is narrow, the fields of a row wrap, so each field shows its own label instead
+// of the header.
+const fieldLabelClass = '@[50rem]:sr-only';
+
+const typeLabels: Record<IncludeExcludeType, string> = {
+  exclude: 'Exclude',
+  include: 'Include',
+};
+
+type IncludesExcludesItemProps = {
+  form: UseFormReturn<CreateRunFormValues>;
+  kind: IncludeExcludeKind;
+  projectSuggestions?: ProjectSuggestions | null;
+  projectSuggestionsLoading?: boolean;
+};
+
+const IncludesExcludesItem = ({
+  form,
+  kind,
+  projectSuggestions,
+  projectSuggestionsLoading,
+}: IncludesExcludesItemProps) => {
+  const { fields, append, remove } = useFieldArray({
+    name: kind,
+    control: form.control,
+  });
+  const entries = useWatch({ control: form.control, name: kind });
+  // Wait for typing to stop before warning, so that a half-typed pattern does not flash a warning.
+  const debouncedEntries = useDebounce(entries, 300);
+  const remaining =
+    projectSuggestions &&
+    countRemaining(kind, debouncedEntries, projectSuggestions);
+  const leavesNothing = remaining?.remaining === 0;
+
+  const excluded = entries.filter((e) => e.type === 'exclude').length;
+  const included = entries.length - excluded;
+  const summary =
+    entries.length === 0
+      ? 'None'
+      : [
+          excluded > 0 ? `${excluded} excluded` : undefined,
+          included > 0 ? `${included} included` : undefined,
+        ]
+          .filter(Boolean)
+          .join(', ');
+
+  const changeType = (index: number, type: IncludeExcludeType) => {
+    const entry = form.getValues(`${kind}.${index}`);
+    form.setValue(`${kind}.${index}.type`, type, {
+      shouldDirty: true,
+    });
+    // The reasons differ between includes and excludes.
+    if (!getReasonOptions(kind, type).includes(entry.reason)) {
+      form.setValue(
+        `${kind}.${index}.reason`,
+        guessReason(kind, type, entry.pattern),
+        { shouldDirty: true }
+      );
+    }
+  };
+
+  return (
+    <AccordionItem value={kind}>
+      <AccordionTrigger>
+        <span>
+          {texts[kind].title}
+          <span className='text-muted-foreground font-normal'>
+            {' · '}
+            {summary}
+          </span>
+          {leavesNothing && (
+            <TriangleAlert
+              aria-label={texts[kind].leavesNothingLabel}
+              className='text-traffic-light-yellow ml-2 inline size-4 align-text-bottom'
+            />
+          )}
+        </span>
+      </AccordionTrigger>
+      <AccordionContent className='@container flex flex-col gap-3'>
+        <div className='text-sm text-gray-500'>{texts[kind].description}</div>
+        {fields.length > 0 && (
+          <div
+            aria-hidden
+            className='-mb-1 hidden gap-2 text-sm font-medium @[50rem]:flex'
+          >
+            <div className={columns.type}>Type</div>
+            <div className={columns.pattern}>Pattern</div>
+            <div className={columns.reason}>Reason</div>
+            <div className={columns.comment}>Comment</div>
+            <div className={columns.actions} />
+          </div>
+        )}
+        {fields.map((field, index) => {
+          const type = entries[index]?.type ?? field.type;
+          // The rows move up when one is removed, so the debounced entries are used only once they
+          // have caught up.
+          const debouncedEntry =
+            debouncedEntries.length === entries.length
+              ? debouncedEntries[index]
+              : undefined;
+
+          return (
+            <div
+              key={field.id}
+              className='flex flex-wrap items-start gap-2 @[50rem]:flex-nowrap'
+            >
+              <FormField
+                control={form.control}
+                name={`${kind}.${index}.type`}
+                render={({ field }) => (
+                  <FormItem className={columns.type}>
+                    <FormLabel className={fieldLabelClass}>Type</FormLabel>
+                    <Select
+                      value={field.value}
+                      onValueChange={(value) =>
+                        changeType(index, value as IncludeExcludeType)
+                      }
+                    >
+                      <FormControl>
+                        <SelectTrigger className='w-full'>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {(['exclude', 'include'] as const).map((value) => (
+                          <SelectItem key={value} value={value}>
+                            {typeLabels[value]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name={`${kind}.${index}.pattern`}
+                render={({ field }) => (
+                  <FormItem className={columns.pattern}>
+                    <FormLabel className={fieldLabelClass}>Pattern</FormLabel>
+                    <FormControl>
+                      <Input {...field} className='font-mono' />
+                    </FormControl>
+                    <FormMessage />
+                    {projectSuggestions && debouncedEntry && (
+                      <MatchCount
+                        kind={kind}
+                        entry={debouncedEntry}
+                        suggestions={projectSuggestions}
+                      />
+                    )}
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name={`${kind}.${index}.reason`}
+                render={({ field }) => (
+                  <FormItem className={columns.reason}>
+                    <FormLabel className={fieldLabelClass}>Reason</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className='w-full'>
+                          <SelectValue placeholder='Choose a reason' />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {getReasonOptions(kind, type).map((reason) => (
+                          <SelectItem key={reason} value={reason}>
+                            {reason}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name={`${kind}.${index}.comment`}
+                render={({ field }) => (
+                  <FormItem className={columns.comment}>
+                    <FormLabel className={fieldLabelClass}>Comment</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder='(optional)' />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+              <Button
+                type='button'
+                variant='outline'
+                size='icon'
+                aria-label='Remove pattern'
+                className={columns.actions}
+                onClick={() => remove(index)}
+              >
+                <TrashIcon className='h-4 w-4 text-red-500' />
+              </Button>
+            </div>
+          );
+        })}
+        {included > 0 && (
+          <div className='text-sm text-gray-500'>{texts[kind].includeNote}</div>
+        )}
+        {leavesNothing && projectSuggestions && (
+          <div
+            role='alert'
+            className='border-traffic-light-yellow flex items-start gap-2 rounded-md border px-3 py-2 text-sm'
+          >
+            <TriangleAlert className='text-traffic-light-yellow mt-0.5 size-4 shrink-0' />
+            <span>
+              {entries.length === 1
+                ? 'This pattern would '
+                : 'Together, these patterns would '}
+              {texts[kind].leavesNothing(
+                remaining.total,
+                describeRun(projectSuggestions)
+              )}
+            </span>
+          </div>
+        )}
+        <PatternCombobox
+          kind={kind}
+          entries={entries}
+          // Keep the focus in the list of suggestions, so that it stays open.
+          onAdd={(entry) => append(entry, { shouldFocus: false })}
+          onRemove={remove}
+          projectSuggestions={projectSuggestions}
+          projectSuggestionsLoading={projectSuggestionsLoading}
+        />
+      </AccordionContent>
+    </AccordionItem>
+  );
+};
+
+type MatchCountProps = {
+  kind: IncludeExcludeKind;
+  entry: Pick<IncludeExcludeEntry, 'type' | 'pattern'>;
+  suggestions: ProjectSuggestions;
+};
+
+/**
+ * Show what the include or exclude of an entry would do to the scopes, or to the projects, of the
+ * last analyzed run. A pattern that matches nothing is not an error, as the next run may differ.
+ */
+const MatchCount = ({ kind, entry, suggestions }: MatchCountProps) => {
+  const effect = describeEffect(kind, entry.type, entry.pattern, suggestions);
+
+  if (!effect) return null;
+
+  // An entry that excludes everything on its own is marked, so that it can be found in the list.
+  return effect.leavesNothing ? (
+    <p className='flex items-start gap-1 text-xs font-medium'>
+      <TriangleAlert className='text-traffic-light-yellow size-3.5 shrink-0' />
+      {effect.text}
+    </p>
+  ) : (
+    <p className='text-muted-foreground text-xs'>{effect.text}</p>
+  );
+};

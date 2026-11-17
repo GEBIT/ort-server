@@ -37,6 +37,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { jobConfigFields } from '@/lib/job-config-fields';
 import { CreateRunFormValues } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
 
 type NotifierFieldsProps = {
@@ -76,54 +77,58 @@ export const NotifierFields = ({
       />
       <AccordionItem value={value} className='flex-1'>
         <AccordionTrigger onClick={onToggle}>Notifier</AccordionTrigger>
-        <AccordionContent>
+        <AccordionContent className='flex flex-col gap-6'>
           <div>
-            <Label className='font-semibold'>Recipient addresses</Label>
-          </div>
-          {fields.map((field, index) => (
-            <div
-              key={field.id}
-              className='my-2 flex flex-row items-end space-x-2'
-            >
-              <div className='flex-auto'>
-                <FormField
-                  control={form.control}
-                  name={`jobConfigs.notifier.recipientAddresses.${index}.email`}
-                  render={({ field }) => (
-                    <FormItem>
-                      {index === 0 && <FormLabel>E-mail address</FormLabel>}
-                      <FormControl>
-                        <Input {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <Button
-                type='button'
-                variant='outline'
-                size='sm'
-                onClick={() => {
-                  remove(index);
-                }}
-              >
-                <TrashIcon className='h-4 w-4' />
-              </Button>
+            <div>
+              <Label className='font-semibold'>
+                {jobConfigFields['notifier.recipientAddresses'].label}
+              </Label>
             </div>
-          ))}
-          <Button
-            size='sm'
-            className='mt-2'
-            variant='outline'
-            type='button'
-            onClick={() => {
-              append({ email: '' });
-            }}
-          >
-            Add recipient address
-            <PlusIcon className='ml-1 h-4 w-4' />
-          </Button>
+            {fields.map((field, index) => (
+              <div
+                key={field.id}
+                className='my-2 flex flex-row items-end space-x-2'
+              >
+                <div className='flex-auto'>
+                  <FormField
+                    control={form.control}
+                    name={`jobConfigs.notifier.recipientAddresses.${index}.email`}
+                    render={({ field }) => (
+                      <FormItem>
+                        {index === 0 && <FormLabel>E-mail address</FormLabel>}
+                        <FormControl>
+                          <Input {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='icon'
+                  onClick={() => {
+                    remove(index);
+                  }}
+                >
+                  <TrashIcon className='h-4 w-4 text-red-500' />
+                </Button>
+              </div>
+            ))}
+            <Button
+              size='sm'
+              className='mt-2'
+              variant='outline'
+              type='button'
+              onClick={() => {
+                append({ email: '' });
+              }}
+            >
+              Add recipient address
+              <PlusIcon className='ml-1 h-4 w-4' />
+            </Button>
+          </div>
           {isSuperuser && (
             <FormField
               control={form.control}
@@ -131,11 +136,11 @@ export const NotifierFields = ({
               render={({ field }) => (
                 <FormItem className='mb-4 flex flex-row items-center justify-between rounded-lg border p-4'>
                   <div className='space-y-0.5'>
-                    <FormLabel>Keep worker alive</FormLabel>
+                    <FormLabel>
+                      {jobConfigFields['notifier.keepAliveWorker'].label}
+                    </FormLabel>
                     <FormDescription>
-                      A flag to control whether the worker is kept alive for
-                      debugging purposes. This flag only has an effect if the
-                      ORT Server is deployed on Kubernetes.
+                      {jobConfigFields['notifier.keepAliveWorker'].description}
                     </FormDescription>
                   </div>
                   <FormControl>

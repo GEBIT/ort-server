@@ -25,6 +25,7 @@ import {
   getRepositoryOptions,
   getRepositoryRunsOptions,
 } from '@/api/@tanstack/react-query.gen';
+import { ActionTooltipTrigger } from '@/components/action-tooltip-trigger';
 import { JobDurations } from '@/components/charts/job-durations';
 import { RepositoryFavoriteButton } from '@/components/favorite-button';
 import { LoadingIndicator } from '@/components/loading-indicator';
@@ -36,11 +37,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent } from '@/components/ui/tooltip';
 import { useRepositoryPermission } from '@/hooks/use-authorization';
 import { toastError } from '@/lib/toast';
 import { getRepositoryTypeLabel } from '@/lib/types';
@@ -48,10 +45,8 @@ import { RepositoryRunsTable } from '@/routes/organizations/$orgId/products/$pro
 import { paginationSearchParameterSchema } from '@/schemas';
 import { useTablePrefsStore } from '@/store/table-prefs.store';
 
-const defaultPageSize = useTablePrefsStore.getState().repoPageSize;
-
 const RepositoryRunsComponent = () => {
-  const runPageSize = useTablePrefsStore.getState().runPageSize;
+  const runPageSize = useTablePrefsStore((state) => state.runPageSize);
   const params = Route.useParams();
   const search = Route.useSearch();
   const { isAllowed: canTriggerRun } = useRepositoryPermission(
@@ -132,7 +127,7 @@ const RepositoryRunsComponent = () => {
           <CardTitle>Runs</CardTitle>
           <div className='py-2'>
             <Tooltip>
-              <TooltipTrigger asChild>
+              <ActionTooltipTrigger disabled={canTriggerRun === false}>
                 <Button
                   asChild
                   size='sm'
@@ -151,7 +146,7 @@ const RepositoryRunsComponent = () => {
                     <PlusIcon className='h-4 w-4' />
                   </Link>
                 </Button>
-              </TooltipTrigger>
+              </ActionTooltipTrigger>
               {canTriggerRun === false && (
                 <TooltipContent>Insufficient permissions.</TooltipContent>
               )}
@@ -183,6 +178,12 @@ export const Route = createFileRoute(
     params,
     deps: { page, pageSize },
   }) => {
+    // Read the default page size from the store at loader time so the
+    // prefetched query key matches the component, which reads the same
+    // (live) preference. A module-level snapshot would go stale after the
+    // user changes their page-size preference during the session.
+    const limit = pageSize || useTablePrefsStore.getState().runPageSize;
+
     await Promise.allSettled([
       queryClient.prefetchQuery({
         ...getRepositoryOptions({
@@ -193,8 +194,8 @@ export const Route = createFileRoute(
         ...getRepositoryRunsOptions({
           path: { repositoryId: Number.parseInt(params.repoId) },
           query: {
-            limit: pageSize || defaultPageSize,
-            offset: page ? (page - 1) * (pageSize || defaultPageSize) : 0,
+            limit,
+            offset: page ? (page - 1) * limit : 0,
             sort: '-index',
           },
         }),

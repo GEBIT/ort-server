@@ -31,7 +31,7 @@ import org.eclipse.apoapsis.ortserver.components.snippetfindings.SnippetFindingI
 import org.eclipse.apoapsis.ortserver.components.snippetfindings.SnippetFindingProvenance
 import org.eclipse.apoapsis.ortserver.components.snippetfindings.addDirectScanResult
 import org.eclipse.apoapsis.ortserver.components.snippetfindings.seedData
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.runs.Identifier as ModelIdentifier
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters.Companion.DEFAULT_LIMIT
 import org.eclipse.apoapsis.ortserver.shared.apimodel.Identifier
@@ -72,7 +72,7 @@ class GetRunSnippetFindingProvenancesIntegrationTest : SnippetFindingIntegration
 
         "page and sort only provenances with findings" {
             var firstScanResultId = -1L
-            dbExtension.db.blockingQuery {
+            dbExtension.db.transaction {
                 firstScanResultId = addDirectScanResult(
                     seeded,
                     ModelIdentifier("Maven", "com.example", "aaa-package", "1.0")
@@ -111,14 +111,6 @@ class GetRunSnippetFindingProvenancesIntegrationTest : SnippetFindingIntegration
                 response.status shouldBe HttpStatusCode.OK
                 val body = response.body<PagedResponse<SnippetFindingProvenance>>()
                 body.data.none { it.id == seeded.otherProvenanceId } shouldBe true
-            }
-        }
-
-        "return 404 when run does not exist" {
-            snippetFindingTestApplication { client ->
-                val response = client.get("/runs/999999/snippet-findings/provenances")
-
-                response.status shouldBe HttpStatusCode.NotFound
             }
         }
     }

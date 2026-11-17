@@ -21,7 +21,7 @@ import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { ExpandedState } from '@tanstack/react-table';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import z from 'zod';
 
 import { VulnerabilityRating, VulnerabilityWithStats } from '@/api';
@@ -79,6 +79,7 @@ import {
   externalIdSearchParameterSchema,
   markedSearchParameterSchema,
   packageIdentifierSearchParameterSchema,
+  packageIdTypeSchema,
   paginationSearchParameterSchema,
   sortingSearchParameterSchema,
   vulnerabilityRatingSearchParameterSchema,
@@ -101,7 +102,7 @@ const VulnerabilityCard = ({
 }) => {
   const packageIdType = useUserSettingsStore((state) => state.packageIdType);
   const id =
-    packageIdType === 'PURL' && vulnerability.purl
+    packageIdType === packageIdTypeSchema.enum.PURL && vulnerability.purl
       ? vulnerability.purl
       : identifierToString(vulnerability.identifier);
 
@@ -234,216 +235,187 @@ const ProductVulnerabilitiesComponent = () => {
     }),
   });
 
-  // Prevent infinite rerenders by providing a stable reference to columns via memoization.
-  // https://tanstack.com/table/latest/docs/faq#solution-1-stable-references-with-usememo-or-usestate
-  const columns = useMemo(
-    () =>
-      columnHelper.columns([
-        columnHelper.display({
-          id: 'moreInfo',
-          header: 'Details',
-          size: ACTION_COLUMN_SIZE,
-          cell: function CellComponent({ row }) {
-            return row.getCanExpand() ? (
-              <div className='flex items-center gap-1'>
-                <Button
-                  variant='outline'
-                  size='sm'
-                  {...{
-                    onClick: row.getToggleExpandedHandler(),
-                    style: { cursor: 'pointer' },
-                  }}
-                >
-                  {row.getIsExpanded() ? (
-                    <ChevronUp className='h-4 w-4' />
-                  ) : (
-                    <ChevronDown className='h-4 w-4' />
-                  )}
-                </Button>
-                <MarkItems
-                  row={row}
-                  setMarked={(marked) => {
-                    return {
-                      to: Route.to,
-                      search: {
-                        ...search,
-                        // If no items are marked for inspection, remove the "marked" parameter
-                        // from search parameters.
-                        marked: marked === '' ? undefined : marked,
-                      },
-                    };
-                  }}
-                />
-              </div>
-            ) : (
-              'No info'
-            );
-          },
-          enableSorting: false,
-          enableColumnFilter: false,
-        }),
-        columnHelper.display({
-          id: 'card',
-          cell: ({ row }) => (
-            <VulnerabilityCard
-              vulnerability={row.original}
-              organizationId={params.orgId}
-              productId={params.productId}
+  const columns = columnHelper.columns([
+    columnHelper.display({
+      id: 'moreInfo',
+      header: 'Details',
+      size: ACTION_COLUMN_SIZE,
+      cell: function CellComponent({ row }) {
+        return row.getCanExpand() ? (
+          <div className='flex items-center gap-1'>
+            <Button
+              variant='outline'
+              size='sm'
+              {...{
+                onClick: row.getToggleExpandedHandler(),
+                style: { cursor: 'pointer' },
+              }}
+            >
+              {row.getIsExpanded() ? (
+                <ChevronUp className='h-4 w-4' />
+              ) : (
+                <ChevronDown className='h-4 w-4' />
+              )}
+            </Button>
+            <MarkItems
+              row={row}
+              setMarked={(marked) => {
+                return {
+                  to: Route.to,
+                  search: {
+                    ...search,
+                    // If no items are marked for inspection, remove the "marked" parameter
+                    // from search parameters.
+                    marked: marked === '' ? undefined : marked,
+                  },
+                };
+              }}
             />
-          ),
-        }),
-        columnHelper.accessor(
-          (vuln) => {
-            if (packageIdType === 'PURL') {
-              return vuln.purl;
-            } else {
-              return identifierToString(vuln.identifier);
-            }
-          },
-          {
-            id: packageIdType === 'ORT_ID' ? 'identifier' : 'purl',
-            header: 'Package ID',
-            meta: {
-              filter: {
-                filterVariant: 'text',
-                setFilterValue: (value: string | undefined) => {
-                  navigate({
-                    search: { ...search, page: 1, pkgId: value },
-                  });
-                },
-              },
-            },
-          }
-        ),
-        columnHelper.accessor('vulnerability.externalId', {
-          id: 'externalId',
-          header: 'External ID',
-          meta: {
-            filter: {
-              filterVariant: 'text',
-              setFilterValue: (value: string | undefined) => {
-                navigate({
-                  search: { ...search, page: 1, externalId: value },
-                });
-              },
-            },
-          },
-        }),
-        columnHelper.accessor('rating', {
-          id: 'rating',
-          header: 'Rating',
-          meta: {
-            filter: {
-              filterVariant: 'select',
-              selectOptions: zVulnerabilityRating.options.map((rating) => ({
-                label: rating,
-                value: rating,
-              })),
-              setSelected: (ratings: VulnerabilityRating[]) => {
-                navigate({
-                  search: {
-                    ...search,
-                    page: 1,
-                    rating: ratings.length === 0 ? undefined : ratings,
-                  },
-                });
-              },
+          </div>
+        ) : (
+          'No info'
+        );
+      },
+      enableSorting: false,
+      enableColumnFilter: false,
+    }),
+    columnHelper.display({
+      id: 'card',
+      cell: ({ row }) => (
+        <VulnerabilityCard
+          vulnerability={row.original}
+          organizationId={params.orgId}
+          productId={params.productId}
+        />
+      ),
+    }),
+    columnHelper.accessor(
+      (vuln) => {
+        if (packageIdType === packageIdTypeSchema.enum.PURL) {
+          return vuln.purl;
+        } else {
+          return identifierToString(vuln.identifier);
+        }
+      },
+      {
+        id:
+          packageIdType === packageIdTypeSchema.enum.ORT_ID
+            ? 'identifier'
+            : 'purl',
+        header: 'Package ID',
+        meta: {
+          filter: {
+            filterVariant: 'text',
+            setFilterValue: (value: string | undefined) => {
+              navigate({
+                search: { ...search, page: 1, pkgId: value },
+              });
             },
           },
-        }),
-        columnHelper.accessor('repositoriesCount', {
-          id: 'repositoriesCount',
-          header: 'Repositories',
-          enableColumnFilter: false,
-        }),
-        columnHelper.accessor(() => '', {
-          id: 'advisor',
-          header: 'Advisor',
-          enableSorting: false,
-          enableColumnFilter: (advisors?.length ?? 0) > 1,
-          meta: {
-            filter: {
-              filterVariant: 'select',
-              selectOptions: (advisors ?? []).map((advisor) => ({
-                label: advisor,
-                value: advisor,
-              })),
-              setSelected: (advisors: string[]) => {
-                navigate({
-                  search: {
-                    ...search,
-                    page: 1,
-                    advisor: advisors.length === 0 ? undefined : advisors,
-                  },
-                });
-              },
-            },
+        },
+      }
+    ),
+    columnHelper.accessor('vulnerability.externalId', {
+      id: 'externalId',
+      header: 'External ID',
+      meta: {
+        filter: {
+          filterVariant: 'text',
+          setFilterValue: (value: string | undefined) => {
+            navigate({
+              search: { ...search, page: 1, externalId: value },
+            });
           },
-        }),
-        columnHelper.accessor('vulnerability.summary', {
-          id: 'summary',
-          header: 'Summary',
-          enableSorting: false,
-          enableColumnFilter: false,
-        }),
-      ]),
-    [advisors, navigate, packageIdType, params.orgId, params.productId, search]
-  );
+        },
+      },
+    }),
+    columnHelper.accessor('rating', {
+      id: 'rating',
+      header: 'Rating',
+      meta: {
+        filter: {
+          filterVariant: 'select',
+          selectOptions: zVulnerabilityRating.options.map((rating) => ({
+            label: rating,
+            value: rating,
+          })),
+          setSelected: (ratings: VulnerabilityRating[]) => {
+            navigate({
+              search: {
+                ...search,
+                page: 1,
+                rating: ratings.length === 0 ? undefined : ratings,
+              },
+            });
+          },
+        },
+      },
+    }),
+    columnHelper.accessor('repositoriesCount', {
+      id: 'repositoriesCount',
+      header: 'Repositories',
+      enableColumnFilter: false,
+    }),
+    columnHelper.accessor(() => '', {
+      id: 'advisor',
+      header: 'Advisor',
+      enableSorting: false,
+      enableColumnFilter: (advisors?.length ?? 0) > 1,
+      meta: {
+        filter: {
+          filterVariant: 'select',
+          selectOptions: (advisors ?? []).map((advisor) => ({
+            label: advisor,
+            value: advisor,
+          })),
+          setSelected: (advisors: string[]) => {
+            navigate({
+              search: {
+                ...search,
+                page: 1,
+                advisor: advisors.length === 0 ? undefined : advisors,
+              },
+            });
+          },
+        },
+      },
+    }),
+    columnHelper.accessor('vulnerability.summary', {
+      id: 'summary',
+      header: 'Summary',
+      enableSorting: false,
+      enableColumnFilter: false,
+    }),
+  ]);
 
-  const pageIndex = useMemo(
-    () => (search.page ? search.page - 1 : 0),
-    [search.page]
-  );
+  const pageIndex = search.page ? search.page - 1 : 0;
+  const pageSize = search.pageSize ? search.pageSize : defaultPageSize;
+  const packageIdentifier = search.pkgId ? search.pkgId : undefined;
+  const rating = search.rating ? search.rating : undefined;
+  const externalId = search.externalId ? search.externalId : undefined;
+  const advisor = search.advisor ? search.advisor : undefined;
 
-  const pageSize = useMemo(
-    () => (search.pageSize ? search.pageSize : defaultPageSize),
-    [search.pageSize]
-  );
+  const columnFilters = [];
+  if (packageIdentifier) {
+    columnFilters.push({
+      id:
+        packageIdType === packageIdTypeSchema.enum.ORT_ID
+          ? 'identifier'
+          : 'purl',
+      value: packageIdentifier,
+    });
+  }
+  if (rating) {
+    columnFilters.push({ id: 'rating', value: rating });
+  }
+  if (externalId) {
+    columnFilters.push({ id: 'externalId', value: externalId });
+  }
+  if (advisor) {
+    columnFilters.push({ id: 'advisor', value: advisor });
+  }
 
-  const packageIdentifier = useMemo(
-    () => (search.pkgId ? search.pkgId : undefined),
-    [search.pkgId]
-  );
-
-  const rating = useMemo(
-    () => (search.rating ? search.rating : undefined),
-    [search.rating]
-  );
-
-  const externalId = useMemo(
-    () => (search.externalId ? search.externalId : undefined),
-    [search.externalId]
-  );
-
-  const advisor = useMemo(
-    () => (search.advisor ? search.advisor : undefined),
-    [search.advisor]
-  );
-
-  const columnFilters = useMemo(() => {
-    const filters = [];
-    if (packageIdentifier) {
-      filters.push({
-        id: packageIdType === 'ORT_ID' ? 'identifier' : 'purl',
-        value: packageIdentifier,
-      });
-    }
-    if (rating) {
-      filters.push({ id: 'rating', value: rating });
-    }
-    if (externalId) {
-      filters.push({ id: 'externalId', value: externalId });
-    }
-    if (advisor) {
-      filters.push({ id: 'advisor', value: advisor });
-    }
-    return filters;
-  }, [packageIdentifier, rating, packageIdType, externalId, advisor]);
-
-  const sortBy = useMemo(
-    () => (search.sortBy ? search.sortBy : undefined),
-    [search.sortBy]
-  );
+  const sortBy = search.sortBy ? search.sortBy : undefined;
 
   const {
     data: totalVulnerabilities,
@@ -471,7 +443,7 @@ const ProductVulnerabilitiesComponent = () => {
         sort: convertToBackendSorting(sortBy),
         rating: rating?.join(','),
         advisors: advisor?.join(','),
-        ...(packageIdType === 'ORT_ID'
+        ...(packageIdType === packageIdTypeSchema.enum.ORT_ID
           ? { identifier: packageIdentifier }
           : { purl: packageIdentifier }),
         externalId: externalId,
@@ -483,7 +455,8 @@ const ProductVulnerabilitiesComponent = () => {
     search.marked ? { [search.marked]: true } : {}
   );
 
-  const columnId = packageIdType === 'ORT_ID' ? 'identifier' : 'purl';
+  const columnId =
+    packageIdType === packageIdTypeSchema.enum.ORT_ID ? 'identifier' : 'purl';
 
   const table = useAppTable(
     {

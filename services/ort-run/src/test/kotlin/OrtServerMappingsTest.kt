@@ -21,9 +21,12 @@ package org.eclipse.apoapsis.ortserver.services.ortrun
 
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.inspectors.forAll
+import io.kotest.matchers.nulls.beNull
+import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
 import kotlin.time.Instant
+import kotlin.time.toJavaInstant
 
 import org.eclipse.apoapsis.ortserver.model.AnalyzerJob
 import org.eclipse.apoapsis.ortserver.model.AnalyzerJobConfiguration
@@ -64,6 +67,7 @@ import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolutionReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseChoices
 import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseFindingCuration
+import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseFindingCurationReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageConfiguration
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCuration
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCurationData
@@ -97,6 +101,7 @@ import org.eclipse.apoapsis.ortserver.model.runs.scanner.ScannerRun
 import org.eclipse.apoapsis.ortserver.model.runs.scanner.TextLocation
 import org.eclipse.apoapsis.ortserver.shared.orttestdata.OrtTestData
 
+import org.ossreviewtoolkit.model.CuratedPackage as OrtCuratedPackage
 import org.ossreviewtoolkit.model.VcsType
 
 private const val TIME_STAMP_SECONDS = 1678119934L
@@ -421,7 +426,8 @@ class OrtServerMappingsTest : WordSpec({
                         "LicenseRef-toBeMapped2" to "LicenseRef-mapped2"
                     ),
                     sourceCodeOrigins = listOf(SourceCodeOrigin.VCS),
-                    labels = mapOf("key1" to "val1")
+                    labels = mapOf("key1" to "val1"),
+                    publishedAt = Instant.parse("2024-05-06T00:00:00Z")
                 )
             )
 
@@ -493,7 +499,7 @@ class OrtServerMappingsTest : WordSpec({
                 lineCount = 2,
                 detectedLicense = "LicenseRef-detected1",
                 concludedLicense = "LicenseRef-detected1-concluded",
-                reason = "INCORRECT",
+                reason = LicenseFindingCurationReason.INCORRECT,
                 comment = "Test license finding curation."
             )
 
@@ -656,6 +662,36 @@ class OrtServerMappingsTest : WordSpec({
 
             ortVcsInfo shouldBe org.ossreviewtoolkit.model.VcsInfo.EMPTY
         }
+
+        "map the publication date of packages in both directions" {
+            val publishedAt = Instant.parse("2024-05-06T07:08:09.123456Z")
+
+            val ortPackage = createPackage(publishedAt).mapToOrt()
+
+            ortPackage.publishedAt shouldBe publishedAt.toJavaInstant()
+            ortPackage.mapToModel().publishedAt shouldBe publishedAt
+        }
+
+        "map an unknown publication date of packages in both directions" {
+            val ortPackage = createPackage(publishedAt = null).mapToOrt()
+
+            ortPackage.publishedAt should beNull()
+            ortPackage.mapToModel().publishedAt should beNull()
+        }
+
+        "keep the publication date of packages when applying an unrelated curation" {
+            val publishedAt = Instant.parse("2024-05-06T07:08:09.123456Z")
+            val pkg = createPackage(publishedAt)
+            val curation = PackageCuration(
+                id = pkg.identifier,
+                data = PackageCurationData(description = "Curated description")
+            )
+
+            val curatedPackage = curation.mapToOrt().apply(OrtCuratedPackage(pkg.mapToOrt())).metadata.mapToModel()
+
+            curatedPackage.description shouldBe "Curated description"
+            curatedPackage.publishedAt shouldBe publishedAt
+        }
     }
 
     "VcsType" should {
@@ -684,3 +720,18 @@ class OrtServerMappingsTest : WordSpec({
         }
     }
 })
+
+private fun createPackage(publishedAt: Instant?) = Package(
+    identifier = Identifier("Maven", "com.example", "package", "1.0"),
+    purl = "pkg:maven/com.example/package@1.0",
+    authors = emptySet(),
+    declaredLicenses = emptySet(),
+    processedDeclaredLicense = ProcessedDeclaredLicense(null, emptyMap(), emptySet()),
+    description = "Example description",
+    homepageUrl = "https://example.org/package",
+    binaryArtifact = RemoteArtifact("", "", ""),
+    sourceArtifact = RemoteArtifact("", "", ""),
+    vcs = VcsInfo(RepositoryType.UNKNOWN, "", "", ""),
+    vcsProcessed = VcsInfo(RepositoryType.UNKNOWN, "", "", ""),
+    publishedAt = publishedAt
+)

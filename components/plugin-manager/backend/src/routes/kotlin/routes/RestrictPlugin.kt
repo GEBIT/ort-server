@@ -32,18 +32,19 @@ import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginEventStore
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginRestricted
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginType
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.normalizePluginId
+import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireEnumParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 
 internal fun Route.restrictPlugin(eventStore: PluginEventStore) =
     post("admin/plugins/{pluginType}/{pluginId}/restrict", {
-        operationId = "RestrictPlugin"
+        operationId = "restrictPlugin"
         summary = "Restrict an ORT plugin to organizations with a template"
         description = "Restrict an ORT plugin to make it available only to organizations that have a plugin " +
                 "template assigned."
         tags = listOf("Plugins")
 
         request {
-            pathParameter<String>("pluginType") {
+            pathParameter<PluginType>("pluginType") {
                 description = "The type of the plugin to restrict."
                 required = true
             }
@@ -66,9 +67,13 @@ internal fun Route.restrictPlugin(eventStore: PluginEventStore) =
             HttpStatusCode.NotModified to {
                 description = "The plugin is already restricted."
             }
+
+            HttpStatusCode.BadRequest to {
+                description = "The plugin type is invalid."
+            }
         }
     }, requireSuperuser()) {
-        val pluginType = enumValueOf<PluginType>(call.requireParameter("pluginType"))
+        val pluginType = call.requireEnumParameter<PluginType>("pluginType")
         val pluginId = normalizePluginId(pluginType, call.requireParameter("pluginId"))
 
         if (pluginId == null) {

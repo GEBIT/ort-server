@@ -42,10 +42,13 @@ import org.eclipse.apoapsis.ortserver.model.ProductId
 import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.runs.Identifier
 import org.eclipse.apoapsis.ortserver.model.util.HierarchyFilter
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.Database
 
 class SearchServiceTest : WordSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     lateinit var db: Database
@@ -298,7 +301,7 @@ class SearchServiceTest : WordSpec({
             result should beEmpty()
         }
 
-        "return purl field and null packageId for PURL search" {
+        "return purl and packageId fields for PURL search" {
             val pkgId = Identifier("maven", "org.example", "library", "1.0.0")
             createRunWithPackageForPurlSearch(fixtures = fixtures, repoId = repositoryId, pkgId = pkgId)
             val expectedPurl = pkgId.toPurl()
@@ -307,7 +310,7 @@ class SearchServiceTest : WordSpec({
 
             result.shouldBeSingleton {
                 it.purl shouldBe expectedPurl
-                it.packageId should beNull()
+                it.packageId shouldBe pkgId.toApiIdentifier()
             }
         }
 

@@ -27,6 +27,7 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeTypeOf
 
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 
@@ -120,9 +121,7 @@ val testHierarchy = Hierarchy(
     product = mockk()
 )
 
-/**
- * Load the script with the given [name] from resources and return it as a string.
- */
+/** Load the script with the given [name] from resources and return it as a string. */
 private fun loadScript(name: String): String =
     ValidationScriptRunnerTest::class.java.getResource("/$name")?.readText()
         ?: AssertionErrorBuilder.fail("Could not load script file '$name'.")
@@ -148,12 +147,10 @@ private fun mockContext(run: OrtRun, configMan: ConfigManager = mockConfigManage
         every { configManager } returns configMan
     }
 
-/**
- * Return a mock for a [ConfigManager] that is prepared to answer queries about the existence of config files.
- */
+/** Return a mock for a [ConfigManager] that is prepared to answer queries about the existence of config files. */
 private fun mockConfigManager(): ConfigManager =
     mockk {
-        every { containsFile(any(), any()) } returns true
+        coEvery { containsFile(any(), any()) } returns true
     }
 
 /**

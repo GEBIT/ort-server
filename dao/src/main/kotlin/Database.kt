@@ -26,15 +26,18 @@ import com.zaxxer.hikari.HikariDataSource
 
 import javax.sql.DataSource
 
+import kotlin.coroutines.cancellation.CancellationException
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 
 import org.flywaydb.core.Flyway
 import org.flywaydb.core.api.configuration.FluentConfiguration
 
 import org.jetbrains.exposed.v1.core.DatabaseConfig
 import org.jetbrains.exposed.v1.core.Op
-import org.jetbrains.exposed.v1.core.Transaction
 import org.jetbrains.exposed.v1.core.dao.id.EntityID
 import org.jetbrains.exposed.v1.dao.LongEntity
 import org.jetbrains.exposed.v1.dao.LongEntityClass
@@ -44,20 +47,20 @@ import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.SizedCollection
 import org.jetbrains.exposed.v1.jdbc.SizedIterable
-import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.jdbc.transactions.suspendTransaction
 import org.jetbrains.exposed.v1.jdbc.transactions.transactionManager
 
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.singleOf
 import org.koin.dsl.module
 
+import org.postgresql.util.PSQLException
+
 import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger(DataSource::class.java)
 
-/**
- * Connect the database.
- */
+/** Connect the database. */
 fun DataSource.connect() = Database.connect(
     datasource = this,
     databaseConfig = getDatabaseConfig()
@@ -66,11 +69,12 @@ fun DataSource.connect() = Database.connect(
 private fun getDatabaseConfig(): DatabaseConfig =
     DatabaseConfig {
         sqlLogger = SqlQueryTraceLogger
+
+        // This only affects transactions started with `suspendTransaction`.
+        dispatcher = Dispatchers.Virtual
     }
 
-/**
- * Run the database migrations.
- */
+/** Run the database migrations. */
 fun DataSource.migrate() {
     Flyway(getFlywayConfig(this)).migrate()
 }
@@ -128,79 +132,71 @@ fun databaseModule(startEager: Boolean = true): Module = module {
 }
 
 /**
- * Execute the [block] in a database [transaction], configured with the provided [transactionIsolation] and [readOnly].
+ * Execute the [block] in a database [suspendTransaction], configured with the provided [transactionIsolation] and
+ * [readOnly], and return the result. Throws an exception in case of a failure.
  *
- * Returns the actual result type. Throws an exception in case of a failure.
+ * Calls to [Database.transaction] and [Database.transactionCatching] from [block] are running in the same transaction,
+ * as long as the coroutine context is not dropped. This is because Exposed's `suspendTransaction` stores the current
+ * transaction in the coroutine context. Otherwise, nested calls will start a new transaction.
  */
-suspend fun <T> Database.dbQuery(
+suspend fun <T> Database.transaction(
     transactionIsolation: Int = transactionManager.defaultIsolationLevel,
     readOnly: Boolean = transactionManager.defaultReadOnly,
-    block: JdbcTransaction.() -> T
+    block: suspend JdbcTransaction.() -> T
 ): T =
-    dbQueryCatching(transactionIsolation, readOnly, block).getOrThrow()
+    transactionCatching(transactionIsolation, readOnly, block).getOrThrow()
 
 /**
- * Execute the [block] in a database [transaction], configured with the provided [transactionIsolation] and [readOnly].
+ * Execute the [block] in a database [suspendTransaction], configured with the provided [transactionIsolation] and
+ * [readOnly], and return a wrapped [Result] object. [CancellationException] and [Error] are propagated, all other
+ * exceptions are wrapped in a [Result] object and delegated to the caller.
  *
- * Returns a wrapped [Result] object and delegates exceptions handling to the caller.
+ * Calls to [Database.transaction] and [Database.transactionCatching] from [block] are running in the same transaction,
+ * as long as the coroutine context is not dropped. This is because Exposed's `suspendTransaction` stores the current
+ * transaction in the coroutine context. Otherwise, nested calls will start a new transaction.
  */
-suspend fun <T> Database.dbQueryCatching(
+@Suppress("ForbiddenMethodCall", "TooGenericExceptionCaught")
+suspend fun <T> Database.transactionCatching(
     transactionIsolation: Int = transactionManager.defaultIsolationLevel,
     readOnly: Boolean = transactionManager.defaultReadOnly,
-    block: JdbcTransaction.() -> T
+    block: suspend JdbcTransaction.() -> T
 ): Result<T> =
-    runCatching {
-        withContext(Dispatchers.IO) {
-            transaction(this@runCatching, transactionIsolation, readOnly) { block() }
+    try {
+        val result = withContext(Dispatchers.Virtual) {
+            suspendTransaction(this@transactionCatching, transactionIsolation, readOnly) { block() }
         }
-    }.mapExceptions()
+        Result.success(result)
+    } catch (e: CancellationException) {
+        throw e // Preserve structured concurrency.
+    } catch (e: Error) {
+        throw e // Don't swallow fatal JVM errors.
+    } catch (e: Throwable) {
+        Result.failure<T>(e).mapExceptions()
+    }
 
 /**
- * Execute the [block] in a database [transaction], configured with the provided [transactionIsolation] and [readOnly].
- *
- * Returns the actual result type. Throws an exception in case of a failure.
+ * Return the encapsulated value in case of [success][Result.isSuccess]. In case of [failure][Result.isFailure] return
+ * `null` if an [EntityNotFoundException] was thrown, Otherwise re-throw the exception.
  */
-fun <T> Database.blockingQuery(
-    transactionIsolation: Int = transactionManager.defaultIsolationLevel,
-    readOnly: Boolean = transactionManager.defaultReadOnly,
-    block: Transaction.() -> T
-): T =
-    blockingQueryCatching(transactionIsolation, readOnly, block).getOrThrow()
-
-/**
- * Execute the [block] in a database [transaction], configured with the provided [transactionIsolation] and [readOnly].
- *
- * Returns a wrapped [Result] object and delegates exceptions handling to the caller.
- */
-fun <T> Database.blockingQueryCatching(
-    transactionIsolation: Int = transactionManager.defaultIsolationLevel,
-    readOnly: Boolean = transactionManager.defaultReadOnly,
-    block: Transaction.() -> T
-): Result<T> =
-    runCatching { transaction(this, transactionIsolation, readOnly) { block() } }.mapExceptions()
-
-/**
- * Execute the [block] in a [blockingQueryCatching], configured with the provided [transactionIsolation] and [readOnly].
- * Return the encapsulated value or null if an [EntityNotFoundException] is thrown. Otherwise, throw the exception.
- */
-fun <T> Database.entityQuery(
-    transactionIsolation: Int = transactionManager.defaultIsolationLevel,
-    readOnly: Boolean = transactionManager.defaultReadOnly,
-    block: Transaction.() -> T
-): T? = blockingQueryCatching(transactionIsolation, readOnly, block).getOrElse {
+fun <T> Result<T>.getEntityOrNull() = getOrElse {
     when (it) {
         is EntityNotFoundException -> null
         else -> throw it
     }
 }
 
-/**
- * Map the generic database exceptions to more specific exceptions.
- */
+/** Map the generic database exceptions to more specific exceptions. */
 internal fun <T> Result<T>.mapExceptions(): Result<T> =
     recoverCatching {
         if (it is ExposedSQLException) {
             when (it.sqlState) {
+                PostgresErrorCodes.INVALID_REGULAR_EXPRESSION.value -> {
+                    throw QueryParametersException(
+                        (it.cause as? PSQLException)?.serverErrorMessage?.message ?: "Invalid regular expression.",
+                        it
+                    )
+                }
+
                 PostgresErrorCodes.UNIQUE_CONSTRAINT_VIOLATION.value -> {
                     throw UniqueConstraintException("Unique constraint violation: ${it.message}.", it)
                 }
@@ -227,8 +223,6 @@ fun <T : LongEntity> LongEntityClass<T>.findSingle(condition: Op<Boolean>): T =
 fun <M, D> mapAndDeduplicate(modelObjects: Collection<M>?, mapper: (M) -> D): SizedIterable<D> =
     SizedCollection(mapToSet(modelObjects, mapper).orEmpty())
 
-/**
- * Map the given [modelObjects] collection to a [Set] using the given [mapper] function.
- */
+/** Map the given [modelObjects] collection to a [Set] using the given [mapper] function. */
 private fun <D, M> mapToSet(modelObjects: Iterable<M>?, mapper: (M) -> D): Set<D>? =
     modelObjects?.mapTo(mutableSetOf(), mapper)

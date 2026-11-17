@@ -29,6 +29,8 @@ import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 
+import io.mockk.mockk
+
 import java.io.ByteArrayInputStream
 
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
@@ -41,7 +43,7 @@ class StorageTest : WordSpec({
             val config = ConfigFactory.empty()
 
             shouldThrow<StorageException> {
-                Storage.create(STORAGE_TYPE, ConfigManager.create(config))
+                Storage.create(STORAGE_TYPE, ConfigManager.create(config), mockk())
             }
         }
 
@@ -51,7 +53,7 @@ class StorageTest : WordSpec({
             )
 
             shouldThrow<StorageException> {
-                Storage.create(STORAGE_TYPE, ConfigManager.create(config))
+                Storage.create(STORAGE_TYPE, ConfigManager.create(config), mockk())
             }
         }
 
@@ -62,7 +64,7 @@ class StorageTest : WordSpec({
             )
 
             val exception = shouldThrow<StorageException> {
-                Storage.create(STORAGE_TYPE, ConfigManager.create(config))
+                Storage.create(STORAGE_TYPE, ConfigManager.create(config), mockk())
             }
 
             exception.localizedMessage shouldContain providerName
@@ -232,9 +234,7 @@ private const val STORAGE_TYPE = "testStorage"
 private const val ERROR_KEY = "THROW!"
 private const val CONTENT_TYPE = "test/content"
 
-/**
- * Create the [Config] for obtaining a [Storage] instance.
- */
+/** Create the [Config] for obtaining a [Storage] instance. */
 private fun createStorageConfig(): Config =
     ConfigFactory.parseMap(
         mapOf(
@@ -245,7 +245,6 @@ private fun createStorageConfig(): Config =
         )
     )
 
-/**
- * Return a [Storage] instance that can be used for testing. It is obtained via the default mechanism.
- */
-private fun createStorage(): Storage = Storage.create(STORAGE_TYPE, ConfigManager.create(createStorageConfig()))
+/** Return a [Storage] instance that can be used for testing. It is obtained via the default mechanism. */
+private fun createStorage(): Storage =
+    Storage.create(STORAGE_TYPE, ConfigManager.create(createStorageConfig()), mockk())

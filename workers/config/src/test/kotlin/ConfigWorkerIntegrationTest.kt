@@ -37,17 +37,24 @@ import io.kotest.matchers.types.beInstanceOf
 import io.kotest.matchers.types.shouldBeInstanceOf
 
 import org.eclipse.apoapsis.ortserver.components.adminconfig.AdminConfigService
+import org.eclipse.apoapsis.ortserver.components.pluginmanager.DefaultPluginsEventStore
+import org.eclipse.apoapsis.ortserver.components.pluginmanager.DefaultPluginsService
+import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginOptionTemplate
+import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginOptionType
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginService
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginTemplateEventStore
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginTemplateService
+import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginType
 import org.eclipse.apoapsis.ortserver.components.secrets.SecretService
 import org.eclipse.apoapsis.ortserver.config.ConfigFileProviderFactoryForTesting
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
 import org.eclipse.apoapsis.ortserver.config.ConfigSecretProviderFactoryForTesting
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
 import org.eclipse.apoapsis.ortserver.dao.test.Fixtures
+import org.eclipse.apoapsis.ortserver.model.AdvisorJobConfiguration
 import org.eclipse.apoapsis.ortserver.model.AnalyzerJobConfiguration
 import org.eclipse.apoapsis.ortserver.model.JobConfigurations
+import org.eclipse.apoapsis.ortserver.model.ResolvablePluginConfig
 import org.eclipse.apoapsis.ortserver.model.Severity
 import org.eclipse.apoapsis.ortserver.secrets.SecretStorage
 import org.eclipse.apoapsis.ortserver.secrets.SecretsProviderFactoryForTesting
@@ -63,6 +70,9 @@ class ConfigWorkerIntegrationTest : WordSpec({
 
     lateinit var configWorker: ConfigWorker
     lateinit var fixtures: Fixtures
+    lateinit var workerContextFactory: WorkerContextFactory
+    lateinit var adminConfigService: AdminConfigService
+    lateinit var pluginTemplateService: PluginTemplateService
 
     beforeEach {
         fixtures = dbExtension.fixtures
@@ -79,35 +89,32 @@ class ConfigWorkerIntegrationTest : WordSpec({
 
         val configManager = ConfigManager.create(ConfigFactory.parseMap(config))
 
-        val secretStorage = SecretStorage.createStorage(configManager)
+        val secretStorage = SecretStorage.createStorage(configManager, dbExtension.db)
 
-        val secretService = SecretService(
-            db = dbExtension.db,
-            secretRepository = fixtures.secretRepository,
-            secretStorage = secretStorage
-        )
+        val secretService = SecretService(db = dbExtension.db, secretStorage = secretStorage)
 
         val secretResolverService = SecretResolverService.wrapSecretService(secretService)
 
-        val workerContextFactory = WorkerContextFactory(
+        workerContextFactory = WorkerContextFactory(
             configManager = configManager,
             ortRunRepository = fixtures.ortRunRepository,
             repositoryRepository = fixtures.repositoryRepository,
             secretService = secretResolverService
         )
 
-        val adminConfigService = AdminConfigService(configManager)
+        adminConfigService = AdminConfigService(configManager)
 
         val pluginService = PluginService(
             db = dbExtension.db
         )
 
-        val pluginTemplateService = PluginTemplateService(
+        pluginTemplateService = PluginTemplateService(
             db = dbExtension.db,
             eventStore = PluginTemplateEventStore(dbExtension.db),
             pluginService = pluginService,
             organizationRepository = fixtures.organizationRepository,
-            repositoryRepository = fixtures.repositoryRepository
+            repositoryRepository = fixtures.repositoryRepository,
+            adminConfigService = adminConfigService
         )
 
         configWorker = ConfigWorker(
@@ -115,14 +122,54 @@ class ConfigWorkerIntegrationTest : WordSpec({
             ortRunRepository = fixtures.ortRunRepository,
             contextFactory = workerContextFactory,
             adminConfigService = adminConfigService,
-            pluginService = pluginService,
-            pluginTemplateService = pluginTemplateService
+            pluginTemplateApplicator = PluginTemplateApplicator(
+                pluginService,
+                pluginTemplateService,
+                DefaultPluginsService(
+                    db = dbExtension.db,
+                    eventStore = DefaultPluginsEventStore(dbExtension.db),
+                    pluginService = pluginService,
+                    pluginTemplateService = pluginTemplateService,
+                    organizationRepository = fixtures.organizationRepository,
+                    repositoryRepository = fixtures.repositoryRepository,
+                    adminConfigService = adminConfigService,
+                    configManager = configManager
+                )
+            )
         )
     }
 
+    /** Create an ORT run with the given [configContext] resolved, as it is done when a run is created via the API. */
+    suspend fun createOrtRun(
+        configContext: String = "",
+        jobConfigurations: JobConfigurations = fixtures.jobConfigurations,
+        labels: Map<String, String> = mapOf("label key" to "label value")
+    ) = fixtures.createOrtRun(
+        jobConfigurations = jobConfigurations,
+        jobConfigContext = configContext.ifEmpty { null },
+        labels = labels,
+        resolvedJobConfigContext = ConfigFileProviderFactoryForTesting.RESOLVED_PREFIX + configContext
+    )
+
     "run" should {
+        "fail if the config context was not resolved when the run was created" {
+            val ortRun = fixtures.createOrtRun(jobConfigContext = "src/test/resources/successful-validation-script")
+
+            val result = configWorker.run(ortRun.id)
+
+            result.shouldBeInstanceOf<RunResult.Failed> {
+                it.error should beInstanceOf<IllegalStateException>()
+                it.error.message shouldContain "was not resolved"
+            }
+
+            fixtures.ortRunRepository.get(ortRun.id).shouldNotBeNull {
+                resolvedJobConfigContext should beNull()
+                resolvedJobConfigs should beNull()
+            }
+        }
+
         "succeed if no admin config and validation script files exist" {
-            val ortRunId = fixtures.ortRun.id
+            val ortRunId = createOrtRun().id
 
             val result = configWorker.run(ortRunId)
 
@@ -136,8 +183,8 @@ class ConfigWorkerIntegrationTest : WordSpec({
         }
 
         "apply a successful validation script" {
-            val ortRun = fixtures.createOrtRun(
-                jobConfigContext = "src/test/resources/successful-validation-script",
+            val ortRun = createOrtRun(
+                configContext = "src/test/resources/successful-validation-script",
                 labels = mapOf("default" to "label")
             )
 
@@ -168,8 +215,8 @@ class ConfigWorkerIntegrationTest : WordSpec({
         }
 
         "apply a failing validation script" {
-            val ortRun = fixtures.createOrtRun(
-                jobConfigContext = "src/test/resources/failing-validation-script",
+            val ortRun = createOrtRun(
+                configContext = "src/test/resources/failing-validation-script",
                 labels = mapOf("default" to "label")
             )
 
@@ -198,7 +245,7 @@ class ConfigWorkerIntegrationTest : WordSpec({
         }
 
         "validate the admin config if no validation script exists" {
-            val ortRun = fixtures.createOrtRun(
+            val ortRun = createOrtRun(
                 jobConfigurations = JobConfigurations(ruleSet = "non-existing")
             )
 
@@ -220,8 +267,8 @@ class ConfigWorkerIntegrationTest : WordSpec({
         }
 
         "validate the admin config if a validation script exists" {
-            val ortRun = fixtures.createOrtRun(
-                jobConfigContext = "src/test/resources/successful-validation-script",
+            val ortRun = createOrtRun(
+                configContext = "src/test/resources/successful-validation-script",
                 jobConfigurations = JobConfigurations(ruleSet = "non-existing")
             )
 
@@ -244,8 +291,8 @@ class ConfigWorkerIntegrationTest : WordSpec({
         }
 
         "fail if there is an exception during validation" {
-            val ortRun = fixtures.createOrtRun(
-                jobConfigContext = "src/test/resources/not-compiling-validation-script"
+            val ortRun = createOrtRun(
+                configContext = "src/test/resources/not-compiling-validation-script"
             )
 
             val result = configWorker.run(ortRun.id)
@@ -264,7 +311,7 @@ class ConfigWorkerIntegrationTest : WordSpec({
         }
 
         "resolve the default package managers if none were configured" {
-            val ortRun = fixtures.createOrtRun(
+            val ortRun = createOrtRun(
                 jobConfigurations = JobConfigurations(
                     analyzer = AnalyzerJobConfiguration(
                         enabledPackageManagers = null
@@ -285,7 +332,7 @@ class ConfigWorkerIntegrationTest : WordSpec({
         }
 
         "not overwrite the configured package managers" {
-            val ortRun = fixtures.createOrtRun(
+            val ortRun = createOrtRun(
                 jobConfigurations = JobConfigurations(
                     analyzer = AnalyzerJobConfiguration(
                         enabledPackageManagers = listOf("Gradle", "Maven")
@@ -304,5 +351,81 @@ class ConfigWorkerIntegrationTest : WordSpec({
                 }
             }
         }
+
+        "store the job configurations produced by the plugin templates" {
+            val ortRun = createOrtRun(
+                jobConfigurations = JobConfigurations(
+                    advisor = AdvisorJobConfiguration(advisors = listOf("OSV"))
+                )
+            )
+            pluginTemplateService.createGlobalOsvTemplate()
+
+            val result = configWorker.run(ortRun.id)
+
+            result shouldBe RunResult.Success
+
+            fixtures.ortRunRepository.get(ortRun.id).shouldNotBeNull {
+                resolvedJobConfigs.shouldNotBeNull {
+                    advisor.shouldNotBeNull().config.shouldNotBeNull() should containEntriesExactly(
+                        "OSV" to ResolvablePluginConfig(mapOf("serverUrl" to OSV_SERVER_URL), emptyMap())
+                    )
+                }
+            }
+        }
+
+        "apply the plugin templates before the validation script" {
+            val ortRun = createOrtRun(
+                configContext = "src/test/resources/successful-validation-script",
+                jobConfigurations = JobConfigurations(
+                    advisor = AdvisorJobConfiguration(advisors = listOf("OSV"))
+                )
+            )
+            pluginTemplateService.createGlobalOsvTemplate()
+
+            val result = configWorker.run(ortRun.id)
+
+            result shouldBe RunResult.Success
+
+            // Verify that the script operated on the job configs that were produced by the plugin templates.
+            fixtures.ortRunRepository.get(ortRun.id).shouldNotBeNull {
+                resolvedJobConfigs.shouldNotBeNull {
+                    parameters should containEntriesExactly("validation-script" to "parameter")
+
+                    advisor.shouldNotBeNull().config.shouldNotBeNull() should containEntriesExactly(
+                        "OSV" to ResolvablePluginConfig(mapOf("serverUrl" to OSV_SERVER_URL), emptyMap())
+                    )
+                }
+            }
+        }
     }
 })
+
+/** The server URL configured by the plugin template created by [createGlobalOsvTemplate]. */
+private const val OSV_SERVER_URL = "https://osv.example.org"
+
+/** Create a global plugin template for the OSV advisor that sets the [OSV_SERVER_URL]. */
+private suspend fun PluginTemplateService.createGlobalOsvTemplate() {
+    val templateName = "osv-template"
+
+    create(
+        templateName = templateName,
+        pluginType = PluginType.ADVISOR,
+        pluginId = "OSV",
+        userId = "user",
+        options = listOf(
+            PluginOptionTemplate(
+                option = "serverUrl",
+                type = PluginOptionType.STRING,
+                value = OSV_SERVER_URL,
+                isFinal = true
+            )
+        )
+    ).isOk shouldBe true
+
+    enableGlobal(
+        templateName = templateName,
+        pluginType = PluginType.ADVISOR,
+        pluginId = "OSV",
+        userId = "user"
+    ).isOk shouldBe true
+}

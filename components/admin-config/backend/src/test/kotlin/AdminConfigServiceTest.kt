@@ -23,8 +23,8 @@ import com.typesafe.config.ConfigFactory
 
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.WordSpec
+import io.kotest.extensions.system.withEnvironment
 import io.kotest.matchers.collections.beEmpty
-import io.kotest.matchers.collections.containAll
 import io.kotest.matchers.collections.containExactly
 import io.kotest.matchers.collections.containExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldBeSingleton
@@ -36,7 +36,7 @@ import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 
-import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.spyk
 
 import org.eclipse.apoapsis.ortserver.config.ConfigException
@@ -57,7 +57,7 @@ class AdminConfigServiceTest : WordSpec({
     "loadAdminConfig()" should {
         "return the default configuration if there is no config file" {
             val service = createService(null) {
-                every { containsFile(context, Path(AdminConfigService.DEFAULT_PATH)) } returns false
+                coEvery { containsFile(context, Path(AdminConfigService.DEFAULT_PATH)) } returns false
             }
 
             service.loadAdminConfig(context) shouldBe AdminConfig.DEFAULT
@@ -73,7 +73,7 @@ class AdminConfigServiceTest : WordSpec({
             val service = createService {
                 initAdminConfig(config)
 
-                every { containsFile(context, Path("non-default-garbage.yml")) } returns false
+                coEvery { containsFile(context, Path("non-default-garbage.yml")) } returns false
             }
 
             val exception = shouldThrow<ConfigException> {
@@ -119,6 +119,22 @@ class AdminConfigServiceTest : WordSpec({
             exception.message shouldContain "'sourceCodeOrigins'"
         }
 
+        "not fail due to unrelated system properties containing '\${...}' placeholders" {
+            // This reproduces a scenario where an unrelated environment variable / system property (e.g. the
+            // analyzer worker's ANALYZER_FORK_COMMANDS, which contains "${CLASSPATH}"/"${LAUNCH}" placeholders
+            // that are resolved by the Analyzer worker itself) is present in the process environment. Loading the
+            // admin configuration must not be affected by such unrelated properties.
+            withEnvironment(
+                mapOf(
+                    "ANALYZER_FORK_COMMANDS" to "/bin/sh|-c|exec java \$JAVA_OPTS -cp \${CLASSPATH} \${LAUNCH}"
+                )
+            ) {
+                val service = createServiceWithConfig("")
+
+                service.loadAdminConfig(context) shouldBe AdminConfig.DEFAULT
+            }
+        }
+
         "only validate the configuration if requested" {
             val config = """
                     defaultRuleSet {
@@ -137,7 +153,7 @@ class AdminConfigServiceTest : WordSpec({
             val service = createService {
                 initAdminConfig(config)
 
-                every { containsFile(any(), any()) } returns false
+                coEvery { containsFile(any(), any()) } returns false
             }
 
             service.loadAdminConfig(context)
@@ -445,7 +461,7 @@ class AdminConfigServiceTest : WordSpec({
             reporterConfig.howToFixTextProviderFile shouldBe ORT_HOW_TO_FIX_TEXT_PROVIDER_FILENAME
             reporterConfig.customLicenseTextDir should beNull()
             reporterConfig shouldBe ReporterConfig()
-            reporterConfig.reportDefinitionNames should containAll("WebApp", "PdfTemplate")
+            reporterConfig.reportDefinitionNames should beEmpty()
         }
 
         "use default values for unspecified properties" {
@@ -459,7 +475,7 @@ class AdminConfigServiceTest : WordSpec({
 
             reporterConfig.howToFixTextProviderFile shouldBe ORT_HOW_TO_FIX_TEXT_PROVIDER_FILENAME
             reporterConfig.customLicenseTextDir should beNull()
-            reporterConfig.reportDefinitionNames should containAll("WebApp", "PdfTemplate")
+            reporterConfig.reportDefinitionNames should beEmpty()
         }
 
         "parse simple properties from the reporter section of the config file" {
@@ -701,23 +717,6 @@ class AdminConfigServiceTest : WordSpec({
             )
         }
 
-        "generate default report definitions for unreferenced reporter plugins" {
-            val config = """
-                    reporter {
-                    }
-                """.trimIndent()
-            val service = createServiceWithConfig(config)
-
-            val reporterConfig = service.loadAdminConfig(context).reporterConfig
-
-            reporterConfig.getReportDefinition("HtmlTemplate") shouldNotBeNull {
-                pluginId shouldBe "HtmlTemplate"
-                assetFiles should beEmpty()
-                assetDirectories should beEmpty()
-                nameMapping should beNull()
-            }
-        }
-
         "allow overriding a report definition for a reporter plugin even if the case does not match" {
             val config = """
                     reporter {
@@ -804,7 +803,7 @@ class AdminConfigServiceTest : WordSpec({
             val config = AdminConfig()
 
             val service = createService {
-                every { containsFile(context, Path(RuleSet.DEFAULT_COPYRIGHT_GARBAGE_FILE)) } returns false
+                coEvery { containsFile(context, Path(RuleSet.DEFAULT_COPYRIGHT_GARBAGE_FILE)) } returns false
             }
 
             service.validateConfigFiles(context, config) should beEmpty()
@@ -825,8 +824,8 @@ class AdminConfigServiceTest : WordSpec({
             )
 
             val service = createService {
-                every { containsFile(context, Path("non-default-garbage.yml")) } returns false
-                every { containsFile(context, Path("non-default.evaluator.rules.kts")) } returns false
+                coEvery { containsFile(context, Path("non-default-garbage.yml")) } returns false
+                coEvery { containsFile(context, Path("non-default.evaluator.rules.kts")) } returns false
             }
 
             service.validateConfigFiles(context, config).shouldBeSingleton {
@@ -839,7 +838,7 @@ class AdminConfigServiceTest : WordSpec({
             val config = AdminConfig()
 
             val service = createService {
-                every { containsFile(context, Path(ORT_HOW_TO_FIX_TEXT_PROVIDER_FILENAME)) } returns false
+                coEvery { containsFile(context, Path(ORT_HOW_TO_FIX_TEXT_PROVIDER_FILENAME)) } returns false
             }
 
             service.validateConfigFiles(context, config) should beEmpty()
@@ -854,8 +853,8 @@ class AdminConfigServiceTest : WordSpec({
             )
 
             val service = createService {
-                every { containsFile(context, Path("non-default.how-to-fix-text-provider.kts")) } returns false
-                every { containsFile(context, Path("non-default-custom-license-text-dir")) } returns false
+                coEvery { containsFile(context, Path("non-default.how-to-fix-text-provider.kts")) } returns false
+                coEvery { containsFile(context, Path("non-default-custom-license-text-dir")) } returns false
             }
 
             service.validateConfigFiles(context, config).shouldBeSingleton {
@@ -881,8 +880,8 @@ class AdminConfigServiceTest : WordSpec({
             )
 
             val service = createService {
-                every { containsFile(context, Path("missing-file-1")) } returns false
-                every { containsFile(context, Path("missing-file-2")) } returns false
+                coEvery { containsFile(context, Path("missing-file-1")) } returns false
+                coEvery { containsFile(context, Path("missing-file-2")) } returns false
             }
 
             service.validateConfigFiles(context, config).shouldBeSingleton {
@@ -922,10 +921,10 @@ class AdminConfigServiceTest : WordSpec({
             )
 
             val service = createService {
-                every { containsFile(context, Path("missing-file-1")) } returns false
-                every { containsFile(context, Path("missing-file-2")) } returns false
-                every { containsFile(context, Path("missing-dir-1/")) } returns false
-                every { containsFile(context, Path("missing-dir-2/")) } returns false
+                coEvery { containsFile(context, Path("missing-file-1")) } returns false
+                coEvery { containsFile(context, Path("missing-file-2")) } returns false
+                coEvery { containsFile(context, Path("missing-dir-1/")) } returns false
+                coEvery { containsFile(context, Path("missing-dir-2/")) } returns false
             }
 
             service.validateConfigFiles(context, config).shouldBeSingleton {
@@ -979,7 +978,7 @@ private fun createServiceAndConfigManager(
     val config = adminConfigPath?.let { ConfigFactory.parseMap(mapOf("adminConfigPath" to it)) }
         ?: ConfigFactory.empty()
     val configManager = spyk(ConfigManager.create(config)) {
-        every { containsFile(any(), any()) } returns true
+        coEvery { containsFile(any(), any()) } returns true
         block()
     }
 
@@ -1007,5 +1006,5 @@ private fun createServiceWithConfig(config: String): AdminConfigService =
  * default admin configuration file.
  */
 private fun ConfigManager.initAdminConfig(content: String) {
-    every { getFile(context, Path(ADMIN_CONFIG_PATH)) } returns content.byteInputStream()
+    coEvery { getFile(context, Path(ADMIN_CONFIG_PATH)) } returns content.byteInputStream()
 }

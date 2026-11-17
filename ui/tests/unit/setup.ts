@@ -25,11 +25,28 @@ import { afterEach } from 'vitest';
 if (typeof window !== 'undefined') {
   window.scrollTo = () => {};
 
+  window.matchMedia = (media: string) =>
+    ({
+      media,
+      matches: false,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) satisfies MediaQueryList;
+
   globalThis.ResizeObserver = class implements ResizeObserver {
     disconnect() {}
     observe() {}
     unobserve() {}
   };
+
+  // Radix Select and cmdk rely on DOM APIs that jsdom does not implement.
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.releasePointerCapture = () => {};
+  Element.prototype.scrollIntoView = () => {};
 }
 
 afterEach(() => {

@@ -2,15 +2,13 @@ pnpm-debug.log*
 
 node_modules
 dist
+/coverage/
 
 .env
 .env.local
 
 src/api/
 src/routeTree.gen.ts
-
-# AI Agent related files and directories
-plans/
 
 # Playwright
 /test-results/

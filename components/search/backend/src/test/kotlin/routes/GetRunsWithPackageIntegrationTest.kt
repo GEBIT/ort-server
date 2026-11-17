@@ -135,7 +135,7 @@ class GetRunsWithPackageIntegrationTest : SearchIntegrationTest({
 
             coEvery {
                 hierarchyAuthorizationService.filterHierarchyIds(
-                    any(), any(), any(), any(), OrganizationId(run.organizationId)
+                    any(), any(), any(), any(), OrganizationId(run.organizationId), any()
                 )
             } returns HierarchyFilter(
                 transitiveIncludes = mapOf(
@@ -180,7 +180,7 @@ class GetRunsWithPackageIntegrationTest : SearchIntegrationTest({
 
             coEvery {
                 hierarchyAuthorizationService.filterHierarchyIds(
-                    any(), any(), any(), any(), ProductId(run.productId)
+                    any(), any(), any(), any(), ProductId(run.productId), any()
                 )
             } returns HierarchyFilter(
                 transitiveIncludes = mapOf(
@@ -227,7 +227,7 @@ class GetRunsWithPackageIntegrationTest : SearchIntegrationTest({
 
             coEvery {
                 hierarchyAuthorizationService.filterHierarchyIds(
-                    any(), any(), any(), any(), RepositoryId(run.repositoryId)
+                    any(), any(), any(), any(), RepositoryId(run.repositoryId), any()
                 )
             } returns HierarchyFilter(
                 transitiveIncludes = mapOf(
@@ -274,7 +274,7 @@ class GetRunsWithPackageIntegrationTest : SearchIntegrationTest({
             )
 
             coEvery {
-                hierarchyAuthorizationService.filterHierarchyIds(any(), any(), any(), any(), any())
+                hierarchyAuthorizationService.filterHierarchyIds(any(), any(), any(), any(), any(), any())
             } returns HierarchyFilter(
                 transitiveIncludes = mapOf(
                     HierarchyLevel.REPOSITORY to listOf(
@@ -425,7 +425,7 @@ class GetRunsWithPackageIntegrationTest : SearchIntegrationTest({
             }
         }
 
-        "return packageId as null and purl as non-null for purl search" {
+        "return packageId and purl for purl search" {
             val fixtures = dbExtension.fixtures
             val packageIdentifier = identifierFor("purl-response")
             createRunWithPackageForPurlSearch(
@@ -443,7 +443,7 @@ class GetRunsWithPackageIntegrationTest : SearchIntegrationTest({
 
                 val body = response.body<List<RunWithPackage>>()
                 body.shouldBeSingleton {
-                    it.packageId.shouldBeNull()
+                    it.packageId shouldBe packageIdentifier.toApiIdentifier()
                     it.purl shouldBe packageIdentifier.toPurl()
                 }
             }

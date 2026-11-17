@@ -19,8 +19,12 @@
 
 package org.eclipse.apoapsis.ortserver.secrets
 
+import java.util.concurrent.ConcurrentHashMap
+
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
 import org.eclipse.apoapsis.ortserver.utils.config.getStringOrDefault
+
+import org.jetbrains.exposed.v1.jdbc.Database
 
 /**
  * A simple implementation of the [SecretsProviderFactory] interface for testing purposes that uses an in-memory
@@ -72,20 +76,20 @@ class SecretsProviderFactoryForTesting : SecretsProviderFactory {
         fun instance(): SecretsProvider = latestInstance
             ?: throw AssertionError("No SecretsProviderForTesting instance has been created.")
 
-        /**
-         * Return a map to be used as internal secret store that is already populated with the test secrets.
-         */
-        private fun createStorage(): MutableMap<Path, SecretValue> =
-            mutableMapOf(
-                PASSWORD_PATH to PASSWORD_SECRET,
-                TOKEN_PATH to TOKEN_SECRET,
-                SERVICE_PATH to SERVICE_SECRET
+        /** Return a map to be used as internal secret store that is already populated with the test secrets. */
+        private fun createStorage(): ConcurrentHashMap<Path, SecretValue> =
+            ConcurrentHashMap(
+                mapOf(
+                    PASSWORD_PATH to PASSWORD_SECRET,
+                    TOKEN_PATH to TOKEN_SECRET,
+                    SERVICE_PATH to SERVICE_SECRET
+                )
             )
     }
 
     override val name: String = NAME
 
-    override fun createProvider(configManager: ConfigManager): SecretsProvider =
+    override fun createProvider(configManager: ConfigManager, db: Database): SecretsProvider =
         createProvider(configManager.getStringOrDefault(ERROR_PATH_PROPERTY, "."))
 
     fun createProvider(errorPath: String = "."): SecretsProvider {
@@ -95,13 +99,13 @@ class SecretsProviderFactoryForTesting : SecretsProviderFactory {
             path.takeUnless { it.path == errorPath } ?: throw IllegalArgumentException("Test exception")
 
         return object : SecretsProvider {
-            override fun readSecret(path: Path): SecretValue? = storage[checkPath(path)]
+            override suspend fun readSecret(path: Path): SecretValue? = storage[checkPath(path)]
 
-            override fun writeSecret(path: Path, secret: SecretValue) {
+            override suspend fun writeSecret(path: Path, secret: SecretValue) {
                 storage[checkPath(path)] = secret
             }
 
-            override fun removeSecret(path: Path) {
+            override suspend fun removeSecret(path: Path) {
                 storage -= checkPath(path)
             }
         }.also { latestInstance = it }

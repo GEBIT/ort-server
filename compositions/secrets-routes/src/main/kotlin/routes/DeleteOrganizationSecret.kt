@@ -55,6 +55,14 @@ internal fun Route.deleteOrganizationSecret(
         HttpStatusCode.NoContent to {
             description = "Success"
         }
+
+        HttpStatusCode.NotFound to {
+            description = "The secret does not exist."
+        }
+
+        HttpStatusCode.Conflict to {
+            description = "The secret is still used by infrastructure services."
+        }
     }
 }, requirePermission(OrganizationPermission.WRITE_SECRETS)) {
     val organizationId = OrganizationId(call.requireIdParameter("organizationId"))

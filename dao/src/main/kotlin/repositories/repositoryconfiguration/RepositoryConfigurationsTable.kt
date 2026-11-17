@@ -33,9 +33,7 @@ import org.jetbrains.exposed.v1.core.dao.id.LongIdTable
 import org.jetbrains.exposed.v1.dao.LongEntity
 import org.jetbrains.exposed.v1.dao.LongEntityClass
 
-/**
- * A table to represent a repository configuration.
- */
+/** A table to represent a repository configuration. */
 object RepositoryConfigurationsTable : LongIdTable("repository_configurations") {
     val ortRunId = reference("ort_run_id", OrtRunsTable)
     val repositoryAnalyzerConfigurationId =
@@ -55,6 +53,7 @@ class RepositoryConfigurationDao(id: EntityID<Long>) : LongEntity(id) {
     var pathExcludes by PathExcludeDao via RepositoryConfigurationsPathExcludes
     var pathIncludes by PathIncludeDao via RepositoryConfigurationsPathIncludes
     var scopeExcludes by ScopeExcludeDao via RepositoryConfigurationsScopeExcludesTable
+    var scopeIncludes by ScopeIncludeDao via RepositoryConfigurationsScopeIncludesTable
     var curations by PackageCurationDao via RepositoryConfigurationsPackageCurationsTable
     var licenseFindingCurations by LicenseFindingCurationDao via RepositoryConfigurationsLicenseFindingCurationsTable
     var packageConfigurations by PackageConfigurationDao via RepositoryConfigurationsPackageConfigurationsTable
@@ -71,7 +70,8 @@ class RepositoryConfigurationDao(id: EntityID<Long>) : LongEntity(id) {
             scopes = scopeExcludes.map(ScopeExcludeDao::mapToModel)
         ),
         includes = Includes(
-            paths = pathIncludes.map(PathIncludeDao::mapToModel)
+            paths = pathIncludes.map(PathIncludeDao::mapToModel),
+            scopes = scopeIncludes.map(ScopeIncludeDao::mapToModel)
         ),
         resolutions = Resolutions(
             issues = issueResolutions.map(IssueResolutionDao::mapToModel),

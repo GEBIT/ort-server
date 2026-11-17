@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.27
+# syntax=docker/dockerfile:1.29
 
 # Copyright (C) 2024 The ORT Server Authors (See <https://github.com/eclipse-apoapsis/ort-server/blob/main/NOTICE>)
 #
@@ -18,14 +18,10 @@
 # License-Filename: LICENSE
 
 # Stage 1: Build the UI.
-FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS build
-
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
+FROM ghcr.io/pnpm/pnpm:12.17.0@sha256:172468925f0ca368313c09867081a43e298eaeb13dee8f7e4356bfad45dd8b15 AS build
 
 WORKDIR /app
-COPY . .
+COPY --chmod=755 . .
 
 ENV VITE_API_URL="UI_API_URL_PLACEHOLDER" \
     VITE_AUTHORITY="UI_AUTHORITY_PLACEHOLDER" \
@@ -38,7 +34,7 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm run build
 
 # Stage 2: Serve the app with nginx.
-FROM nginx:1.31-alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3
+FROM nginx:1.31-alpine@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11
 
 # Copy the build output to a template directory. The entrypoint script will copy the files to /usr/share/nginx/html at
 # startup, allowing the serving directory to be a writable volume mount.
@@ -46,18 +42,17 @@ COPY --from=build /app/dist /usr/share/nginx/html-template
 
 # Copy custom nginx configuration to /etc/nginx/. The entrypoint script will copy the file to
 # /etc/nginx/conf.d/default.conf at startup, allowing /etc/nginx/conf.d to be a writable volume mount.
-COPY docker/nginx.conf.template /etc/nginx/default.conf.template
+COPY --chmod=644 docker/nginx.conf.template /etc/nginx/default.conf.template
 
 # Copy robots.txt to disallow indexing by search engines.
-COPY docker/robots.txt /usr/share/nginx/html-template/robots.txt
+COPY --chmod=644 docker/robots.txt /usr/share/nginx/html-template/robots.txt
 
 # Configure nginx to run as non-root user for OpenShift compatibility
 RUN sed -i 's/user  nginx;//g' /etc/nginx/nginx.conf \
     && sed -i 's|/var/run/nginx.pid|/tmp/nginx.pid|g' /etc/nginx/nginx.conf
 
 # Copy entrypoint script.
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY --chmod=755 docker/entrypoint.sh /entrypoint.sh
 
 # Make sure the user executing the container has access rights to the directories required by nginx.
 # The template directory only needs to be readable by the group.

@@ -32,16 +32,17 @@ import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginEvent
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginEventStore
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginType
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.normalizePluginId
+import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireEnumParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 
 internal fun Route.enablePlugin(eventStore: PluginEventStore) = post("admin/plugins/{pluginType}/{pluginId}/enable", {
-    operationId = "EnablePlugin"
+    operationId = "enablePlugin"
     summary = "Enable an ORT plugin globally"
     description = "Enable an ORT plugin globally to make it generally available to all organizations."
     tags = listOf("Plugins")
 
     request {
-        pathParameter<String>("pluginType") {
+        pathParameter<PluginType>("pluginType") {
             description = "The type of the plugin to enable."
             required = true
         }
@@ -53,7 +54,7 @@ internal fun Route.enablePlugin(eventStore: PluginEventStore) = post("admin/plug
     }
 
     response {
-        HttpStatusCode.OK to {
+        HttpStatusCode.Accepted to {
             description = "The plugin was enabled successfully."
         }
 
@@ -64,9 +65,13 @@ internal fun Route.enablePlugin(eventStore: PluginEventStore) = post("admin/plug
         HttpStatusCode.NotModified to {
             description = "The plugin is already enabled."
         }
+
+        HttpStatusCode.BadRequest to {
+            description = "The plugin type is invalid."
+        }
     }
 }, requireSuperuser()) {
-    val pluginType = enumValueOf<PluginType>(call.requireParameter("pluginType"))
+    val pluginType = call.requireEnumParameter<PluginType>("pluginType")
     val pluginId = normalizePluginId(pluginType, call.requireParameter("pluginId"))
 
     if (pluginId == null) {

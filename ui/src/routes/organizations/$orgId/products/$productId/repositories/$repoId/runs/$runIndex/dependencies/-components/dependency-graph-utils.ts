@@ -17,9 +17,9 @@
  * License-Filename: LICENSE
  */
 
-import type { DependencyGraph } from '@/api';
+import type { DependencyGraph, DependencyGraphScope } from '@/api';
 import { identifierToString } from '@/helpers/identifier-conversion';
-import type { PackageIdType } from '@/schemas';
+import { PackageIdType, packageIdTypeSchema } from '@/schemas';
 
 export type AdjacencyMap = Map<number, number[]>;
 
@@ -45,7 +45,7 @@ export const formatDependencyGraphPackageLabel = (
   packageIdType: PackageIdType
 ): string => {
   const purl = graph.purls[packageIndex] as string | null | undefined;
-  if (packageIdType === 'PURL' && purl) return purl;
+  if (packageIdType === packageIdTypeSchema.enum.PURL && purl) return purl;
 
   return identifierToString(graph.packages[packageIndex]);
 };
@@ -59,6 +59,17 @@ export const matchesSearch = (
 ): boolean =>
   searchTerm.length > 0 && value?.toLowerCase().includes(searchTerm) === true;
 
+// The search never hides parts of the graph; it only decides which branches are
+// auto-expanded to reveal the matches. A scope is considered to contain a match
+// when its own label matches or any of its node subtrees does.
+export const scopeHasSearchMatch = (
+  { rootNodeIndexes, scopeLabel }: DependencyGraphScope,
+  searchTerm: string,
+  matchesNodeSubtree: (nodeIndex: number) => boolean
+): boolean =>
+  matchesSearch(scopeLabel, searchTerm) ||
+  rootNodeIndexes.some(matchesNodeSubtree);
+
 export const createNodeSubtreeMatcher = (
   graph: DependencyGraph,
   adjacency: AdjacencyMap,
@@ -69,36 +80,122 @@ export const createNodeSubtreeMatcher = (
     return () => true;
   }
 
-  const resultCache = new Map<number, boolean>();
-  const nodesInProgress = new Set<number>();
+  // Edges may reference indexes without a node entry, so size the arrays to cover them as well.
+  let nodeCount = graph.nodes.length;
+  adjacency.forEach((targets, from) => {
+    nodeCount = Math.max(nodeCount, from + 1);
+    targets.forEach((to) => (nodeCount = Math.max(nodeCount, to + 1)));
+  });
 
-  const matchesNodeSubtree = (nodeIndex: number): boolean => {
-    const cachedResult = resultCache.get(nodeIndex);
-    if (cachedResult !== undefined) return cachedResult;
-
-    if (nodesInProgress.has(nodeIndex)) {
-      return false;
-    }
-
-    nodesInProgress.add(nodeIndex);
-
+  const nodeMatches = (nodeIndex: number): boolean => {
     const node = graph.nodes[nodeIndex];
-    const nodeMatches = matchesSearch(
+
+    return matchesSearch(
       node
         ? formatDependencyGraphPackageLabel(graph, node.pkg, packageIdType)
         : '',
       searchTerm
     );
-    const childMatches = (adjacency.get(nodeIndex) ?? []).some(
-      matchesNodeSubtree
-    );
-    const result = nodeMatches || childMatches;
-
-    nodesInProgress.delete(nodeIndex);
-    resultCache.set(nodeIndex, result);
-
-    return result;
   };
 
-  return matchesNodeSubtree;
+  // Find the strongly connected components with Tarjan's algorithm (R. Tarjan, "Depth-First Search
+  // and Linear Graph Algorithms", SIAM Journal on Computing 1(2), 1972, pp. 146–160,
+  // https://doi.org/10.1137/0201010).
+  //
+  // The recursive depth-first search of the paper is replaced by an explicit stack of traversal frames,
+  // each holding the node's visit index, its low link and the position of the next child to visit, so
+  // deep dependency chains cannot overflow the call stack.
+  //
+  //A component is completed only after every component reachable from it, so its result
+  // can be derived from its own nodes and the already final results of the components it points
+  // to. All nodes of a cycle thereby get the same result, independent of the order of evaluation.
+  const visitIndex = new Int32Array(nodeCount).fill(-1);
+  const onComponentStack = new Uint8Array(nodeCount);
+  const subtreeMatches = new Uint8Array(nodeCount);
+  const componentStack: number[] = [];
+  const traversalStack: {
+    nodeIndex: number;
+    visitIndex: number;
+    lowLink: number;
+    children: number[];
+    nextChild: number;
+  }[] = [];
+  let nextVisitIndex = 0;
+
+  const visit = (nodeIndex: number) => {
+    visitIndex[nodeIndex] = nextVisitIndex;
+    componentStack.push(nodeIndex);
+    onComponentStack[nodeIndex] = 1;
+    traversalStack.push({
+      nodeIndex,
+      visitIndex: nextVisitIndex,
+      lowLink: nextVisitIndex,
+      children: adjacency.get(nodeIndex) ?? [],
+      nextChild: 0,
+    });
+    nextVisitIndex++;
+  };
+
+  const completeComponent = (rootIndex: number) => {
+    const members: number[] = [];
+    let member = -1;
+    while (member !== rootIndex) {
+      member = componentStack.pop() ?? rootIndex;
+      onComponentStack[member] = 0;
+      members.push(member);
+    }
+
+    // Children within the component are not marked yet, so only other components contribute here.
+    const componentMatches = members.some(
+      (memberIndex) =>
+        nodeMatches(memberIndex) ||
+        (adjacency.get(memberIndex) ?? []).some(
+          (childIndex) => subtreeMatches[childIndex] === 1
+        )
+    );
+
+    if (componentMatches) {
+      members.forEach((memberIndex) => (subtreeMatches[memberIndex] = 1));
+    }
+  };
+
+  for (let startIndex = 0; startIndex < nodeCount; startIndex++) {
+    if (visitIndex[startIndex] !== -1) continue;
+
+    visit(startIndex);
+
+    for (
+      let frame = traversalStack.at(-1);
+      frame;
+      frame = traversalStack.at(-1)
+    ) {
+      const childIndex = frame.children[frame.nextChild];
+
+      if (childIndex !== undefined) {
+        frame.nextChild++;
+        const childVisitIndex = visitIndex[childIndex] ?? -1;
+
+        if (childVisitIndex === -1) {
+          visit(childIndex);
+        } else if (onComponentStack[childIndex] === 1) {
+          frame.lowLink = Math.min(frame.lowLink, childVisitIndex);
+        }
+
+        continue;
+      }
+
+      traversalStack.pop();
+
+      const parent = traversalStack.at(-1);
+      if (parent) {
+        parent.lowLink = Math.min(parent.lowLink, frame.lowLink);
+      }
+
+      if (frame.lowLink === frame.visitIndex) {
+        completeComponent(frame.nodeIndex);
+      }
+    }
+  }
+
+  return (nodeIndex: number) => subtreeMatches[nodeIndex] === 1;
 };

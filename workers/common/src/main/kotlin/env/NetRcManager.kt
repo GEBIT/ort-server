@@ -25,12 +25,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 import org.eclipse.apoapsis.ortserver.model.CredentialsType
+import org.eclipse.apoapsis.ortserver.shared.authenticator.AuthenticationEvent
+import org.eclipse.apoapsis.ortserver.shared.authenticator.AuthenticationListener
+import org.eclipse.apoapsis.ortserver.shared.authenticator.ResolvedInfrastructureService
+import org.eclipse.apoapsis.ortserver.shared.authenticator.SecretResolverFun
+import org.eclipse.apoapsis.ortserver.shared.authenticator.undefinedInfraSecretResolver
 import org.eclipse.apoapsis.ortserver.utils.logging.runBlocking
-import org.eclipse.apoapsis.ortserver.workers.common.ResolvedInfrastructureService
-import org.eclipse.apoapsis.ortserver.workers.common.auth.AuthenticationEvent
-import org.eclipse.apoapsis.ortserver.workers.common.auth.AuthenticationListener
-import org.eclipse.apoapsis.ortserver.workers.common.auth.SecretResolverFun
-import org.eclipse.apoapsis.ortserver.workers.common.auth.undefinedInfraSecretResolver
 import org.eclipse.apoapsis.ortserver.workers.common.env.definition.EnvironmentServiceDefinition
 
 import org.slf4j.LoggerFactory
@@ -51,9 +51,7 @@ internal class NetRcManager(
     companion object {
         private val logger = LoggerFactory.getLogger(NetRcManager::class.java)
 
-        /**
-         * Create a new instance of [NetRcManager] and initialize it with the given [resolverFun].
-         */
+        /** Create a new instance of [NetRcManager] and initialize it with the given [resolverFun]. */
         fun create(resolverFun: SecretResolverFun): NetRcManager =
             NetRcManager(resolverFun)
     }
@@ -75,20 +73,14 @@ internal class NetRcManager(
         }
     }
 
-    /**
-     * Return a new instance of [ConfigFileBuilder] to be used for creating the `.netrc` file.
-     */
+    /** Return a new instance of [ConfigFileBuilder] to be used for creating the `.netrc` file. */
     internal fun createConfigFileBuilder(): ConfigFileBuilder =
         ConfigFileBuilder(resolverFun, undefinedInfraSecretResolver)
 
-    /**
-     * Return a new instance of [NetRcGenerator] that is going to be called to generate the `.netrc` file.
-     */
+    /** Return a new instance of [NetRcGenerator] that is going to be called to generate the `.netrc` file. */
     internal fun createNetRcGenerator(): NetRcGenerator = NetRcGenerator()
 
-    /**
-     * Perform an update of the `.netrc` file after receiving an authentication event for the given [service].
-     */
+    /** Perform an update of the `.netrc` file after receiving an authentication event for the given [service]. */
     private suspend fun updateNetRcServices(service: ResolvedInfrastructureService) {
         val serviceUri = URI.create(service.url)
         val serviceHost = serviceUri.host

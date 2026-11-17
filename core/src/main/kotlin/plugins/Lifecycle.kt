@@ -21,6 +21,7 @@ package org.eclipse.apoapsis.ortserver.core.plugins
 
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStarted
+import io.ktor.server.application.ApplicationStopping
 
 import kotlin.concurrent.thread
 
@@ -28,6 +29,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 import org.eclipse.apoapsis.ortserver.components.authorization.keycloak.migration.RolesToDbMigration
+import org.eclipse.apoapsis.ortserver.components.projections.ProjectionService
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 import org.eclipse.apoapsis.ortserver.utils.logging.StandardMdcKeys
 import org.eclipse.apoapsis.ortserver.utils.logging.runBlocking
 import org.eclipse.apoapsis.ortserver.utils.logging.withMdcContext
@@ -48,9 +51,20 @@ fun Application.configureLifecycle() {
 
         thread {
             MDC.setContextMap(mdcContext)
-            runBlocking(Dispatchers.IO) {
+            runBlocking(Dispatchers.Virtual) {
                 migrateRoles(rolesMigration)
             }
+        }
+
+        val projectionService by inject<ProjectionService>()
+        projectionService.start()
+    }
+
+    monitor.subscribe(ApplicationStopping) {
+        val projectionService by inject<ProjectionService>()
+
+        runBlocking(Dispatchers.Virtual) {
+            projectionService.stop()
         }
     }
 }

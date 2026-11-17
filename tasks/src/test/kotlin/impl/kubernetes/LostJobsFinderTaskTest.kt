@@ -25,6 +25,7 @@ import io.kotest.core.spec.style.StringSpec
 import io.kubernetes.client.openapi.models.V1Job
 import io.kubernetes.client.openapi.models.V1ObjectMeta
 
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
@@ -88,11 +89,11 @@ class LostJobsFinderTaskTest : StringSpec({
         val notifierJobRepo = repositoryMock<NotifierJob, NotifierJobRepository>(notifierJobs)
 
         val ortRunRepo = mockk<OrtRunRepository> {
-            every { get(any<Long>()) } returns mockk {
+            coEvery { get(any<Long>()) } returns mockk {
                 every { id } answers { arg(0) }
                 every { traceId } returns ""
             }
-            every { listActiveRuns() } returns emptyList()
+            coEvery { listActiveRuns() } returns emptyList()
         }
 
         val notifier = mockk<FailedJobNotifier> {
@@ -156,11 +157,11 @@ class LostJobsFinderTaskTest : StringSpec({
 
         val runWithLostSchedules = ActiveOrtRun(RUN_ID + 42, jobCreationTime, "traceLost")
         val ortRunRepo = mockk<OrtRunRepository> {
-            every { get(any<Long>()) } returns mockk {
+            coEvery { get(any<Long>()) } returns mockk {
                 every { id } answers { arg(0) }
                 every { traceId } returns ""
             }
-            every { listActiveRuns() } returns listOf(
+            coEvery { listActiveRuns() } returns listOf(
                 runWithLostSchedules,
                 ActiveOrtRun(RUN_ID, jobCreationTime, "trace1"),
                 ActiveOrtRun(RUN_ID + 1, jobCreationTime, "trace2"),
@@ -236,25 +237,19 @@ private fun <T : Any> JobHandler.prepareJobsQuery(endpoint: Endpoint<T>) {
     every { findJobsForWorker(endpoint) } returns listOf(job)
 }
 
-/**
- * Create a mock repository for a concrete worker type that returns the given [activeJobs].
- */
+/** Create a mock repository for a concrete worker type that returns the given [activeJobs]. */
 private inline fun <J : WorkerJob, reified R : WorkerJobRepository<J>> repositoryMock(activeJobs: List<J>): R =
     mockk {
-        every { listActive(jobCreationTime) } returns activeJobs
+        coEvery { listActive(jobCreationTime) } returns activeJobs
     }
 
-/**
- * Create a mock worker job of the given type with the given [runId].
- */
+/** Create a mock worker job of the given type with the given [runId]. */
 private inline fun <reified T : WorkerJob> workerJobMock(runId: Long): T =
     mockk {
         every { ortRunId } returns runId
     }
 
-/**
- * Create a Kubernetes job with a label referencing the given [runId] and the given [name].
- */
+/** Create a Kubernetes job with a label referencing the given [runId] and the given [name]. */
 private fun createKubernetesJob(runId: Long, name: String): V1Job =
     V1Job().apply {
         metadata = V1ObjectMeta().apply {
@@ -263,9 +258,7 @@ private fun createKubernetesJob(runId: Long, name: String): V1Job =
         }
     }
 
-/**
- * Return a mock [TimeHelper] that returns the [currentTime].
- */
+/** Return a mock [TimeHelper] that returns the [currentTime]. */
 private fun createTimeHelper(): TimeHelper = mockk {
     every { now() } returns currentTime
 }

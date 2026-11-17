@@ -19,13 +19,16 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { defaultValues } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components/default-values';
 import { formValuesToPayload } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components/payload';
 import type { CreateRunFormValues } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components/run-schema';
+import {
+  createFormDefaultValues,
+  createPluginDescriptor,
+} from '../fixtures/create-run';
 
 function createFormValues(): CreateRunFormValues {
   return {
-    ...defaultValues(null, [], [], false, [], []),
+    ...createFormDefaultValues(),
     revision: 'main',
     path: '',
   };
@@ -52,7 +55,7 @@ describe('formValuesToPayload', () => {
       },
     };
 
-    const payload = formValuesToPayload(values);
+    const payload = formValuesToPayload(values, []);
 
     expect(payload.jobConfigs.evaluator?.packageConfigurationProviders).toEqual(
       [
@@ -66,6 +69,49 @@ describe('formValuesToPayload', () => {
           secrets: {
             token: 'evaluator-token',
           },
+        },
+      ]
+    );
+  });
+
+  it('uses the plugin type to resolve descriptors with duplicate IDs', () => {
+    const values = createFormValues();
+    values.jobConfigs.evaluator.packageConfigurationProviders = ['OrtConfig'];
+    values.jobConfigs.evaluator.packageConfigurationProviderConfig = {
+      OrtConfig: {
+        options: { path: 'curation-default.yml' },
+        secrets: {},
+      },
+    };
+
+    const option = {
+      name: 'path',
+      description: 'The path to the configuration file.',
+      type: 'STRING' as const,
+      isFixed: false,
+      isNullable: false,
+      isRequired: false,
+    };
+    const payload = formValuesToPayload(values, [
+      createPluginDescriptor({
+        id: 'OrtConfig',
+        type: 'PACKAGE_CONFIGURATION_PROVIDER',
+        options: [{ ...option, defaultValue: 'configuration-default.yml' }],
+      }),
+      createPluginDescriptor({
+        id: 'OrtConfig',
+        type: 'PACKAGE_CURATION_PROVIDER',
+        options: [{ ...option, defaultValue: 'curation-default.yml' }],
+      }),
+    ]);
+
+    expect(payload.jobConfigs.evaluator?.packageConfigurationProviders).toEqual(
+      [
+        {
+          type: 'OrtConfig',
+          id: 'OrtConfig',
+          enabled: true,
+          options: { path: 'curation-default.yml' },
         },
       ]
     );
@@ -91,7 +137,7 @@ describe('formValuesToPayload', () => {
       },
     };
 
-    const payload = formValuesToPayload(values);
+    const payload = formValuesToPayload(values, []);
 
     expect(payload.jobConfigs.analyzer?.packageCurationProviders).toEqual([
       {
@@ -123,7 +169,7 @@ describe('formValuesToPayload', () => {
       },
     };
 
-    const payload = formValuesToPayload(values);
+    const payload = formValuesToPayload(values, []);
 
     expect(payload.jobConfigs.evaluator).toBeUndefined();
     expect(payload.jobConfigs.reporter?.packageConfigurationProviders).toEqual([
@@ -141,7 +187,7 @@ describe('formValuesToPayload', () => {
     ]);
   });
 
-  it('omits package configuration providers if none are selected', () => {
+  it('sends an empty list of package configuration providers if none are selected', () => {
     const values = createFormValues();
     values.jobConfigs.evaluator.packageConfigurationProviders = [];
     values.jobConfigs.evaluator.packageConfigurationProviderConfig = {
@@ -162,17 +208,18 @@ describe('formValuesToPayload', () => {
       },
     };
 
-    const payload = formValuesToPayload(values);
+    const payload = formValuesToPayload(values, []);
 
-    expect(
-      payload.jobConfigs.evaluator?.packageConfigurationProviders
-    ).toBeUndefined();
+    expect(payload.jobConfigs.evaluator?.packageConfigurationProviders).toEqual(
+      []
+    );
+    // The reporter uses the providers of the evaluator.
     expect(
       payload.jobConfigs.reporter?.packageConfigurationProviders
     ).toBeUndefined();
   });
 
-  it('omits package curation providers if none are selected', () => {
+  it('sends an empty list of package curation providers if none are selected', () => {
     const values = createFormValues();
     values.jobConfigs.analyzer.packageCurationProviders = [];
     values.jobConfigs.analyzer.packageCurationProviderConfig = {
@@ -184,11 +231,9 @@ describe('formValuesToPayload', () => {
       },
     };
 
-    const payload = formValuesToPayload(values);
+    const payload = formValuesToPayload(values, []);
 
-    expect(
-      payload.jobConfigs.analyzer?.packageCurationProviders
-    ).toBeUndefined();
+    expect(payload.jobConfigs.analyzer?.packageCurationProviders).toEqual([]);
   });
 
   it('omits reporter package configuration providers when evaluator is enabled', () => {
@@ -212,7 +257,7 @@ describe('formValuesToPayload', () => {
       },
     };
 
-    const payload = formValuesToPayload(values);
+    const payload = formValuesToPayload(values, []);
 
     expect(payload.jobConfigs.evaluator?.packageConfigurationProviders).toEqual(
       [
@@ -234,7 +279,7 @@ describe('formValuesToPayload', () => {
   it('omits the environment config when no environment settings are configured', () => {
     const values = createFormValues();
 
-    const payload = formValuesToPayload(values);
+    const payload = formValuesToPayload(values, []);
 
     expect(payload.jobConfigs.analyzer?.environmentConfig).toBeUndefined();
   });
@@ -256,10 +301,134 @@ describe('formValuesToPayload', () => {
       ],
     };
 
-    const payload = formValuesToPayload(values);
+    const payload = formValuesToPayload(values, []);
 
     expect(
       payload.jobConfigs.analyzer?.environmentConfig?.environmentDefinitions
     ).toEqual(values.jobConfigs.analyzer.environmentDefinitions);
+  });
+
+  it('builds package manager configurations from options and mustRunAfter', () => {
+    const values = createFormValues();
+    values.jobConfigs.analyzer.packageManagers = ['Maven', 'NPM'];
+    values.jobConfigs.analyzer.packageManagerConfig = {
+      Maven: {
+        options: { sbtVersion: '1.9.0' },
+        secrets: {},
+      },
+      NPM: {
+        options: {},
+        secrets: {},
+      },
+    };
+    values.jobConfigs.analyzer.packageManagerMustRunAfter = {
+      NPM: ['Maven'],
+    };
+
+    const payload = formValuesToPayload(values, []);
+
+    expect(payload.jobConfigs.analyzer?.enabledPackageManagers).toEqual([
+      'Maven',
+      'NPM',
+      'Unmanaged',
+    ]);
+    expect(payload.jobConfigs.analyzer?.packageManagerOptions).toEqual({
+      Maven: { options: { sbtVersion: '1.9.0' } },
+      NPM: { mustRunAfter: ['Maven'] },
+    });
+  });
+
+  it('omits default package manager options', () => {
+    const values = createFormValues();
+    values.jobConfigs.analyzer.packageManagers = ['Maven'];
+    values.jobConfigs.analyzer.packageManagerConfig = {
+      Maven: {
+        options: { useMavenDepTree: true },
+        secrets: {},
+      },
+    };
+
+    const payload = formValuesToPayload(values, [
+      createPluginDescriptor({
+        id: 'Maven',
+        type: 'PACKAGE_MANAGER',
+        options: [
+          {
+            name: 'useMavenDepTree',
+            description: 'Use the Maven dependency tree.',
+            type: 'BOOLEAN',
+            defaultValue: 'true',
+            isFixed: false,
+            isNullable: false,
+            isRequired: false,
+          },
+        ],
+      }),
+    ]);
+
+    expect(payload.jobConfigs.analyzer?.packageManagerOptions).toBeUndefined();
+  });
+
+  it('omits package manager configurations without options or mustRunAfter', () => {
+    const values = createFormValues();
+    values.jobConfigs.analyzer.packageManagers = ['Maven'];
+    values.jobConfigs.analyzer.packageManagerConfig = {
+      Maven: { options: {}, secrets: {} },
+    };
+    values.jobConfigs.analyzer.packageManagerMustRunAfter = {};
+
+    const payload = formValuesToPayload(values, []);
+
+    expect(payload.jobConfigs.analyzer?.packageManagerOptions).toBeUndefined();
+  });
+
+  it('splits includes and excludes and drops empty comments', () => {
+    const values = createFormValues();
+    values.scopes = [
+      {
+        type: 'exclude',
+        pattern: ' test.* ',
+        reason: 'TEST_DEPENDENCY_OF',
+        comment: '',
+      },
+      {
+        type: 'include',
+        pattern: 'releaseRuntimeClasspath',
+        reason: 'SOURCE_OF',
+        comment: 'Only the shipped code',
+      },
+    ];
+    values.paths = [
+      {
+        type: 'exclude',
+        pattern: 'docs/**',
+        reason: 'DOCUMENTATION_OF',
+        comment: '',
+      },
+    ];
+
+    const payload = formValuesToPayload(values, []);
+
+    expect(payload.scopes).toEqual({
+      excludes: [{ pattern: 'test.*', reason: 'TEST_DEPENDENCY_OF' }],
+      includes: [
+        {
+          pattern: 'releaseRuntimeClasspath',
+          reason: 'SOURCE_OF',
+          comment: 'Only the shipped code',
+        },
+      ],
+    });
+    expect(payload.paths).toEqual({
+      excludes: [{ pattern: 'docs/**', reason: 'DOCUMENTATION_OF' }],
+      includes: [],
+    });
+  });
+
+  it('omits includes and excludes when there are none', () => {
+    const payload = formValuesToPayload(createFormValues(), []);
+
+    expect(payload.scopes).toBeUndefined();
+    expect(payload.paths).toBeUndefined();
   });
 });

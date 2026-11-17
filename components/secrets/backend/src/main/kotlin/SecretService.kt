@@ -19,14 +19,13 @@
 
 package org.eclipse.apoapsis.ortserver.components.secrets
 
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.Hierarchy
 import org.eclipse.apoapsis.ortserver.model.HierarchyId
 import org.eclipse.apoapsis.ortserver.model.OrganizationId
 import org.eclipse.apoapsis.ortserver.model.ProductId
 import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.Secret
-import org.eclipse.apoapsis.ortserver.model.repositories.SecretRepository
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryResult
 import org.eclipse.apoapsis.ortserver.model.util.OptionalValue
@@ -36,23 +35,20 @@ import org.eclipse.apoapsis.ortserver.secrets.SecretValue
 
 import org.jetbrains.exposed.v1.jdbc.Database
 
-/**
- * A service providing functions for working with [secrets][Secret].
- */
+/** A service providing functions for working with [secrets][Secret]. */
 class SecretService(
     private val db: Database,
-    private val secretRepository: SecretRepository,
     private val secretStorage: SecretStorage
 ) {
-    /**
-     * Create a secret for [id] with the given metadata [name] and [description], and the provided [value].
-     */
+    private val secretRepository = SecretRepository(db)
+
+    /** Create a secret for [id] with the given metadata [name] and [description], and the provided [value]. */
     suspend fun createSecret(
         name: String,
         value: String,
         description: String?,
         id: HierarchyId
-    ): Secret = db.dbQuery {
+    ): Secret = db.transaction {
         val path = secretStorage.createPath(id, name)
         val secret = secretRepository.create(path.path, name, description, id)
 
@@ -61,25 +57,19 @@ class SecretService(
         secret
     }
 
-    /**
-     * Delete a secret by [id] and [name].
-     */
-    suspend fun deleteSecret(id: HierarchyId, name: String) = db.dbQuery {
+    /** Delete a secret by [id] and [name]. */
+    suspend fun deleteSecret(id: HierarchyId, name: String) = db.transaction {
         secretRepository.getByIdAndName(id, name)?.deleteValue()
         secretRepository.deleteForIdAndName(id, name)
     }
 
-    /**
-     * Get a secret by [id] and [name]. Returns null if the secret is not found.
-     */
-    suspend fun getSecret(id: HierarchyId, name: String): Secret? = db.dbQuery {
+    /** Get a secret by [id] and [name]. Returns null if the secret is not found. */
+    suspend fun getSecret(id: HierarchyId, name: String): Secret? = db.transaction {
         secretRepository.getByIdAndName(id, name)
     }
 
-    /**
-     * Get the value of a [secret]. Returns `null` if the value is not found.
-     */
-    fun getSecretValue(secret: Secret): SecretValue? = secretStorage.readSecret(Path(secret.path))
+    /** Get the value of a [secret]. Returns `null` if the value is not found. */
+    suspend fun getSecretValue(secret: Secret): SecretValue? = secretStorage.readSecret(Path(secret.path))
 
     /**
      * List all secrets for the provided [hierarchy]. If there are secrets with the same name in different levels of the
@@ -87,7 +77,7 @@ class SecretService(
      */
     suspend fun listForHierarchy(
         hierarchy: Hierarchy
-    ): List<Secret> = db.dbQuery {
+    ): List<Secret> = db.transaction {
         val organizationSecrets = secretRepository.listForId(OrganizationId(hierarchy.organization.id))
         val productSecrets = secretRepository.listForId(ProductId(hierarchy.product.id))
         val repositorySecrets = secretRepository.listForId(RepositoryId(hierarchy.repository.id))
@@ -107,25 +97,21 @@ class SecretService(
         }
     }
 
-    /**
-     * List all secrets for a specific [id] and according to the given [parameters].
-     */
+    /** List all secrets for a specific [id] and according to the given [parameters]. */
     suspend fun listForId(
         id: HierarchyId,
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT
-    ): ListQueryResult<Secret> = db.dbQuery {
+    ): ListQueryResult<Secret> = db.transaction {
         secretRepository.listForId(id, parameters)
     }
 
-    /**
-     * Update a secret by [id] and [name] with the [present][OptionalValue.Present] values.
-     */
+    /** Update a secret by [id] and [name] with the [present][OptionalValue.Present] values. */
     suspend fun updateSecret(
         id: HierarchyId,
         name: String,
         value: OptionalValue<String>,
         description: OptionalValue<String?>
-    ): Secret = db.dbQuery {
+    ): Secret = db.transaction {
         val secret = secretRepository.updateForIdAndName(id, name, description)
 
         value.ifPresent {
@@ -135,17 +121,13 @@ class SecretService(
         secret
     }
 
-    /**
-     * Update the [value] of this [Secret] in the [SecretStorage].
-     */
-    private fun Secret.updateValue(value: String) {
+    /** Update the [value] of this [Secret] in the [SecretStorage]. */
+    private suspend fun Secret.updateValue(value: String) {
         secretStorage.writeSecret(Path(path), SecretValue(value))
     }
 
-    /**
-     * Remove the value of this [Secret] from the [SecretStorage].
-     */
-    private fun Secret.deleteValue() {
+    /** Remove the value of this [Secret] from the [SecretStorage]. */
+    private suspend fun Secret.deleteValue() {
         secretStorage.removeSecret(Path(path))
     }
 }

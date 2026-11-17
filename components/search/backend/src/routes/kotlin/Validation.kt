@@ -38,16 +38,17 @@ import org.eclipse.apoapsis.ortserver.model.RepositoryId
 
 /**
  * Parse the scope from query parameters. Returns the scope [HierarchyId] or null if no scope is provided.
- * Throws [QueryParametersException] if multiple scope parameters are provided.
+ * Throws [QueryParametersException] if multiple scope parameters are provided or if a scope parameter is not a valid
+ * ID.
  *
  * This function enforces that only one scope parameter (organizationId, productId, or repositoryId) can be
  * provided at a time to prevent authorization bypass attacks where a user could specify an organization they
  * have access to along with arbitrary product/repository IDs.
  */
 fun ApplicationCall.parseScope(): HierarchyId? {
-    val organizationIdParam = request.queryParameters["organizationId"]?.toLongOrNull()
-    val productIdParam = request.queryParameters["productId"]?.toLongOrNull()
-    val repositoryIdParam = request.queryParameters["repositoryId"]?.toLongOrNull()
+    val organizationIdParam = scopeIdParameter("organizationId")
+    val productIdParam = scopeIdParameter("productId")
+    val repositoryIdParam = scopeIdParameter("repositoryId")
 
     val scopeCount = listOfNotNull(organizationIdParam, productIdParam, repositoryIdParam).size
 
@@ -66,6 +67,16 @@ fun ApplicationCall.parseScope(): HierarchyId? {
 }
 
 /**
+ * Return the value of the scope query parameter with the given [name] or null if it is absent. Throw a
+ * [QueryParametersException] if the value is not a valid ID.
+ */
+private fun ApplicationCall.scopeIdParameter(name: String): Long? =
+    request.queryParameters[name]?.let { value ->
+        value.toLongOrNull()?.takeIf { it > 0 }
+            ?: throw QueryParametersException("Invalid value for parameter '$name': '$value' is not a valid ID.")
+    }
+
+/**
  * Create an [AuthorizationChecker] that checks permissions dynamically based on the scope query parameters.
  * - If no scope is provided, requires superuser permission.
  * - If organizationId is provided, requires organization READ permission.
@@ -80,13 +91,15 @@ fun requireScopedReadPermission(): AuthorizationChecker =
         override suspend fun loadEffectiveRole(
             service: AuthorizationService,
             userId: String,
+            userSub: String,
             call: ApplicationCall
         ): EffectiveRole? = when (val scope = call.parseScope()) {
             is RepositoryId -> {
                 service.checkPermissions(
                     userId,
                     scope,
-                    HierarchyPermissions.permissions(RepositoryPermission.READ)
+                    HierarchyPermissions.permissions(RepositoryPermission.READ),
+                    userSub
                 )
             }
 
@@ -94,7 +107,8 @@ fun requireScopedReadPermission(): AuthorizationChecker =
                 service.checkPermissions(
                     userId,
                     scope,
-                    HierarchyPermissions.permissions(ProductPermission.READ)
+                    HierarchyPermissions.permissions(ProductPermission.READ),
+                    userSub
                 )
             }
 
@@ -102,7 +116,8 @@ fun requireScopedReadPermission(): AuthorizationChecker =
                 service.checkPermissions(
                     userId,
                     scope,
-                    HierarchyPermissions.permissions(OrganizationPermission.READ)
+                    HierarchyPermissions.permissions(OrganizationPermission.READ),
+                    userSub
                 )
             }
 
@@ -111,7 +126,8 @@ fun requireScopedReadPermission(): AuthorizationChecker =
                 service.checkPermissions(
                     userId,
                     CompoundHierarchyId.WILDCARD,
-                    HierarchyPermissions.permissions(OrganizationRole.ADMIN)
+                    HierarchyPermissions.permissions(OrganizationRole.ADMIN),
+                    userSub
                 )?.takeIf { it.isSuperuser }
             }
         }

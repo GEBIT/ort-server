@@ -27,9 +27,7 @@ import org.eclipse.apoapsis.ortserver.shared.apimodel.AppliedIssueResolution
 import org.eclipse.apoapsis.ortserver.shared.apimodel.Identifier
 import org.eclipse.apoapsis.ortserver.shared.apimodel.IssueResolution
 
-/**
- * A data class describing an issue that occurred during an ORT run.
- */
+/** A data class describing an issue that occurred during an ORT run. */
 @Serializable
 data class Issue(
     /** The timestamp when this issue occurred. */
@@ -62,7 +60,10 @@ data class Issue(
     /**
      * The purl of the [Package] this issue is related to. Null if the issue originates from a [Project] or elsewhere.
      */
-    val purl: String? = null
+    val purl: String? = null,
+
+    /** Markdown describing how this issue can be fixed, or null if no text is available. */
+    val howToFix: String? = null
 )
 
 /** Filters to apply when querying for issues. */

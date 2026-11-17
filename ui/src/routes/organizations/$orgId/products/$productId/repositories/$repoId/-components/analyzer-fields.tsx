@@ -19,14 +19,13 @@
 
 import { useParams } from '@tanstack/react-router';
 import { PlusIcon, TrashIcon } from 'lucide-react';
-import { useFieldArray, UseFormReturn } from 'react-hook-form';
+import { useFieldArray, UseFormReturn, useWatch } from 'react-hook-form';
 
 import { PreconfiguredPluginDescriptor, Secret } from '@/api';
 import { zAnalyzerPhase } from '@/api/zod.gen';
 import { MultiSelectField } from '@/components/form/multi-select-field.tsx';
-import { PluginMultiSelectField } from '@/components/form/plugin-multi-select-field.tsx';
+import { PluginMultiSelectField } from '@/components/form/plugin-multi-select-field';
 import { SecretSelect } from '@/components/secret-select';
-import { InlineCode } from '@/components/typography.tsx';
 import {
   AccordionContent,
   AccordionItem,
@@ -44,15 +43,29 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { capitalize } from '@/helpers/capitalize';
+import { jobConfigFields } from '@/lib/job-config-fields';
 import {
   OrganizationPermissions,
   ProductPermissions,
   RepositoryPermissions,
 } from '@/lib/permissions.ts';
 import { cn } from '@/lib/utils';
-import { CreateRunFormValues } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
+import {
+  CreateRunFormValues,
+  DefaultPluginSelections,
+} from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
 import { EnvironmentDefinitionsFields } from './environment-definitions';
-import { PackageManagerField } from './package-manager-field';
+
+const environmentVariables =
+  jobConfigFields['analyzer.environmentConfig.environmentVariables'];
+const nameField =
+  jobConfigFields['analyzer.environmentConfig.environmentVariables.*.name'];
+const valueField =
+  jobConfigFields['analyzer.environmentConfig.environmentVariables.*.value'];
+const secretField =
+  jobConfigFields[
+    'analyzer.environmentConfig.environmentVariables.*.secretName'
+  ];
 
 type AnalyzerFieldsProps = {
   form: UseFormReturn<CreateRunFormValues>;
@@ -60,13 +73,15 @@ type AnalyzerFieldsProps = {
   onToggle: () => void;
   isSuperuser: boolean;
   packageCurationProviderPlugins: PreconfiguredPluginDescriptor[];
+  packageManagerPlugins: PreconfiguredPluginDescriptor[];
   pluginSecrets: Secret[];
-  isRerun: boolean;
   permissions: {
     organization: OrganizationPermissions | undefined;
     product: ProductPermissions | undefined;
     repository: RepositoryPermissions | undefined;
   };
+  /** The plugins that are selected by default, to which the plugin lists can be reset, if known. */
+  defaultPluginSelections?: DefaultPluginSelections;
 };
 
 export const AnalyzerFields = ({
@@ -75,9 +90,10 @@ export const AnalyzerFields = ({
   onToggle,
   isSuperuser,
   packageCurationProviderPlugins,
+  packageManagerPlugins,
   pluginSecrets,
-  isRerun,
   permissions,
+  defaultPluginSelections,
 }: AnalyzerFieldsProps) => {
   const { orgId, productId, repoId } = useParams({ strict: false });
   const {
@@ -89,7 +105,10 @@ export const AnalyzerFields = ({
     control: form.control,
   });
 
-  const keepAliveWorker = form.watch('jobConfigs.analyzer.keepAliveWorker');
+  const keepAliveWorker = useWatch({
+    control: form.control,
+    name: 'jobConfigs.analyzer.keepAliveWorker',
+  });
 
   return (
     <div className='flex flex-row align-middle'>
@@ -117,14 +136,14 @@ export const AnalyzerFields = ({
             name='jobConfigs.analyzer.repositoryConfigPath'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Repository configuration path</FormLabel>
+                <FormLabel>
+                  {jobConfigFields['analyzer.repositoryConfigPath'].label}
+                </FormLabel>
                 <FormControl>
                   <Input {...field} placeholder='(optional)' />
                 </FormControl>
                 <FormDescription>
-                  The optional path to a repository configuration file. If this
-                  is not defined, the repository configuration is read from
-                  ".ort.yml" in the root of the analyzed project repository.
+                  {jobConfigFields['analyzer.repositoryConfigPath'].description}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
@@ -136,10 +155,14 @@ export const AnalyzerFields = ({
             render={({ field }) => (
               <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
                 <div className='space-y-0.5'>
-                  <FormLabel>Allow dynamic versions</FormLabel>
+                  <FormLabel>
+                    {jobConfigFields['analyzer.allowDynamicVersions'].label}
+                  </FormLabel>
                   <FormDescription>
-                    Enable the analysis of projects that use version ranges to
-                    declare their dependencies.
+                    {
+                      jobConfigFields['analyzer.allowDynamicVersions']
+                        .description
+                    }
                   </FormDescription>
                 </div>
                 <FormControl>
@@ -157,10 +180,11 @@ export const AnalyzerFields = ({
             render={({ field }) => (
               <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
                 <div className='space-y-0.5'>
-                  <FormLabel>Skip excluded</FormLabel>
+                  <FormLabel>
+                    {jobConfigFields['analyzer.skipExcluded'].label}
+                  </FormLabel>
                   <FormDescription>
-                    A flag to control whether excluded scopes and paths should
-                    be skipped by the analyzer.
+                    {jobConfigFields['analyzer.skipExcluded'].description}
                   </FormDescription>
                 </div>
                 <FormControl>
@@ -173,23 +197,9 @@ export const AnalyzerFields = ({
             )}
           />
           <div className='flex flex-col gap-2'>
-            <h3>Environment variables</h3>
+            <h3>{environmentVariables.label}</h3>
             <div className='text-sm text-gray-500'>
-              A list of environment variable names and their values, either
-              literal ones, or retrieved from named secrets. Use this to specify
-              environment variables that are required by the build process. In
-              case of Gradle, this can also be used to{' '}
-              <a
-                className='text-blue-400 hover:underline'
-                href={
-                  'https://docs.gradle.org/current/userguide/build_environment.html#setting_a_project_property'
-                }
-                target='_blank'
-              >
-                set Gradle properties by prefixing them with{' '}
-                <InlineCode>ORG_GRADLE_PROJECT_</InlineCode>
-              </a>
-              .
+              {environmentVariables.description}
             </div>
             {(() => {
               const hasSecrets = environmentVariablesFields.some(
@@ -200,10 +210,10 @@ export const AnalyzerFields = ({
               );
               const secondColumnLabel =
                 hasSecrets && hasValues
-                  ? 'Value / Secret'
+                  ? `${valueField.label} / ${secretField.label}`
                   : hasSecrets
-                    ? 'Secret'
-                    : 'Value';
+                    ? secretField.label
+                    : valueField.label;
 
               return environmentVariablesFields.map((field, index) => {
                 const isSecret = 'secretName' in field;
@@ -215,7 +225,9 @@ export const AnalyzerFields = ({
                         name={`jobConfigs.analyzer.environmentVariables.${index}.name`}
                         render={({ field }) => (
                           <FormItem>
-                            {index === 0 && <FormLabel>Name</FormLabel>}
+                            {index === 0 && (
+                              <FormLabel>{nameField.label}</FormLabel>
+                            )}
                             <FormControl>
                               <Input {...field} />
                             </FormControl>
@@ -277,12 +289,12 @@ export const AnalyzerFields = ({
                       <Button
                         type='button'
                         variant='outline'
-                        size='sm'
+                        size='icon'
                         onClick={() => {
                           environmentVariablesRemove(index);
                         }}
                       >
-                        <TrashIcon className='h-4 w-4' />
+                        <TrashIcon className='h-4 w-4 text-red-500' />
                       </Button>
                     </div>
                   </div>
@@ -317,23 +329,31 @@ export const AnalyzerFields = ({
             </div>
           </div>
           <EnvironmentDefinitionsFields form={form} />
-          <PackageManagerField form={form} />
+          <PluginMultiSelectField
+            form={form}
+            name='jobConfigs.analyzer.packageManagers'
+            defaultPluginIds={defaultPluginSelections?.packageManagers}
+            configName='jobConfigs.analyzer.packageManagerConfig'
+            mustRunAfterName='jobConfigs.analyzer.packageManagerMustRunAfter'
+            label={jobConfigFields['analyzer.enabledPackageManagers'].label}
+            description={
+              jobConfigFields['analyzer.enabledPackageManagers'].description
+            }
+            plugins={packageManagerPlugins}
+            secrets={[]}
+          />
           <PluginMultiSelectField
             form={form}
             name='jobConfigs.analyzer.packageCurationProviders'
+            defaultPluginIds={defaultPluginSelections?.packageCurationProviders}
             configName='jobConfigs.analyzer.packageCurationProviderConfig'
-            label='Package curation providers'
+            label={jobConfigFields['analyzer.packageCurationProviders'].label}
             description={
-              <>
-                Configure the package curation providers to use. Providers
-                higher in the list take precedence over lower providers. Change
-                the order of providers via drag & drop.
-              </>
+              jobConfigFields['analyzer.packageCurationProviders'].description
             }
             plugins={packageCurationProviderPlugins}
             secrets={pluginSecrets}
             enableReordering
-            showSelectedPluginsFirst={isRerun}
           />
           {isSuperuser && (
             <FormField
@@ -343,11 +363,14 @@ export const AnalyzerFields = ({
                 <FormItem className='mb-4 rounded-lg border p-4'>
                   <div className='flex flex-row items-center justify-between'>
                     <div className='space-y-0.5'>
-                      <FormLabel>Keep worker alive</FormLabel>
+                      <FormLabel>
+                        {jobConfigFields['analyzer.keepAliveWorker'].label}
+                      </FormLabel>
                       <FormDescription>
-                        A flag to control whether the worker is kept alive for
-                        debugging purposes. This flag only has an effect if the
-                        ORT Server is deployed on Kubernetes.
+                        {
+                          jobConfigFields['analyzer.keepAliveWorker']
+                            .description
+                        }
                       </FormDescription>
                     </div>
                     <FormControl>
@@ -369,14 +392,12 @@ export const AnalyzerFields = ({
                       <MultiSelectField
                         form={form}
                         name='jobConfigs.analyzer.keepAlivePhases'
-                        label='Phases'
+                        label={
+                          jobConfigFields['analyzer.keepAlivePhases'].label
+                        }
                         description={
-                          <>
-                            The phases in which the worker should be kept alive.
-                            If none are selected, the worker is kept alive in
-                            the <InlineCode>full</InlineCode> and{' '}
-                            <InlineCode>analysis</InlineCode> phases.
-                          </>
+                          jobConfigFields['analyzer.keepAlivePhases']
+                            .description
                         }
                         options={zAnalyzerPhase.options.map((phase) => ({
                           id: phase,

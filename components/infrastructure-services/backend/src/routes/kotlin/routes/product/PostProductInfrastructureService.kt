@@ -38,7 +38,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
 
 internal fun Route.postProductInfrastructureService(
     infrastructureServiceService: InfrastructureServiceService
-) = post("/products/{productId}/infrastructure-services", {
+) = post("products/{productId}/infrastructure-services", {
     operationId = "postProductInfrastructureService"
     summary = "Create an infrastructure service for a product"
     tags = listOf("Products")
@@ -74,6 +74,18 @@ internal fun Route.postProductInfrastructureService(
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The product does not exist."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The infrastructure service name is invalid."
+        }
+
+        HttpStatusCode.Conflict to {
+            description = "An infrastructure service with the same name already exists."
         }
     }
 }, requirePermission(ProductPermission.WRITE)) {

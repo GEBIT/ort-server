@@ -46,10 +46,13 @@ import org.eclipse.apoapsis.ortserver.model.ProductId
 import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.RepositoryType
 import org.eclipse.apoapsis.ortserver.model.util.HierarchyFilter
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.Database
 
 class ProductServiceTest : WordSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     lateinit var db: Database
@@ -113,8 +116,9 @@ class ProductServiceTest : WordSpec({
 
         "assign the admin role to the repository creator" {
             val userId = "test-user"
+            val userSub = "test-user-sub"
             val authorizationService = mockk<AuthorizationService> {
-                coEvery { assignRole(any(), any(), any()) } returns Unit
+                coEvery { assignRole(any(), any(), any(), any()) } returns Unit
             }
             val service = ProductService(
                 db,
@@ -131,7 +135,8 @@ class ProductServiceTest : WordSpec({
                 productId = product.id,
                 name = "Repository name",
                 description = "Repository description",
-                creatorId = userId
+                creatorId = userId,
+                creatorSub = userSub
             )
 
             coVerify {
@@ -142,7 +147,8 @@ class ProductServiceTest : WordSpec({
                         OrganizationId(product.organizationId),
                         ProductId(product.id),
                         RepositoryId(repository.id)
-                    )
+                    ),
+                    userSub
                 )
             }
         }

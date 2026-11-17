@@ -39,6 +39,7 @@ import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolutionReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseChoices
 import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseFindingCuration
+import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseFindingCurationReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageConfiguration
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCuration
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCurationData
@@ -53,6 +54,7 @@ import org.eclipse.apoapsis.ortserver.model.runs.repository.Resolutions
 import org.eclipse.apoapsis.ortserver.model.runs.repository.RuleViolationResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.RuleViolationResolutionReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeInclude
 import org.eclipse.apoapsis.ortserver.model.runs.repository.SpdxLicenseChoice
 import org.eclipse.apoapsis.ortserver.model.runs.repository.VcsInfoCurationData
 import org.eclipse.apoapsis.ortserver.model.runs.repository.VcsMatcher
@@ -64,8 +66,11 @@ import org.eclipse.apoapsis.ortserver.model.runs.repository.snippet.Provenance
 import org.eclipse.apoapsis.ortserver.model.runs.repository.snippet.SnippetChoice
 import org.eclipse.apoapsis.ortserver.model.runs.repository.snippet.SnippetChoiceReason
 import org.eclipse.apoapsis.ortserver.model.runs.scanner.TextLocation
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 class DaoRepositoryConfigurationRepositoryTest : WordSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     lateinit var repositoryConfigurationRepository: DaoRepositoryConfigurationRepository
@@ -151,7 +156,10 @@ class DaoRepositoryConfigurationRepositoryTest : WordSpec({
     }
 })
 
-private fun DaoRepositoryConfigurationRepository.create(ortRunId: Long, repositoryConfig: RepositoryConfiguration) =
+private suspend fun DaoRepositoryConfigurationRepository.create(
+    ortRunId: Long,
+    repositoryConfig: RepositoryConfiguration
+) =
     create(
         ortRunId = ortRunId,
         analyzerConfig = repositoryConfig.analyzerConfig,
@@ -195,6 +203,12 @@ private val scopeExclude = ScopeExclude(
     pattern = "scope1",
     reason = "PROVIDED_DEPENDENCY_OF",
     comment = "Test scope exclude."
+)
+
+private val scopeInclude = ScopeInclude(
+    pattern = "scope2",
+    reason = "SOURCE_OF",
+    comment = "Test scope include."
 )
 
 private val issueResolution = IssueResolution(
@@ -265,7 +279,7 @@ private val licenseFindingCuration = LicenseFindingCuration(
     lineCount = 5,
     detectedLicense = "MIT",
     concludedLicense = "license1 OR license2",
-    reason = "INCORRECT",
+    reason = LicenseFindingCurationReason.INCORRECT,
     comment = "Test license finding curation"
 )
 
@@ -314,7 +328,8 @@ private val repositoryConfig = RepositoryConfiguration(
         scopes = listOf(scopeExclude)
     ),
     includes = Includes(
-        paths = listOf(pathInclude)
+        paths = listOf(pathInclude),
+        scopes = listOf(scopeInclude)
     ),
     resolutions = Resolutions(
         issues = listOf(issueResolution),

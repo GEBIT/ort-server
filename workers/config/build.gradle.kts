@@ -61,16 +61,14 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-scripting-jvm-host")
     implementation(libs.kotlinResult)
     implementation(libs.typesafeConfig)
-    implementation(ortLibs.model)
     implementation(ortLibs.utils.script)
 
     runtimeOnly(platform(projects.config))
     runtimeOnly(platform(projects.secrets))
     runtimeOnly(platform(projects.transport))
 
-    runtimeOnly(libs.log4jToSlf4j)
+    runtimeOnly(libs.log4j.to.slf4j)
     runtimeOnly(libs.logback)
-    runtimeOnly(platform(ortLibs.ortPlugins.packageManagers))
 
     testImplementation(projects.components.secrets.secretsBackend)
     testImplementation(testFixtures(projects.config.configSpi))

@@ -88,6 +88,8 @@ dependencies {
             requireCapability("$group:routes:$version")
         }
     }
+    implementation(projects.components.projections.projectionsBackend)
+    implementation(projects.components.reportStorage.reportStorageBackend)
     implementation(projects.components.resolutions.resolutionsBackend)
     implementation(projects.components.resolutions.resolutionsBackend) {
         capabilities {
@@ -125,11 +127,11 @@ dependencies {
     implementation(projects.secrets.secretsSpi)
     implementation(projects.services.hierarchyService)
     implementation(projects.services.ortRunService)
-    implementation(projects.services.reportStorageService)
     implementation(projects.shared.apiMappings)
     implementation(projects.shared.apiModel)
+    implementation(projects.shared.authenticator)
+    implementation(projects.shared.coroutines)
     implementation(projects.shared.ktorUtils)
-    implementation(projects.shared.reporters)
     implementation(projects.storage.storageSpi)
     implementation(projects.transport.transportSpi)
     implementation(projects.utils.logging)
@@ -139,6 +141,7 @@ dependencies {
     implementation(ktorLibs.server.auth)
     implementation(ktorLibs.server.auth.jwt)
     implementation(ktorLibs.server.callLogging)
+    implementation(ktorLibs.server.compression)
     implementation(ktorLibs.server.contentNegotiation)
     implementation(ktorLibs.server.core)
     implementation(ktorLibs.server.cors)
@@ -151,25 +154,18 @@ dependencies {
     implementation(libs.ktor.rateLimit)
     implementation(libs.koin.ktor)
     implementation(libs.konform)
+    implementation(libs.kotlinx.coroutines.slf4j)
     implementation(libs.ktor.openApi)
     implementation(libs.ktor.swaggerUi)
     implementation(libs.micrometerRegistryGraphite)
     implementation(ortLibs.utils.common)
     implementation(ortLibs.utils.ort)
 
-    runtimeOnly(projects.config.secretFile)
+    runtimeOnly(platform(projects.config))
     runtimeOnly(platform(projects.logaccess))
     runtimeOnly(platform(projects.secrets))
     runtimeOnly(platform(projects.storage))
     runtimeOnly(platform(projects.transport))
-
-    // Dependencies on ORT plugins are required to provide information about them via the API.
-    runtimeOnly(platform(ortLibs.ortPlugins.advisors))
-    runtimeOnly(platform(ortLibs.ortPlugins.packageConfigurationProviders))
-    runtimeOnly(platform(ortLibs.ortPlugins.packageCurationProviders))
-    runtimeOnly(platform(ortLibs.ortPlugins.packageManagers))
-    runtimeOnly(platform(ortLibs.ortPlugins.reporters))
-    runtimeOnly(platform(ortLibs.ortPlugins.scanners))
 
     runtimeOnly(libs.logback)
 

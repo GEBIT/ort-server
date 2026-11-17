@@ -26,62 +26,68 @@ import io.ktor.http.HttpStatusCode
 import org.eclipse.apoapsis.ortserver.api.v1.model.PostUser
 import org.eclipse.apoapsis.ortserver.api.v1.model.User
 import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithSuperuserStatus
+import org.eclipse.apoapsis.ortserver.shared.apimodel.PagedResponse
+import org.eclipse.apoapsis.ortserver.shared.apimodel.PagingData
+import org.eclipse.apoapsis.ortserver.shared.apimodel.SortDirection
+import org.eclipse.apoapsis.ortserver.shared.apimodel.SortProperty
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.jsonBody
-
-val runPermissionsSync: RouteConfig.() -> Unit = {
-    operationId = "runPermissionsSync"
-    summary = "Trigger the synchronization of Keycloak roles"
-    tags = listOf("Admin")
-
-    request {
-    }
-
-    response {
-        HttpStatusCode.Accepted to {
-            description = "Success."
-        }
-
-        HttpStatusCode.Unauthorized to {
-            description = "Unauth."
-        }
-    }
-}
+import org.eclipse.apoapsis.ortserver.shared.ktorutils.standardListQueryParameters
 
 val getUsers: RouteConfig.() -> Unit = {
     operationId = "getUsers"
-    summary = "Get all users of the server"
+    summary = "Get users of the server"
+    description = "Get users of the server. Fields available for sorting: 'username', 'firstName', 'lastName', " +
+            "'email'. By default, users are sorted by username in ascending order."
     tags = listOf("Admin")
 
     request {
+        standardListQueryParameters()
+
+        queryParameter<String>("search") {
+            description = "Filter users by a literal case-insensitive substring of their username, first name, " +
+                    "last name, or email."
+        }
     }
 
     response {
         HttpStatusCode.OK to {
             description = "Successfully retrieved the users."
-            jsonBody<List<UserWithSuperuserStatus>> {
-                example("Get all users of the server") {
-                    value = listOf(
-                        UserWithSuperuserStatus(
-                            user = User(
-                                username = "user1",
-                                firstName = "First1",
-                                lastName = "Last1",
-                                email = "user1@mail.com"
+            jsonBody<PagedResponse<UserWithSuperuserStatus>> {
+                example("Get users of the server") {
+                    value = PagedResponse(
+                        data = listOf(
+                            UserWithSuperuserStatus(
+                                user = User(
+                                    username = "user1",
+                                    firstName = "First1",
+                                    lastName = "Last1",
+                                    email = "user1@mail.com"
+                                ),
+                                isSuperuser = true
                             ),
-                            isSuperuser = true
+                            UserWithSuperuserStatus(
+                                user = User(
+                                    username = "user2",
+                                    firstName = "First2",
+                                    lastName = "Last2",
+                                    email = "user2@mail.com"
+                                ),
+                                isSuperuser = false
+                            )
                         ),
-                        UserWithSuperuserStatus(
-                            user = User(
-                                username = "user2",
-                                firstName = "First2",
-                                lastName = "Last2",
-                                email = "user2@mail.com"
-                            ),
-                            isSuperuser = false
+                        pagination = PagingData(
+                            limit = 20,
+                            offset = 0,
+                            totalCount = 2,
+                            sortProperties = listOf(SortProperty("username", SortDirection.ASCENDING))
                         )
                     )
                 }
             }
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "An unsupported sort field was provided."
         }
     }
 }
@@ -115,7 +121,12 @@ val postUser: RouteConfig.() -> Unit = {
 
         // Note: Keycloak doesn't distinguish technical from logical errors; it just returns 500 for both.
         HttpStatusCode.InternalServerError to {
-            description = "A user with the same username already exists."
+            description = "The user could not be created, e.g. because a user with the same username already exists " +
+                    "or Keycloak is not available."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The request body is invalid."
         }
     }
 }
@@ -128,16 +139,24 @@ val deleteUser: RouteConfig.() -> Unit = {
     request {
         queryParameter<String>("username") {
             description = "The username of the user to delete."
+            required = true
         }
     }
 
     response {
         HttpStatusCode.NoContent to {
-            description = "Successfully deleted the user."
+            description = "Successfully deleted the user and all their role assignments."
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The user does not exist."
         }
 
         HttpStatusCode.InternalServerError to {
-            description = "The user does not exist."
+            description = """
+                Removing the role assignments of the user or deleting the user failed.
+                If user deletion fails after role removal, the user may remain without role assignments.
+            """.trimIndent()
         }
     }
 }

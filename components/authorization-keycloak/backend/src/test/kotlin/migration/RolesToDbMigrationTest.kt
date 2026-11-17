@@ -45,21 +45,20 @@ import org.eclipse.apoapsis.ortserver.components.authorization.rights.ProductRol
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.RepositoryRole as DbRepositoryRole
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.Role
 import org.eclipse.apoapsis.ortserver.components.authorization.service.AuthorizationService
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.CompoundHierarchyId
 import org.eclipse.apoapsis.ortserver.model.OrganizationId
 import org.eclipse.apoapsis.ortserver.model.ProductId
 import org.eclipse.apoapsis.ortserver.model.RepositoryId
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.insert
 
 class RolesToDbMigrationTest : StringSpec() {
     private val dbExtension = extension(DatabaseTestExtension())
 
-    /**
-     * Create a test instance of [RolesToDbMigration] with the given dependencies.
-     */
+    /** Create a test instance of [RolesToDbMigration] with the given dependencies. */
     private fun createMigration(
         keycloakClient: KeycloakClient,
         authorizationService: AuthorizationService
@@ -72,6 +71,8 @@ class RolesToDbMigrationTest : StringSpec() {
         )
 
     init {
+        tags(Integration)
+
         "role assignments for all hierarchy elements should be migrated correctly" {
             val orgAdminUser = "OrgAdmin"
             val productAdminUser = "ProductAdmin"
@@ -278,7 +279,7 @@ class RolesToDbMigrationTest : StringSpec() {
         "migration should be skipped if the DB already contains role assignments" {
             dbExtension.fixtures.repository.id // This forces the creation of hierarchy elements.
 
-            dbExtension.db.dbQuery {
+            dbExtension.db.transaction {
                 RoleAssignmentsTable.insert {
                     it[userId] = "some-user-id"
                     it[organizationRole] = "READER"
@@ -322,9 +323,7 @@ private fun createKeycloakClientForGroups(groupsWithUsers: Map<String, List<Stri
         }
     }
 
-/**
- * A data class to store the properties of a role assignment requested on the authorization service.
- */
+/** A data class to store the properties of a role assignment requested on the authorization service. */
 private data class RoleAssignment(
     /** The subject user ID. */
     val userId: String,

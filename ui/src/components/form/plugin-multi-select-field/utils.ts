@@ -1,0 +1,152 @@
+/*
+ * Copyright (C) 2025 The ORT Server Authors (See <https://github.com/eclipse-apoapsis/ort-server/blob/main/NOTICE>)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ * License-Filename: LICENSE
+ */
+
+import type { FieldValues, Path } from 'react-hook-form';
+
+import type { PreconfiguredPluginOption } from '@/api';
+import type { Option as MultipleSelectorOption } from '@/components/ui/multiple-selector';
+
+/** A placeholder used to select a secret value provided by an administrator via a plugin template. */
+export const ADMIN_SECRET_VALUE = '__admin_secret__';
+export const UNDEFINED_ENUM_VALUE = '__undefined_enum__';
+export const UNDEFINED_SECRET_VALUE = '__undefined_secret__';
+
+/**
+ * Return the plugins in the order in which they are displayed. This is the given `pluginOrder` if the user has
+ * reordered the plugins. Otherwise, the selected plugins are shown first in the order of `selectedPluginIds`,
+ * followed by the other plugins in their original order.
+ */
+export function getPluginsInDisplayOrder<T extends { id: string }>(
+  plugins: readonly T[],
+  selectedPluginIds: readonly string[],
+  pluginOrder?: readonly string[]
+) {
+  const pluginsById = new Map(plugins.map((plugin) => [plugin.id, plugin]));
+  const pluginIds = plugins.map((plugin) => plugin.id);
+  const selectedPluginIdSet = new Set(selectedPluginIds);
+  const selectedPluginIdsInPayloadOrder = selectedPluginIds.filter((pluginId) =>
+    pluginsById.has(pluginId)
+  );
+  const orderedPluginIds = pluginOrder ?? [
+    ...selectedPluginIdsInPayloadOrder,
+    ...pluginIds.filter((pluginId) => !selectedPluginIdSet.has(pluginId)),
+  ];
+  const pluginOrderSet = new Set(orderedPluginIds);
+
+  return [
+    ...orderedPluginIds.flatMap((pluginId) => {
+      const plugin = pluginsById.get(pluginId);
+      return plugin ? [plugin] : [];
+    }),
+    ...plugins.filter((plugin) => !pluginOrderSet.has(plugin.id)),
+  ];
+}
+
+export function getSecretSelectDisplayValue(
+  value: string | undefined,
+  isRequired: boolean
+): string | undefined {
+  if (value === undefined) {
+    return isRequired ? undefined : UNDEFINED_SECRET_VALUE;
+  }
+
+  return value;
+}
+
+export function mapSecretSelectValue(
+  value: string | undefined
+): string | undefined {
+  return value === UNDEFINED_SECRET_VALUE ? undefined : value;
+}
+
+export function getEnumSelectDisplayValue(
+  value: string | undefined,
+  isRequired: boolean
+): string | undefined {
+  if (value === undefined || value === '') {
+    return isRequired ? undefined : UNDEFINED_ENUM_VALUE;
+  }
+
+  return value;
+}
+
+export function mapEnumSelectValue(
+  value: string | undefined
+): string | undefined {
+  return value === UNDEFINED_ENUM_VALUE ? undefined : value;
+}
+
+export function moveItem<T>(
+  items: readonly T[],
+  fromIndex: number,
+  toIndex: number
+) {
+  const newItems = [...items];
+  const [removed] = newItems.splice(fromIndex, 1);
+
+  if (removed !== undefined) {
+    newItems.splice(toIndex, 0, removed);
+  }
+
+  return newItems;
+}
+
+export function parsePluginOptionList(value: unknown): string[] {
+  if (Array.isArray(value)) return value as string[];
+
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+/**
+ * Get the path of a plugin's entry in a field that holds one value per plugin, such as the
+ * scanner scopes or the must-run-after lists.
+ */
+export function fieldPath<TFieldValues extends FieldValues>(
+  base: string,
+  pluginId: string
+): Path<TFieldValues> {
+  return `${base}.${pluginId}` as Path<TFieldValues>;
+}
+
+/**
+ * Get the path of an option's value below the plugin configuration field. Secret options are
+ * stored under `secrets`, all other options under `options`.
+ */
+export function optionFieldPath(
+  configName: string,
+  pluginId: string,
+  option: Pick<PreconfiguredPluginOption, 'name' | 'type'>
+): string {
+  const section = option.type === 'SECRET' ? 'secrets' : 'options';
+
+  return `${configName}.${pluginId}.${section}.${option.name}`;
+}
+
+export function toSelectorOptions(
+  values: readonly string[]
+): MultipleSelectorOption[] {
+  return values.map((value) => ({ value, label: value }));
+}

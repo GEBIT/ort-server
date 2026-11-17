@@ -19,58 +19,54 @@
 
 package org.eclipse.apoapsis.ortserver.components.pluginmanager
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.lowerCase
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 
-/**
- * A service to query ORT plugins and their configuration.
- */
+/** A service to query ORT plugins and their configuration. */
 class PluginService(private val db: Database) {
     /**
      * Returns the [PluginAvailability] of the plugin with the given [pluginType] and [pluginId]. Returns
      * [PluginAvailability.DISABLED] if the plugin is not installed.
      */
-    fun getAvailability(pluginType: PluginType, pluginId: String): PluginAvailability {
+    suspend fun getAvailability(pluginType: PluginType, pluginId: String): PluginAvailability {
         val normalizedPluginId = normalizePluginId(pluginType, pluginId) ?: return PluginAvailability.DISABLED
 
-        return db.blockingQuery {
+        return db.transaction {
             PluginsReadModel.select(PluginsReadModel.availability)
                 .where {
                     PluginsReadModel.pluginType eq pluginType and
-                            (PluginsReadModel.pluginId eq normalizedPluginId)
+                            (PluginsReadModel.pluginId.lowerCase() eq normalizedPluginId.lowercase())
                 }
                 .firstOrNull()?.get(PluginsReadModel.availability) ?: PluginAvailability.ENABLED
         }
     }
 
-    /**
-     * Returns `true` if the plugin with the given [pluginType] and [pluginId] is installed, `false` otherwise.
-     */
+    /** Returns `true` if the plugin with the given [pluginType] and [pluginId] is installed, `false` otherwise. */
     fun isInstalled(pluginType: PluginType, pluginId: String) = normalizePluginId(pluginType, pluginId) != null
 
-    /**
-     * Returns the [PluginDescriptor]s for all installed ORT plugins.
-     */
-    fun getPlugins(): List<PluginDescriptor> {
+    /** Returns the [PluginDescriptor]s for all installed ORT plugins. */
+    suspend fun getPlugins(): List<PluginDescriptor> {
         val pluginInfo = mutableMapOf<PluginType, MutableMap<String, PluginAvailability>>()
 
-        db.blockingQuery {
+        db.transaction {
             PluginsReadModel.selectAll().forEach {
                 val pluginType = it[PluginsReadModel.pluginType]
                 val pluginId = it[PluginsReadModel.pluginId]
                 val availability = it[PluginsReadModel.availability]
 
-                pluginInfo.getOrPut(pluginType) { mutableMapOf() }[pluginId] = availability
+                // Plugin IDs are case-insensitive, and their spelling can change between ORT versions.
+                pluginInfo.getOrPut(pluginType) { mutableMapOf() }[pluginId.lowercase()] = availability
             }
         }
 
         fun pluginAvailability(pluginType: PluginType, pluginId: String) =
-            pluginInfo[pluginType]?.get(pluginId) ?: PluginAvailability.ENABLED
+            pluginInfo[pluginType]?.get(pluginId.lowercase()) ?: PluginAvailability.ENABLED
 
         val advisors = getInstalledPlugins(PluginType.ADVISOR).map {
             it.mapToApi(PluginType.ADVISOR, pluginAvailability(PluginType.ADVISOR, it.id))

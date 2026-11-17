@@ -20,7 +20,7 @@
 import { UseFormReturn } from 'react-hook-form';
 
 import { PreconfiguredPluginDescriptor, Secret } from '@/api';
-import { PluginMultiSelectField } from '@/components/form/plugin-multi-select-field.tsx';
+import { PluginMultiSelectField } from '@/components/form/plugin-multi-select-field';
 import {
   AccordionContent,
   AccordionItem,
@@ -34,7 +34,11 @@ import {
   FormLabel,
 } from '@/components/ui/form';
 import { Switch } from '@/components/ui/switch';
-import { CreateRunFormValues } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
+import { jobConfigFields } from '@/lib/job-config-fields';
+import {
+  CreateRunFormValues,
+  DefaultPluginSelections,
+} from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
 
 type ScannerFieldsProps = {
   form: UseFormReturn<CreateRunFormValues>;
@@ -43,6 +47,8 @@ type ScannerFieldsProps = {
   scannerPlugins: PreconfiguredPluginDescriptor[];
   secrets: Secret[];
   isSuperuser: boolean;
+  /** The plugins that are selected by default, to which the plugin lists can be reset, if known. */
+  defaultPluginSelections?: DefaultPluginSelections;
 };
 
 export const ScannerFields = ({
@@ -52,6 +58,7 @@ export const ScannerFields = ({
   scannerPlugins,
   secrets,
   isSuperuser,
+  defaultPluginSelections,
 }: ScannerFieldsProps) => {
   return (
     <div className='flex flex-row align-middle'>
@@ -72,18 +79,18 @@ export const ScannerFields = ({
       />
       <AccordionItem value={value} className='flex-1'>
         <AccordionTrigger onClick={onToggle}>Scanner</AccordionTrigger>
-        <AccordionContent>
+        <AccordionContent className='flex flex-col gap-6'>
           <FormField
             control={form.control}
             name='jobConfigs.scanner.skipConcluded'
             render={({ field }) => (
-              <FormItem className='mb-4 flex flex-row items-center justify-between rounded-lg border p-4'>
+              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
                 <div className='space-y-0.5'>
-                  <FormLabel>Skip concluded</FormLabel>
+                  <FormLabel>
+                    {jobConfigFields['scanner.skipConcluded'].label}
+                  </FormLabel>
                   <FormDescription>
-                    A flag to indicate whether packages that have a concluded
-                    license and authors set (to derive copyrights from) should
-                    be skipped by the scanner.
+                    {jobConfigFields['scanner.skipConcluded'].description}
                   </FormDescription>
                 </div>
                 <FormControl>
@@ -99,12 +106,13 @@ export const ScannerFields = ({
             control={form.control}
             name='jobConfigs.scanner.skipExcluded'
             render={({ field }) => (
-              <FormItem className='mb-4 flex flex-row items-center justify-between rounded-lg border p-4'>
+              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
                 <div className='space-y-0.5'>
-                  <FormLabel>Skip excluded</FormLabel>
+                  <FormLabel>
+                    {jobConfigFields['scanner.skipExcluded'].label}
+                  </FormLabel>
                   <FormDescription>
-                    A flag to control whether excluded scopes and paths should
-                    by skipped by the scanner.
+                    {jobConfigFields['scanner.skipExcluded'].description}
                   </FormDescription>
                 </div>
                 <FormControl>
@@ -119,16 +127,12 @@ export const ScannerFields = ({
           <PluginMultiSelectField
             form={form}
             name='jobConfigs.scanner.scanners'
+            defaultPluginIds={defaultPluginSelections?.scanners}
+            defaultScannerScopes={defaultPluginSelections?.scannerScopes}
             configName='jobConfigs.scanner.config'
             scannerScopeName='jobConfigs.scanner.scannerScopes'
-            label='Enabled scanners'
-            description={
-              <>
-                Select the scanners enabled for this run. Use the scope toggle
-                to control whether a scanner runs on projects, packages, or
-                both.
-              </>
-            }
+            label={jobConfigFields['scanner.scanners'].label}
+            description={jobConfigFields['scanner.scanners'].description}
             plugins={scannerPlugins}
             secrets={secrets}
           />
@@ -139,11 +143,11 @@ export const ScannerFields = ({
               render={({ field }) => (
                 <FormItem className='mb-4 flex flex-row items-center justify-between rounded-lg border p-4'>
                   <div className='space-y-0.5'>
-                    <FormLabel>Keep worker alive</FormLabel>
+                    <FormLabel>
+                      {jobConfigFields['scanner.keepAliveWorker'].label}
+                    </FormLabel>
                     <FormDescription>
-                      A flag to control whether the worker is kept alive for
-                      debugging purposes. This flag only has an effect if the
-                      ORT Server is deployed on Kubernetes.
+                      {jobConfigFields['scanner.keepAliveWorker'].description}
                     </FormDescription>
                   </div>
                   <FormControl>

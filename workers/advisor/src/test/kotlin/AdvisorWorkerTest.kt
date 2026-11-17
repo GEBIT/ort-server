@@ -102,9 +102,7 @@ private val advisorJob = AdvisorJob(
     errorMessage = null
 )
 
-/**
- * Return an [AdvisorRunner] to be used by tests.
- */
+/** Return an [AdvisorRunner] to be used by tests. */
 private fun createRunner(): AdvisorRunner = AdvisorRunner()
 
 class AdvisorWorkerTest : StringSpec({
@@ -123,13 +121,13 @@ class AdvisorWorkerTest : StringSpec({
         every { ortRun.mapToOrt(any(), any(), any(), any(), any(), any()) } returns ortResult
 
         val ortRunService = mockk<OrtRunService> {
-            every { getAdvisorJob(any()) } returns advisorJob
-            every { getAnalyzerRunForOrtRun(any()) } returns OrtTestData.analyzerRun.mapToModel(ANALYZER_JOB_ID)
-            every { startAdvisorJob(any()) } returns advisorJob
-            every { getOrtRepositoryInformation(any()) } returns mockk()
-            every { getResolvedConfiguration(any()) } returns ResolvedConfiguration()
-            every { storeAdvisorRun(any()) } just runs
-            every { storeResolvedItems(any(), any()) } just runs
+            coEvery { getAdvisorJob(any()) } returns advisorJob
+            coEvery { getAnalyzerRunForOrtRun(any()) } returns OrtTestData.analyzerRun.mapToModel(ANALYZER_JOB_ID)
+            coEvery { startAdvisorJob(any()) } returns advisorJob
+            coEvery { getOrtRepositoryInformation(any()) } returns mockk()
+            coEvery { getResolvedConfiguration(any()) } returns ResolvedConfiguration()
+            coEvery { storeAdvisorRun(any()) } just runs
+            coEvery { storeResolvedItems(any(), any()) } just runs
         }
 
         val context = mockk<WorkerContext> {
@@ -165,7 +163,7 @@ class AdvisorWorkerTest : StringSpec({
     "A failure result should be returned in case of an error" {
         val testException = IllegalStateException("Test exception")
         val ortRunService = mockk<OrtRunService> {
-            every { getAdvisorJob(any()) } throws testException
+            coEvery { getAdvisorJob(any()) } throws testException
         }
 
         val worker = AdvisorWorker(
@@ -195,13 +193,13 @@ class AdvisorWorkerTest : StringSpec({
         every { ortRun.mapToOrt(any(), any(), any(), any(), any(), any()) } returns ortResult
 
         val ortRunService = mockk<OrtRunService> {
-            every { getAdvisorJob(any()) } returns advisorJob
-            every { getAnalyzerRunForOrtRun(any()) } returns OrtTestData.analyzerRun.mapToModel(ANALYZER_JOB_ID)
-            every { startAdvisorJob(any()) } returns advisorJob
-            every { getOrtRepositoryInformation(any()) } returns mockk()
-            every { getResolvedConfiguration(any()) } returns ResolvedConfiguration()
-            every { storeAdvisorRun(any()) } just runs
-            every { storeResolvedItems(any(), any()) } just runs
+            coEvery { getAdvisorJob(any()) } returns advisorJob
+            coEvery { getAnalyzerRunForOrtRun(any()) } returns OrtTestData.analyzerRun.mapToModel(ANALYZER_JOB_ID)
+            coEvery { startAdvisorJob(any()) } returns advisorJob
+            coEvery { getOrtRepositoryInformation(any()) } returns mockk()
+            coEvery { getResolvedConfiguration(any()) } returns ResolvedConfiguration()
+            coEvery { storeAdvisorRun(any()) } just runs
+            coEvery { storeResolvedItems(any(), any()) } just runs
         }
 
         val context = mockk<WorkerContext> {
@@ -254,13 +252,13 @@ class AdvisorWorkerTest : StringSpec({
         every { ortRun.mapToOrt(any(), any(), any(), any(), any(), any()) } returns ortResult
 
         val ortRunService = mockk<OrtRunService> {
-            every { getAdvisorJob(any()) } returns advisorJob
-            every { getAnalyzerRunForOrtRun(any()) } returns OrtTestData.analyzerRun.mapToModel(ANALYZER_JOB_ID)
-            every { startAdvisorJob(any()) } returns advisorJob
-            every { getOrtRepositoryInformation(any()) } returns mockk()
-            every { getResolvedConfiguration(any()) } returns ResolvedConfiguration()
-            every { storeAdvisorRun(any()) } just runs
-            every { storeResolvedItems(any(), any()) } just runs
+            coEvery { getAdvisorJob(any()) } returns advisorJob
+            coEvery { getAnalyzerRunForOrtRun(any()) } returns OrtTestData.analyzerRun.mapToModel(ANALYZER_JOB_ID)
+            coEvery { startAdvisorJob(any()) } returns advisorJob
+            coEvery { getOrtRepositoryInformation(any()) } returns mockk()
+            coEvery { getResolvedConfiguration(any()) } returns ResolvedConfiguration()
+            coEvery { storeAdvisorRun(any()) } just runs
+            coEvery { storeResolvedItems(any(), any()) } just runs
         }
 
         val context = mockk<WorkerContext> {
@@ -373,13 +371,13 @@ class AdvisorWorkerTest : StringSpec({
         val resolvedItemsSlot = slot<ResolvedItemsResult>()
 
         val ortRunService = mockk<OrtRunService> {
-            every { getAdvisorJob(any()) } returns advisorJob
-            every { getAnalyzerRunForOrtRun(any()) } returns OrtTestData.analyzerRun.mapToModel(ANALYZER_JOB_ID)
-            every { startAdvisorJob(any()) } returns advisorJob
-            every { getOrtRepositoryInformation(any()) } returns mockk()
-            every { getResolvedConfiguration(any()) } returns ResolvedConfiguration()
-            every { storeAdvisorRun(any()) } just runs
-            every { storeResolvedItems(any(), capture(resolvedItemsSlot)) } just runs
+            coEvery { getAdvisorJob(any()) } returns advisorJob
+            coEvery { getAnalyzerRunForOrtRun(any()) } returns OrtTestData.analyzerRun.mapToModel(ANALYZER_JOB_ID)
+            coEvery { startAdvisorJob(any()) } returns advisorJob
+            coEvery { getOrtRepositoryInformation(any()) } returns mockk()
+            coEvery { getResolvedConfiguration(any()) } returns ResolvedConfiguration()
+            coEvery { storeAdvisorRun(any()) } just runs
+            coEvery { storeResolvedItems(any(), capture(resolvedItemsSlot)) } just runs
         }
 
         val context = mockk<WorkerContext> {
@@ -461,13 +459,13 @@ class AdvisorWorkerTest : StringSpec({
         val resolvedItemsSlot = slot<ResolvedItemsResult>()
 
         val ortRunService = mockk<OrtRunService> {
-            every { getAdvisorJob(any()) } returns advisorJob
-            every { getAnalyzerRunForOrtRun(any()) } returns OrtTestData.analyzerRun.mapToModel(ANALYZER_JOB_ID)
-            every { startAdvisorJob(any()) } returns advisorJob
-            every { getOrtRepositoryInformation(any()) } returns mockk()
-            every { getResolvedConfiguration(any()) } returns ResolvedConfiguration()
-            every { storeAdvisorRun(any()) } just runs
-            every { storeResolvedItems(any(), capture(resolvedItemsSlot)) } just runs
+            coEvery { getAdvisorJob(any()) } returns advisorJob
+            coEvery { getAnalyzerRunForOrtRun(any()) } returns OrtTestData.analyzerRun.mapToModel(ANALYZER_JOB_ID)
+            coEvery { startAdvisorJob(any()) } returns advisorJob
+            coEvery { getOrtRepositoryInformation(any()) } returns mockk()
+            coEvery { getResolvedConfiguration(any()) } returns ResolvedConfiguration()
+            coEvery { storeAdvisorRun(any()) } just runs
+            coEvery { storeResolvedItems(any(), capture(resolvedItemsSlot)) } just runs
         }
 
         val context = mockk<WorkerContext> {
@@ -559,13 +557,13 @@ class AdvisorWorkerTest : StringSpec({
         val resolvedItemsSlot = slot<ResolvedItemsResult>()
 
         val ortRunService = mockk<OrtRunService> {
-            every { getAdvisorJob(any()) } returns advisorJob
-            every { getAnalyzerRunForOrtRun(any()) } returns OrtTestData.analyzerRun.mapToModel(ANALYZER_JOB_ID)
-            every { startAdvisorJob(any()) } returns advisorJob
-            every { getOrtRepositoryInformation(any()) } returns mockk()
-            every { getResolvedConfiguration(any()) } returns ResolvedConfiguration()
-            every { storeAdvisorRun(any()) } just runs
-            every { storeResolvedItems(any(), capture(resolvedItemsSlot)) } just runs
+            coEvery { getAdvisorJob(any()) } returns advisorJob
+            coEvery { getAnalyzerRunForOrtRun(any()) } returns OrtTestData.analyzerRun.mapToModel(ANALYZER_JOB_ID)
+            coEvery { startAdvisorJob(any()) } returns advisorJob
+            coEvery { getOrtRepositoryInformation(any()) } returns mockk()
+            coEvery { getResolvedConfiguration(any()) } returns ResolvedConfiguration()
+            coEvery { storeAdvisorRun(any()) } just runs
+            coEvery { storeResolvedItems(any(), capture(resolvedItemsSlot)) } just runs
         }
 
         val context = mockk<WorkerContext> {
@@ -601,7 +599,7 @@ class AdvisorWorkerTest : StringSpec({
     "An ignore result should be returned for an invalid job" {
         val invalidJob = advisorJob.copy(status = JobStatus.FINISHED)
         val ortRunService = mockk<OrtRunService> {
-            every { getAdvisorJob(any()) } returns invalidJob
+            coEvery { getAdvisorJob(any()) } returns invalidJob
         }
 
         val worker = AdvisorWorker(
@@ -622,9 +620,7 @@ class AdvisorWorkerTest : StringSpec({
     }
 })
 
-/**
- * Create a mock [WorkerContextFactory] and prepare it to return the given [context].
- */
+/** Create a mock [WorkerContextFactory] and prepare it to return the given [context]. */
 private fun mockContextFactory(context: WorkerContext = mockk()): WorkerContextFactory {
     val slot = slot<suspend (WorkerContext) -> RunResult>()
     return mockk {
@@ -645,16 +641,16 @@ private fun mockOrtRun() = mockk<OrtRun> {
 }
 
 private fun mockConfigManager() = mockk<ConfigManager> {
-    every { getFile(any(), any()) } returns
+    coEvery { getFile(any(), any()) } returns
             File("src/test/resources/resolutions.yml").inputStream()
 }
 
 private fun mockVulnerabilityResolutionService(
     resolutions: List<ModelVulnerabilityResolution> = emptyList()
 ) = mockk<VulnerabilityResolutionService> {
-    every { getResolutionsForRepository(any()) } returns Ok(resolutions)
+    coEvery { getResolutionsForRepository(any()) } returns Ok(resolutions)
 }
 
 private fun mockIssueResolutionService() = mockk<IssueResolutionService> {
-    every { getResolutionsForRepository(any()) } returns Ok(emptyList())
+    coEvery { getResolutionsForRepository(any()) } returns Ok(emptyList())
 }

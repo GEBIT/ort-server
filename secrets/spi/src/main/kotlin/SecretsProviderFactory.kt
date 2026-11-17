@@ -21,6 +21,8 @@ package org.eclipse.apoapsis.ortserver.secrets
 
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
 
+import org.jetbrains.exposed.v1.jdbc.Database
+
 /**
  * A factory interface for creating [SecretsProvider] instances.
  *
@@ -29,14 +31,13 @@ import org.eclipse.apoapsis.ortserver.config.ConfigManager
  * current configuration.
  */
 interface SecretsProviderFactory {
-    /**
-     * The name of this implementation. This is used to match the factory selected in the application configuration.
-     */
+    /** The name of this implementation. This is used to match the factory selected in the application configuration. */
     val name: String
 
     /**
      * Create the [SecretsProvider] managed by this factory. Use [configManager] to obtain the required,
-     * implementation-specific configuration settings.
+     * implementation-specific configuration settings. The [database][db] is provided in case the provider needs access
+     * to it.
      */
-    fun createProvider(configManager: ConfigManager): SecretsProvider
+    fun createProvider(configManager: ConfigManager, db: Database): SecretsProvider
 }

@@ -29,6 +29,7 @@ import io.kotest.matchers.maps.containExactly
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 
@@ -95,13 +96,13 @@ class OrtServerResolutionProviderTest : WordSpec({
                 }
 
                 every { configManager } returns mockk {
-                    every { getFile(any(), Path(ORT_RESOLUTIONS_FILENAME)) } returns
+                    coEvery { getFile(any(), Path(ORT_RESOLUTIONS_FILENAME)) } returns
                             ByteArrayInputStream(globalResolutionsYaml.toByteArray())
                 }
             }
 
             val adminConfigService = mockk<AdminConfigService> {
-                every { loadAdminConfig(any(), any()) } returns AdminConfig.DEFAULT
+                coEvery { loadAdminConfig(any(), any()) } returns AdminConfig.DEFAULT
             }
 
             // Prepare repository configuration resolutions.
@@ -132,7 +133,7 @@ class OrtServerResolutionProviderTest : WordSpec({
             // Prepare managed resolutions.
             val repositoryId = RepositoryId(1)
             val issueResolutionService = mockk<IssueResolutionService> {
-                every { getResolutionsForRepository(repositoryId) } returns
+                coEvery { getResolutionsForRepository(repositoryId) } returns
                         Ok(
                             listOf(
                                 ServerIssueResolution(
@@ -146,7 +147,7 @@ class OrtServerResolutionProviderTest : WordSpec({
                         )
             }
             val ruleViolationResolutionService = mockk<RuleViolationResolutionService> {
-                every { getResolutionsForRepository(repositoryId) } returns
+                coEvery { getResolutionsForRepository(repositoryId) } returns
                         Ok(
                             listOf(
                                 ServerRuleViolationResolution(
@@ -160,7 +161,7 @@ class OrtServerResolutionProviderTest : WordSpec({
                         )
             }
             val vulnerabilityResolutionService = mockk<VulnerabilityResolutionService> {
-                every { getResolutionsForRepository(repositoryId) } returns
+                coEvery { getResolutionsForRepository(repositoryId) } returns
                         Ok(
                             listOf(
                                 ServerVulnerabilityResolution(
@@ -268,19 +269,19 @@ class OrtServerResolutionProviderTest : WordSpec({
                 }
 
                 every { configManager } returns mockk {
-                    every { getFile(any(), Path(ORT_RESOLUTIONS_FILENAME)) } returns
+                    coEvery { getFile(any(), Path(ORT_RESOLUTIONS_FILENAME)) } returns
                             ByteArrayInputStream("{}\n".toByteArray())
                 }
             }
 
             val adminConfigService = mockk<AdminConfigService> {
-                every { loadAdminConfig(any(), any()) } returns AdminConfig.DEFAULT
+                coEvery { loadAdminConfig(any(), any()) } returns AdminConfig.DEFAULT
             }
 
             val repositoryId = RepositoryId(1)
             val literalMessage = "BuildOperationRunner\$1.execute(ClassReader.java:199)"
             val issueResolutionService = mockk<IssueResolutionService> {
-                every { getResolutionsForRepository(repositoryId) } returns
+                coEvery { getResolutionsForRepository(repositoryId) } returns
                         Ok(
                             listOf(
                                 ServerIssueResolution(
@@ -319,19 +320,19 @@ class OrtServerResolutionProviderTest : WordSpec({
                 }
 
                 every { configManager } returns mockk {
-                    every { getFile(any(), Path(ORT_RESOLUTIONS_FILENAME)) } returns
+                    coEvery { getFile(any(), Path(ORT_RESOLUTIONS_FILENAME)) } returns
                             ByteArrayInputStream("{}\n".toByteArray())
                 }
             }
 
             val adminConfigService = mockk<AdminConfigService> {
-                every { loadAdminConfig(any(), any()) } returns AdminConfig.DEFAULT
+                coEvery { loadAdminConfig(any(), any()) } returns AdminConfig.DEFAULT
             }
 
             val repositoryId = RepositoryId(1)
             val literalMessage = "BuildOperationRunner\$1.execute(ClassReader.java:199)"
             val ruleViolationResolutionService = mockk<RuleViolationResolutionService> {
-                every { getResolutionsForRepository(repositoryId) } returns
+                coEvery { getResolutionsForRepository(repositoryId) } returns
                         Ok(
                             listOf(
                                 ServerRuleViolationResolution(

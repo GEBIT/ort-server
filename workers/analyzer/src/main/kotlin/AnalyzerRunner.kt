@@ -29,7 +29,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 import org.eclipse.apoapsis.ortserver.model.AnalyzerJobConfiguration
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathInclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.RunIncludesExcludes
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeInclude
 import org.eclipse.apoapsis.ortserver.services.ortrun.mapToOrt
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 import org.eclipse.apoapsis.ortserver.utils.config.getInterpolatedStringOrDefault
 import org.eclipse.apoapsis.ortserver.utils.config.getStringOrDefault
 import org.eclipse.apoapsis.ortserver.workers.common.env.EnvironmentForkHelper
@@ -197,7 +203,7 @@ class AnalyzerRunner(
             val processBuilder = createProcessBuilder(exchangeDir, inputDir, environment)
 
             logger.info("Starting forked AnalyzerRunner with command: ${processBuilder.command()}")
-            withContext(Dispatchers.IO) {
+            withContext(Dispatchers.Virtual) {
                 val process = processBuilder.start()
                 process.outputStream.use { pipe ->
                     EnvironmentForkHelper.prepareFork(pipe)
@@ -253,8 +259,9 @@ class AnalyzerRunner(
                     "'${inputDir.absolutePath}'."
         }
 
-        val repositoryConfiguration = repositoryConfigFile.takeIf { it.isFile }?.readValueOrNull()
-            ?: RepositoryConfiguration()
+        val repositoryConfiguration = (
+            repositoryConfigFile.takeIf { it.isFile }?.readValueOrNull() ?: RepositoryConfiguration()
+        ).withIncludesExcludes(config.includesExcludes)
 
         val analyzerConfig = repositoryConfiguration.analyzer?.let { analyzerConfigFromJob.merge(it) }
             ?: analyzerConfigFromJob
@@ -321,3 +328,23 @@ class AnalyzerRunner(
         return ortResult
     }
 }
+
+/**
+ * Return a copy of this [RepositoryConfiguration] with the given [includesExcludes] requested for the run added to its
+ * includes and excludes, or this configuration itself if there are none.
+ */
+private fun RepositoryConfiguration.withIncludesExcludes(
+    includesExcludes: RunIncludesExcludes?
+): RepositoryConfiguration =
+    includesExcludes?.let {
+        copy(
+            includes = includes.copy(
+                paths = includes.paths + it.paths.includes.map(PathInclude::mapToOrt),
+                scopes = includes.scopes + it.scopes.includes.map(ScopeInclude::mapToOrt)
+            ),
+            excludes = excludes.copy(
+                paths = excludes.paths + it.paths.excludes.map(PathExclude::mapToOrt),
+                scopes = excludes.scopes + it.scopes.excludes.map(ScopeExclude::mapToOrt)
+            )
+        )
+    } ?: this

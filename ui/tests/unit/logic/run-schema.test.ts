@@ -19,9 +19,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { defaultValues } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components/default-values';
 import { createRunFormSchema } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components/run-schema';
-import { createPluginDescriptor } from '../fixtures/create-run';
+import {
+  createFormDefaultValues,
+  createPluginDescriptor,
+} from '../fixtures/create-run';
 
 const packageConfigurationProviderPlugin = createPluginDescriptor({
   id: 'Dir',
@@ -39,14 +41,11 @@ const packageConfigurationProviderPlugin = createPluginDescriptor({
 });
 
 function createValidFormData() {
-  const formData = defaultValues(
-    null,
-    [],
-    [],
-    false,
-    [],
-    [packageConfigurationProviderPlugin]
-  );
+  const formData = createFormDefaultValues({
+    plugins: {
+      packageConfigurationProviderPlugins: [packageConfigurationProviderPlugin],
+    },
+  });
 
   formData.revision = 'main';
   formData.jobConfigs.evaluator.packageConfigurationProviders = ['Dir'];
@@ -75,7 +74,9 @@ describe('createRunFormSchema', () => {
       [],
       [],
       [],
-      [packageConfigurationProviderPlugin]
+      [],
+      [packageConfigurationProviderPlugin],
+      []
     );
 
     const result = schema.safeParse(createValidFormData());
@@ -98,7 +99,7 @@ describe('createRunFormSchema', () => {
         },
       ],
     });
-    const schema = createRunFormSchema([], [scannerPlugin], [], []);
+    const schema = createRunFormSchema([], [scannerPlugin], [], [], [], []);
     const formData = createValidFormData();
     formData.jobConfigs.scanner.scanners = ['Scanner'];
     formData.jobConfigs.scanner.config = {
@@ -136,7 +137,7 @@ describe('createRunFormSchema', () => {
         },
       ],
     });
-    const schema = createRunFormSchema([], [scannerPlugin], [], []);
+    const schema = createRunFormSchema([], [scannerPlugin], [], [], [], []);
     const formData = createValidFormData();
     formData.jobConfigs.scanner.scanners = ['Scanner'];
     formData.jobConfigs.scanner.config = {
@@ -166,7 +167,9 @@ describe('createRunFormSchema', () => {
       [],
       [],
       [],
-      [packageConfigurationProviderPlugin]
+      [],
+      [packageConfigurationProviderPlugin],
+      []
     );
     const formData = createValidFormData();
     formData.jobConfigs.evaluator.enabled = false;
@@ -182,5 +185,187 @@ describe('createRunFormSchema', () => {
       'options',
       'path',
     ]);
+  });
+
+  it('rejects selecting both Gradle and GradleInspector', () => {
+    const gradlePlugins = [
+      createPluginDescriptor({ id: 'Gradle', type: 'PACKAGE_MANAGER' }),
+      createPluginDescriptor({
+        id: 'GradleInspector',
+        type: 'PACKAGE_MANAGER',
+      }),
+    ];
+    const schema = createRunFormSchema(
+      [],
+      [],
+      [],
+      [],
+      [packageConfigurationProviderPlugin],
+      gradlePlugins
+    );
+    const formData = createValidFormData();
+    formData.jobConfigs.analyzer.packageManagers = [
+      'Gradle',
+      'GradleInspector',
+    ];
+
+    const result = schema.safeParse(formData);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path)).toContainEqual([
+      'jobConfigs',
+      'analyzer',
+      'packageManagers',
+    ]);
+  });
+
+  it('validates required options of selected package managers', () => {
+    const packageManagerPlugin = createPluginDescriptor({
+      id: 'Maven',
+      type: 'PACKAGE_MANAGER',
+      options: [
+        {
+          name: 'sbtVersion',
+          description: 'The SBT version.',
+          type: 'STRING',
+          isFixed: false,
+          isNullable: false,
+          isRequired: true,
+        },
+      ],
+    });
+    const schema = createRunFormSchema(
+      [],
+      [],
+      [],
+      [],
+      [packageConfigurationProviderPlugin],
+      [packageManagerPlugin]
+    );
+    const formData = createValidFormData();
+    formData.jobConfigs.analyzer.packageManagers = ['Maven'];
+    formData.jobConfigs.analyzer.packageManagerConfig = {
+      Maven: { options: { sbtVersion: '' }, secrets: {} },
+    };
+
+    const result = schema.safeParse(formData);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path)).toContainEqual([
+      'jobConfigs',
+      'analyzer',
+      'packageManagerConfig',
+      'Maven',
+      'options',
+      'sbtVersion',
+    ]);
+  });
+
+  describe('includes and excludes', () => {
+    const schema = createRunFormSchema(
+      [],
+      [],
+      [],
+      [],
+      [packageConfigurationProviderPlugin],
+      []
+    );
+
+    const issuePaths = (formData: ReturnType<typeof createValidFormData>) =>
+      schema.safeParse(formData).error?.issues.map((issue) => issue.path);
+
+    it('accepts valid entries', () => {
+      const formData = createValidFormData();
+      formData.scopes = [
+        {
+          type: 'exclude',
+          pattern: 'test.*',
+          reason: 'TEST_DEPENDENCY_OF',
+          comment: '',
+        },
+        {
+          type: 'include',
+          pattern: 'test.*',
+          reason: 'SOURCE_OF',
+          comment: '',
+        },
+      ];
+      formData.paths = [
+        {
+          type: 'exclude',
+          pattern: '[docs/**',
+          reason: 'OTHER',
+          comment: '',
+        },
+      ];
+
+      expect(schema.safeParse(formData).success).toBe(true);
+    });
+
+    it('rejects a scope pattern that is not a valid regular expression', () => {
+      const formData = createValidFormData();
+      formData.scopes = [
+        {
+          type: 'exclude',
+          pattern: 'test(',
+          reason: 'TEST_DEPENDENCY_OF',
+          comment: '',
+        },
+      ];
+
+      expect(issuePaths(formData)).toContainEqual(['scopes', 0, 'pattern']);
+    });
+
+    it('accepts Java flags at the start of a scope pattern', () => {
+      const formData = createValidFormData();
+      formData.scopes = [
+        {
+          type: 'exclude',
+          pattern: '(?i)test.*',
+          reason: 'TEST_DEPENDENCY_OF',
+          comment: '',
+        },
+      ];
+
+      expect(schema.safeParse(formData).success).toBe(true);
+    });
+
+    it('rejects an empty pattern', () => {
+      const formData = createValidFormData();
+      formData.paths = [
+        { type: 'exclude', pattern: ' ', reason: 'OTHER', comment: '' },
+      ];
+
+      expect(issuePaths(formData)).toContainEqual(['paths', 0, 'pattern']);
+    });
+
+    it('rejects a pattern that is already in the list', () => {
+      const formData = createValidFormData();
+      formData.paths = [
+        {
+          type: 'exclude',
+          pattern: 'docs/**',
+          reason: 'OTHER',
+          comment: '',
+        },
+        {
+          type: 'exclude',
+          pattern: 'docs/** ',
+          reason: 'DOCUMENTATION_OF',
+          comment: '',
+        },
+      ];
+
+      expect(issuePaths(formData)).toEqual([['paths', 1, 'pattern']]);
+    });
+
+    it('rejects a scope exclude without a reason', () => {
+      const formData = createValidFormData();
+      formData.scopes = [
+        { type: 'exclude', pattern: 'runtime', reason: '', comment: '' },
+      ];
+
+      expect(issuePaths(formData)).toContainEqual(['scopes', 0, 'reason']);
+    });
   });
 });

@@ -64,6 +64,7 @@ class KubernetesMessageSenderTest : StringSpec({
         expectedEnvVars[RUN_ID_PROPERTY] = message.header.ortRunId.toString()
         expectedEnvVars -= "ANALYZER_SPECIFIC_PROPERTY"
         val senderConfig = createConfig()
+        senderConfig.mainContainer.environmentAllowlist should beNull()
 
         val job = createJob(senderConfig)
 
@@ -102,14 +103,17 @@ class KubernetesMessageSenderTest : StringSpec({
                 readOnly shouldBe false
                 name shouldBe "pvc-volume-4"
                 mountPath shouldBe "/mnt/data"
+                subPath shouldBe "sub-data"
             }
             with(mounts[4]) {
-                name shouldBe "dir1"
+                name shouldBe "empty-dir-volume-5"
                 mountPath shouldBe "/mnt/dir1"
+                subPath should beNull()
             }
             with(mounts[5]) {
-                name shouldBe "dir2"
+                name shouldBe "empty-dir-volume-6"
                 mountPath shouldBe "/mnt/dir2"
+                subPath shouldBe "sub-dir2"
             }
         }
 
@@ -127,8 +131,8 @@ class KubernetesMessageSenderTest : StringSpec({
             "secret-volume-2",
             "pvc-volume-3",
             "pvc-volume-4",
-            "dir1",
-            "dir2"
+            "empty-dir-volume-5",
+            "empty-dir-volume-6"
         )
         val secrets = volumes.mapNotNull { it.secret?.secretName }
         secrets should containExactly("secretService", "topSecret")
@@ -147,6 +151,22 @@ class KubernetesMessageSenderTest : StringSpec({
             expectedRunId = message.header.ortRunId,
             customLabels = senderConfig.labels
         )
+    }
+
+    "Generated message variables override inherited environment variables" {
+        val inheritedEnvironment = envVars + mapOf(
+            TRACE_PROPERTY to "inherited-trace-id",
+            RUN_ID_PROPERTY to "inherited-run-id",
+            "payload" to "inherited-payload"
+        )
+
+        val job = createJob(createConfig(), environment = inheritedEnvironment)
+        val environment = job.spec?.template?.spec?.containers.orEmpty().single()
+            .env.orEmpty().associate { it.name to it.value }
+
+        environment[TRACE_PROPERTY] shouldBe header.traceId
+        environment[RUN_ID_PROPERTY] shouldBe header.ortRunId.toString()
+        environment["payload"] shouldBe "{\"analyzerJobId\":${payload.analyzerJobId}}"
     }
 
     "The container image should be customizable based on message properties" {
@@ -253,7 +273,7 @@ class KubernetesMessageSenderTest : StringSpec({
 
         with(containers[0]) {
             name shouldBe config.mainContainer.name
-            expectMounts("pvc-volume-2", "dir1", "dir2")
+            expectMounts("pvc-volume-2", "empty-dir-volume-3", "empty-dir-volume-4")
         }
 
         with(containers[1]) {
@@ -265,7 +285,7 @@ class KubernetesMessageSenderTest : StringSpec({
                 limits shouldBe mapOf("cpu" to Quantity("50"), "memory" to Quantity("1024"))
                 requests shouldBe mapOf("cpu" to Quantity("25"), "memory" to Quantity("512"))
             }
-            expectMounts("dir1", "dir2")
+            expectMounts("empty-dir-volume-3", "empty-dir-volume-4")
         }
 
         with(containers[2]) {
@@ -274,7 +294,7 @@ class KubernetesMessageSenderTest : StringSpec({
             command shouldBe config.mainContainer.commands
             args shouldBe config.mainContainer.args
             resources should beNull()
-            expectMounts("dir1", "dir2", "secret-volume-1")
+            expectMounts("empty-dir-volume-3", "empty-dir-volume-4", "secret-volume-1")
         }
 
         with(containers[3]) {
@@ -286,7 +306,7 @@ class KubernetesMessageSenderTest : StringSpec({
                 limits?.keys.orEmpty() should beEmpty()
                 requests shouldBe mapOf("cpu" to Quantity("250m"))
             }
-            expectMounts("dir1", "dir2", "secret-volume-1", "pvc-volume-2")
+            expectMounts("empty-dir-volume-3", "empty-dir-volume-4", "secret-volume-1", "pvc-volume-2")
         }
     }
 
@@ -321,8 +341,187 @@ class KubernetesMessageSenderTest : StringSpec({
                 limits?.keys.orEmpty() should beEmpty()
                 requests shouldBe mapOf("memory" to Quantity("128"))
             }
-            expectMounts("secret-volume-1", "dir1")
+            expectMounts("secret-volume-1", "empty-dir-volume-2")
         }
+    }
+
+    "Volumes are deduplicated when the same resource is referenced by multiple mounts" {
+        val config = createConfig(
+            mapOf(
+                "mountSecrets" to "secretX->/mnt/s1 secretX->/mnt/s2|sub",
+                "mountPvcs" to "pvc1->/mnt/a,R pvc1->/mnt/b,W",
+                "mountEmptyDirs" to "dirX->/mnt/e1 dirX->/mnt/e2"
+            )
+        )
+
+        val job = createJob(config)
+
+        val volumes = job.spec?.template?.spec?.volumes.orEmpty()
+        volumes.map { it.name } should containExactly(
+            "secret-volume-1",
+            "pvc-volume-2",
+            "empty-dir-volume-3"
+        )
+
+        val container = job.spec?.template?.spec?.containers?.single()
+        val mounts = container?.volumeMounts.orEmpty()
+        mounts shouldHaveSize 6
+        mounts.map { it.name } shouldBe listOf(
+            "secret-volume-1",
+            "secret-volume-1",
+            "pvc-volume-2",
+            "pvc-volume-2",
+            "empty-dir-volume-3",
+            "empty-dir-volume-3"
+        )
+        mounts.map { it.mountPath } shouldBe listOf(
+            "/mnt/s1",
+            "/mnt/s2",
+            "/mnt/a",
+            "/mnt/b",
+            "/mnt/e1",
+            "/mnt/e2"
+        )
+        with(mounts[2]) {
+            readOnly shouldBe true
+        }
+        with(mounts[3]) {
+            readOnly shouldBe false
+        }
+    }
+
+    "Without allowlists, all containers inherit the original environment" {
+        val config = createConfig(
+            mapOf("additionalContainers" to "INIT, SIDECAR"),
+            mapOf("INIT_INIT_CONTAINER" to "true")
+        )
+        config.mainContainer.environmentAllowlist should beNull()
+        config.additionalContainers.forEach { it.environmentAllowlist should beNull() }
+
+        val job = createJob(config)
+        val pod = job.spec?.template?.spec
+        val containers = pod?.containers.orEmpty() + pod?.initContainers.orEmpty()
+
+        containers shouldHaveSize 3
+        containers.forAll { container ->
+            val environment = container.env.orEmpty().associate { it.name to it.value }
+            environment shouldContainAll mapOf(
+                "SPECIFIC_PROPERTY" to "foo",
+                "SHELL" to "/bin/bash",
+                TRACE_PROPERTY to header.traceId,
+                RUN_ID_PROPERTY to header.ortRunId.toString(),
+                "payload" to "{\"analyzerJobId\":${payload.analyzerJobId}}"
+            )
+        }
+    }
+
+    "An empty allowlist passes only message variables to the container" {
+        val config = createConfig(mapOf("environmentAllowlist" to ""))
+        config.mainContainer.environmentAllowlist shouldBe emptySet()
+
+        val job = createJob(config)
+        val mainEnvironment = job.spec?.template?.spec?.containers.orEmpty().single()
+            .env.orEmpty().associate { it.name to it.value }
+
+        mainEnvironment shouldBe mapOf(
+            TRACE_PROPERTY to header.traceId,
+            RUN_ID_PROPERTY to header.ortRunId.toString(),
+            "payload" to "{\"analyzerJobId\":${payload.analyzerJobId}}"
+        )
+    }
+
+    "A container receives allowlisted inherited variables after endpoint mapping" {
+        val config = createConfig(mapOf("environmentAllowlist" to " ALLOWED, SPECIFIC_PROPERTY, ALLOWED, , "))
+        config.mainContainer.environmentAllowlist shouldBe setOf("ALLOWED", "SPECIFIC_PROPERTY")
+
+        val inheritedEnvironment = envVars + mapOf(
+            "ANALYZER_ALLOWED" to "allowed-value",
+            "ANALYZER_DB_PASSWORD" to "mapped-secret",
+            "DB_PASSWORD" to "database-secret",
+            "CONFIG_FORCE_orchestrator_sender_rabbitMqPassword" to "rabbit-secret"
+        )
+        val job = createJob(config, environment = inheritedEnvironment)
+        val mainEnvironment = job.spec?.template?.spec?.containers.orEmpty().single()
+            .env.orEmpty().associate { it.name to it.value }
+
+        mainEnvironment shouldBe mapOf(
+            "ALLOWED" to "allowed-value",
+            "SPECIFIC_PROPERTY" to "foo",
+            TRACE_PROPERTY to header.traceId,
+            RUN_ID_PROPERTY to header.ortRunId.toString(),
+            "payload" to "{\"analyzerJobId\":${payload.analyzerJobId}}"
+        )
+    }
+
+    "A main container allowlist does not restrict additional containers" {
+        val config = createConfig(
+            mapOf("environmentAllowlist" to "SPECIFIC_PROPERTY", "additionalContainers" to "INIT, SIDECAR"),
+            mapOf("INIT_INIT_CONTAINER" to "true")
+        )
+        config.mainContainer.environmentAllowlist shouldBe setOf("SPECIFIC_PROPERTY")
+        config.additionalContainers.forEach { it.environmentAllowlist should beNull() }
+
+        val job = createJob(config)
+        val pod = job.spec?.template?.spec
+        val mainEnvironment = pod?.containers.orEmpty().first().env.orEmpty().associate { it.name to it.value }
+        val sidecarEnvironment = pod?.containers.orEmpty().last().env.orEmpty().associate { it.name to it.value }
+        val initEnvironment = pod?.initContainers.orEmpty().single().env.orEmpty().associate { it.name to it.value }
+
+        mainEnvironment shouldBe mapOf(
+            "SPECIFIC_PROPERTY" to "foo",
+            TRACE_PROPERTY to header.traceId,
+            RUN_ID_PROPERTY to header.ortRunId.toString(),
+            "payload" to "{\"analyzerJobId\":${payload.analyzerJobId}}"
+        )
+        listOf(sidecarEnvironment, initEnvironment).forEach { environment ->
+            environment shouldContainAll mapOf(
+                "SPECIFIC_PROPERTY" to "foo",
+                "SHELL" to "/bin/bash",
+                TRACE_PROPERTY to header.traceId,
+                RUN_ID_PROPERTY to header.ortRunId.toString(),
+                "payload" to "{\"analyzerJobId\":${payload.analyzerJobId}}"
+            )
+        }
+    }
+
+    "Additional containers have independent environment allowlists" {
+        val config = createConfig(
+            mapOf("additionalContainers" to "INIT, SIDECAR", "environmentAllowlist" to "SPECIFIC_PROPERTY"),
+            mapOf(
+                "INIT_INIT_CONTAINER" to "true",
+                "INIT_ENVIRONMENT_ALLOWLIST" to "",
+                "SIDECAR_ENVIRONMENT_ALLOWLIST" to " SPECIFIC_PROPERTY, SHELL, "
+            )
+        )
+        config.mainContainer.environmentAllowlist shouldBe setOf("SPECIFIC_PROPERTY")
+        config.additionalContainers[0].environmentAllowlist shouldBe emptySet()
+        config.additionalContainers[1].environmentAllowlist shouldBe setOf("SPECIFIC_PROPERTY", "SHELL")
+
+        val job = createJob(config)
+        val containers = job.spec?.template?.spec?.containers.orEmpty()
+        val mainEnvironment = containers.first().env.orEmpty().associate { it.name to it.value }
+        val sidecarEnvironment = containers.last().env.orEmpty().associate { it.name to it.value }
+        val initEnvironment = job.spec?.template?.spec?.initContainers.orEmpty().single()
+            .env.orEmpty().associate { it.name to it.value }
+
+        mainEnvironment shouldBe mapOf(
+            "SPECIFIC_PROPERTY" to "foo",
+            TRACE_PROPERTY to header.traceId,
+            RUN_ID_PROPERTY to header.ortRunId.toString(),
+            "payload" to "{\"analyzerJobId\":${payload.analyzerJobId}}"
+        )
+        sidecarEnvironment shouldBe mapOf(
+            "SPECIFIC_PROPERTY" to "foo",
+            "SHELL" to "/bin/bash",
+            TRACE_PROPERTY to header.traceId,
+            RUN_ID_PROPERTY to header.ortRunId.toString(),
+            "payload" to "{\"analyzerJobId\":${payload.analyzerJobId}}"
+        )
+        initEnvironment shouldBe mapOf(
+            TRACE_PROPERTY to header.traceId,
+            RUN_ID_PROPERTY to header.ortRunId.toString(),
+            "payload" to "{\"analyzerJobId\":${payload.analyzerJobId}}"
+        )
     }
 })
 
@@ -355,11 +554,12 @@ private val envVars = mapOf(
  */
 private fun createJob(
     config: KubernetesSenderConfig,
-    msg: Message<AnalyzerRequest> = message
+    msg: Message<AnalyzerRequest> = message,
+    environment: Map<String, String> = envVars
 ): V1Job {
     val (client, sender) = createClientAndSender(config)
 
-    withEnvironment(envVars, OverrideMode.SetOrOverride) {
+    withEnvironment(environment, OverrideMode.SetOrOverride) {
         sender.send(msg)
     }
 
@@ -371,9 +571,7 @@ private fun createJob(
     return job.captured
 }
 
-/**
- * Create a sender to be tested based on the given [config] together with a mocked Kubernetes client.
- */
+/** Create a sender to be tested based on the given [config] together with a mocked Kubernetes client. */
 private fun createClientAndSender(
     config: KubernetesSenderConfig
 ): Pair<BatchV1Api, KubernetesMessageSender<AnalyzerRequest>> {
@@ -412,8 +610,8 @@ private fun createConfig(
         "backoffLimit" to 11,
         "imagePullSecret" to "image_pull_secret",
         "mountSecrets" to "secretService->/mnt/secret topSecret->/mnt/top/secret|sub-secret",
-        "mountPvcs" to "pvc1->/mnt/readOnly,R pvc2->/mnt/data,W",
-        "mountEmptyDirs" to "dir1->/mnt/dir1 dir2->/mnt/dir2",
+        "mountPvcs" to "pvc1->/mnt/readOnly,R pvc2->/mnt/data|sub-data,W",
+        "mountEmptyDirs" to "dir1->/mnt/dir1 dir2->/mnt/dir2|sub-dir2",
         "labels" to "label1=value1,label2=value2,ort-worker=invalid,run-id=invalid,trace-id-0=invalid",
         "annotationVariables" to "v1,v2",
         "serviceAccountName" to "test_service_account"
@@ -427,9 +625,7 @@ private fun createConfig(
     }
 }
 
-/**
- * Return a copy of the test message that contains the given [properties].
- */
+/** Return a copy of the test message that contains the given [properties]. */
 private fun messageWithProperties(vararg properties: Pair<String, String>): Message<AnalyzerRequest> =
     message.copy(header = header.copy(transportProperties = mapOf(*properties)))
 
@@ -447,9 +643,7 @@ private fun verifyLabels(actualLabels: Map<String, String>, expectedRunId: Long,
     }
 }
 
-/**
- * Check whether this container has exactly the volume mounts with the given [expectedNames].
- */
+/** Check whether this container has exactly the volume mounts with the given [expectedNames]. */
 private fun V1Container.expectMounts(vararg expectedNames: String) {
     volumeMounts.orEmpty().map { it.name } shouldContainExactlyInAnyOrder expectedNames.toList()
 }

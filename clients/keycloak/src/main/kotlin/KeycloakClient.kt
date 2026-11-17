@@ -26,14 +26,25 @@ package org.eclipse.apoapsis.ortserver.clients.keycloak
 @Suppress("TooManyFunctions")
 interface KeycloakClient {
     /**
-     * Return a set of all [users][User], which currently exist in the Keycloak realm.
+     * Return a set of all [users][User], which currently exist in the Keycloak realm. The users are requested from
+     * Keycloak in pages of [pageSize] users.
      */
-    suspend fun getUsers(): Set<User>
+    suspend fun getUsers(pageSize: Int = KeycloakClientConfiguration.DEFAULT_DATA_GET_CHUNK_SIZE): Set<User>
+
+    /** Return the [user][User] with the given [username], or throw a [KeycloakClientException] if it does not exist. */
+    suspend fun getUser(username: UserName): User
 
     /**
-     * Return the [user][User] with the given [username].
+     * Return the [user][User] with the given [id], or null if Keycloak answers that it does not exist. Throw a
+     * [KeycloakClientException] if the request fails for any other reason.
      */
-    suspend fun getUser(username: UserName): User
+    suspend fun findUser(id: UserId): User?
+
+    /**
+     * Return the [user][User] with the given [username], or null if a successful search does not find it. Throw a
+     * [KeycloakClientException] if the search fails.
+     */
+    suspend fun findUser(username: UserName): User?
 
     /**
      * Create a new [user][User] in the Keycloak realm with the given [username], [firstName], [lastName], [email],
@@ -60,18 +71,12 @@ interface KeycloakClient {
         email: String? = null
     )
 
-    /**
-     * Delete the [user][User] with the given [id] from the Keycloak realm.
-     */
+    /** Delete the [user][User] with the given [id] from the Keycloak realm. */
     suspend fun deleteUser(id: UserId)
 
-    /**
-     * Return a set of all [users][User] of a group [GroupName].
-     */
+    /** Return a set of all [users][User] of a group [GroupName]. */
     suspend fun getGroupMembers(groupName: GroupName): Set<User>
 
-    /**
-     * Return a set of all [users][User] of a group [GroupId].
-     */
+    /** Return a set of all [users][User] of a group [GroupId]. */
     suspend fun getGroupMembers(groupId: GroupId): Set<User>
 }

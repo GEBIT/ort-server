@@ -2,29 +2,818 @@
  * Any CSS included here will be global. The classic template
  * bundles Infima by default. Infima is a CSS framework designed to
  * work well for content-centric websites.
+ *
+ * Colors are based on the ORT Server design palette. Contrast ratios noted in
+ * comments refer to WCAG 2 and were checked against the respective background.
  */
 
-/* You can override the default Infima variables here. */
+@import '@fontsource-variable/inter';
+
 :root {
-  --ifm-color-primary: #a72145;
-  --ifm-color-primary-dark: #c4758a;
-  --ifm-color-primary-darker: #d05576;
-  --ifm-color-primary-darkest: #a72145;
-  --ifm-color-primary-light: #e9cdd5;
-  --ifm-color-primary-lighter: #f2e1e6;
-  --ifm-color-primary-lightest: #fbf6f7;
+  /* Primary: crimson. #be3459 on white is 5.5:1, white on #be3459 is 5.5:1. */
+  --ifm-color-primary: #be3459;
+  --ifm-color-primary-dark: #ab2f50;
+  --ifm-color-primary-darker: #a22c4c;
+  --ifm-color-primary-darkest: #85243e;
+  --ifm-color-primary-light: #cb4065;
+  --ifm-color-primary-lighter: #cd496d;
+  --ifm-color-primary-lightest: #d56683;
+
+  /* Text: slate. #333b43 on white is 11.4:1, #495560 is 7.6:1. */
+  --ifm-color-content: #333b43;
+  --ifm-color-content-secondary: #495560;
+  --ifm-heading-color: #333b43;
+  /* Infima leaves the light background transparent. */
+  --ifm-background-color: #ffffff;
+
+  --ifm-font-family-base:
+    'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, Ubuntu,
+    Cantarell, 'Noto Sans', sans-serif;
+  --ifm-heading-font-weight: 700;
   --ifm-code-font-size: 95%;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+  --ifm-code-background: #f5f5f5;
+  --ifm-code-padding-horizontal: 0.35rem;
+  --ifm-code-border-radius: 4px;
+  --docusaurus-highlighted-code-line-bg: rgba(51, 59, 67, 0.08);
+  --ifm-table-stripe-background: rgba(51, 59, 67, 0.03);
+
+  /*
+   * Neutral greys from the slate palette instead of Infima's blue-greys. Infima
+   * derives its emphasis colors from this scale and reverses it in dark mode.
+   * #5b646d (700) on white is 6.0:1.
+   */
+  --ifm-color-gray-0: #ffffff;
+  --ifm-color-gray-100: #f5f5f5;
+  --ifm-color-gray-200: #e1e2e3;
+  --ifm-color-gray-300: #ccced0;
+  --ifm-color-gray-400: #b2b5b8;
+  --ifm-color-gray-500: #979b9f;
+  --ifm-color-gray-600: #7d8185;
+  --ifm-color-gray-700: #5b646d;
+  --ifm-color-gray-800: #333b43;
+  --ifm-color-gray-900: #22272d;
+  --ifm-color-gray-1000: #1b1f24;
+
+  /* Design tokens shared by custom components. */
+  --ort-accent-teal: #26a5a1;
+  --ort-accent-teal-text: #1e8480; /* 4.5:1 on white. */
+  --ort-accent-teal-soft: #e2f2f1;
+  --ort-accent-purple-text: #634caf; /* 6.6:1 on white. */
+  --ort-accent-purple-soft: #e7e4f3;
+  --ort-primary-soft: #f2e1e6;
+  --ort-primary-on-soft: #a22c4c; /* 5.4:1 on --ort-primary-soft. */
+  --ort-surface: #ffffff;
+  --ort-surface-alt: #fbf6f7;
+  --ort-surface-raised: #ffffff;
+  --ort-border: #e1e2e3;
+  --ort-border-strong: #ccced0;
+  --ort-radius-sm: 6px;
+  --ort-radius-md: 12px;
+  --ort-radius-lg: 20px;
+  --ort-shadow-sm:
+    0 1px 2px rgba(51, 59, 67, 0.06), 0 1px 3px rgba(51, 59, 67, 0.08);
+  --ort-shadow-md:
+    0 4px 12px rgba(51, 59, 67, 0.08), 0 2px 4px rgba(51, 59, 67, 0.06);
+  --ort-shadow-lg: 0 24px 48px -12px rgba(51, 59, 67, 0.25);
+  --ort-graph-edge-opacity: 0.38;
+  --ort-graph-node: rgba(51, 59, 67, 0.28);
+  --ort-aurora-strength: 0.3;
 }
 
-/* For readability concerns, you should choose a lighter palette in dark mode. */
-[data-theme='dark'] {
-  --ifm-color-primary: #a72145;
-  --ifm-color-primary-dark: #c4758a;
-  --ifm-color-primary-darker: #d05576;
-  --ifm-color-primary-darkest: #a72145;
-  --ifm-color-primary-light: #e9cdd5;
-  --ifm-color-primary-lighter: #f2e1e6;
-  --ifm-color-primary-lightest: #fbf6f7;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+/* `html` is needed to override Infima's dark mode text colors. */
+html[data-theme='dark'] {
+  /*
+   * In dark mode the primary color is lightened so that it stays readable:
+   * #e07a96 on the page background #1b1f24 is 5.8:1, on the surfaces #20252b
+   * and #22272d at least 5.3:1. Avoid primary text on #333b43 (4.0:1).
+   */
+  --ifm-color-primary: #e07a96;
+  --ifm-color-primary-dark: #d95e80;
+  --ifm-color-primary-darker: #d65075;
+  --ifm-color-primary-darkest: #c42e57;
+  --ifm-color-primary-light: #e796ac;
+  --ifm-color-primary-lighter: #eaa4b7;
+  --ifm-color-primary-lightest: #f4ced8;
+
+  /* Text: #e1e2e3 on #1b1f24 is 12.8:1, #ccced0 is 10.5:1. */
+  --ifm-color-content: #e1e2e3;
+  --ifm-color-content-secondary: #ccced0;
+  --ifm-heading-color: #f5f5f5;
+
+  /* Slate backgrounds instead of the default near-black. */
+  --ifm-background-color: #1b1f24;
+  --ifm-background-surface-color: #22272d;
+  --ifm-navbar-background-color: #1b1f24;
+  --ifm-code-background: #2a3037;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.08);
+  --ifm-table-stripe-background: rgba(255, 255, 255, 0.03);
+
+  --ort-accent-teal: #66cbc8;
+  --ort-accent-teal-text: #66cbc8; /* 8.6:1 on #1b1f24. */
+  --ort-accent-teal-soft: rgba(38, 165, 161, 0.16);
+  --ort-accent-purple-text: #9d8dcb; /* 5.6:1 on #1b1f24. */
+  --ort-accent-purple-soft: rgba(99, 76, 175, 0.22);
+  --ort-primary-soft: rgba(190, 52, 89, 0.18);
+  --ort-primary-on-soft: #eaa4b7; /* 6.0:1 on --ort-primary-soft over panels. */
+  --ort-surface: #22272d;
+  --ort-surface-alt: #20252b;
+  --ort-surface-raised: #2a3037;
+  --ort-border: #333b43;
+  --ort-border-strong: #495560;
+  --ort-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --ort-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --ort-shadow-lg: 0 24px 48px -12px rgba(0, 0, 0, 0.6);
+  --ort-graph-edge-opacity: 0.6;
+  --ort-graph-node: rgba(255, 255, 255, 0.28);
+  --ort-aurora-strength: 0.28;
+}
+
+/*
+ * Filled primary elements with white text keep the saturated crimson in dark
+ * mode, because white on the lightened primary fails contrast.
+ * White on #be3459 is 5.5:1, on #ab2f50 6.5:1.
+ */
+[data-theme='dark'] .button--primary:not(.button--outline) {
+  --ifm-button-background-color: #be3459;
+  --ifm-button-border-color: #be3459;
+  --ifm-button-color: #ffffff;
+}
+
+[data-theme='dark'] .button--primary:not(.button--outline):hover {
+  --ifm-button-background-color: #ab2f50;
+  --ifm-button-border-color: #ab2f50;
+}
+
+[data-theme='dark'] .badge--primary {
+  --ifm-badge-background-color: #be3459;
+}
+
+/* The OpenAPI theme uses light primary shades behind white text. */
+button.openapi-explorer__request-btn,
+button.openapi-explorer__request-btn:active {
+  background-color: #be3459;
+}
+
+button.openapi-explorer__request-btn:hover {
+  background-color: #ab2f50;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.02em;
+}
+
+/*
+ * The footer uses the dark style in both themes, so links need the light
+ * primary tint there: #e07a96 on #22272d is 5.3:1.
+ */
+.footer--dark {
+  --ifm-footer-background-color: #22272d;
+  --ifm-link-color: #e07a96;
+  --ifm-link-hover-color: #eaa4b7;
+}
+
+[data-theme='dark'] .footer--dark {
+  --ifm-footer-background-color: #15191d;
+  border-top: 1px solid var(--ort-border);
+}
+
+/* The light mode primary focus ring is only 2.7:1 on the dark footer. */
+.footer--dark :focus-visible {
+  outline-color: #e07a96;
+}
+
+/* Prevent the page from scrolling behind an open modal dialog. */
+html:has(dialog[open]) {
+  overflow: hidden;
+}
+
+/* Docs and API pages */
+
+/* Visible keyboard focus everywhere. */
+:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+}
+
+/*
+ * Content links are underlined, because the link color alone differs too
+ * little from the text color (2.1:1, WCAG asks for 3:1).
+ */
+.markdown a:is(:not([class]), [class='']) {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color var(--ifm-transition-fast);
+}
+
+.markdown a:is(:not([class]), [class='']):hover {
+  text-decoration-color: currentColor;
+}
+
+.markdown :not(pre) > code {
+  border-color: var(--ort-border);
+}
+
+/* Code blocks and tables get the card shape used on the homepage. */
+.markdown .theme-code-block {
+  /* The inner code area uses these radii, they have to fit inside the border. */
+  --ifm-code-border-radius: calc(var(--ort-radius-md) - 1px);
+  --ifm-pre-border-radius: calc(var(--ort-radius-md) - 1px);
+  border: 1px solid var(--ort-border);
+  border-radius: var(--ort-radius-md);
+  box-shadow: none;
+}
+
+.markdown table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--ort-border);
+  border-radius: var(--ort-radius-md);
+}
+
+.markdown th,
+.markdown td {
+  border: 0;
+  border-bottom: 1px solid var(--ort-border);
+  border-left: 1px solid var(--ort-border);
+}
+
+.markdown tr > :first-child {
+  border-left: 0;
+}
+
+.markdown tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.markdown thead th {
+  background-color: var(--ort-surface-alt);
+}
+
+/* Cell backgrounds are not clipped by the table, so round the corner cells. */
+.markdown thead tr:first-child > :first-child {
+  border-top-left-radius: calc(var(--ort-radius-md) - 1px);
+}
+
+.markdown thead tr:first-child > :last-child {
+  border-top-right-radius: calc(var(--ort-radius-md) - 1px);
+}
+
+.markdown tbody tr:last-child > :first-child {
+  border-bottom-left-radius: calc(var(--ort-radius-md) - 1px);
+}
+
+.markdown tbody tr:last-child > :last-child {
+  border-bottom-right-radius: calc(var(--ort-radius-md) - 1px);
+}
+
+/*
+ * Infima displays tables as blocks so that wide tables can scroll, which makes
+ * them only as wide as their content. On larger screens, tables fill the full
+ * width and long cell content wraps instead.
+ */
+@media (min-width: 768px) {
+  .markdown table {
+    display: table;
+    width: 100%;
+  }
+
+  .markdown td {
+    overflow-wrap: anywhere;
+  }
+}
+
+/*
+ * Admonitions: tinted background with a thin accent bar. Titles are at least
+ * 5.3:1 and body text at least 9.9:1 against the tinted backgrounds.
+ */
+.alert.theme-admonition {
+  --ifm-alert-foreground-color: var(--ort-admonition-title);
+  border: 1px solid var(--ort-admonition-border);
+  border-left: 3px solid var(--ort-admonition-accent);
+  border-radius: var(--ort-radius-md);
+  background-color: var(--ort-admonition-background);
+  box-shadow: none;
+}
+
+.theme-admonition [class*='admonitionHeading'] {
+  font-size: 0.8125rem;
+  letter-spacing: 0.04em;
+}
+
+.theme-admonition [class*='admonitionContent'] {
+  color: var(--ifm-color-content);
+}
+
+.theme-admonition-note {
+  --ort-admonition-accent: #7d8185;
+  --ort-admonition-title: #495560;
+}
+
+.theme-admonition-tip {
+  --ort-admonition-accent: #00a400;
+  --ort-admonition-title: #007300;
+}
+
+.theme-admonition-info {
+  --ort-admonition-accent: #3b8ba5;
+  --ort-admonition-title: #2d6b80;
+}
+
+.theme-admonition-warning,
+.theme-admonition-caution {
+  --ort-admonition-accent: #ffba00;
+  --ort-admonition-title: #805400;
+}
+
+.theme-admonition-danger {
+  --ort-admonition-accent: #fa383e;
+  --ort-admonition-title: #af272b;
+}
+
+.theme-admonition {
+  --ort-admonition-background: color-mix(
+    in srgb,
+    var(--ort-admonition-accent) 10%,
+    var(--ifm-background-color)
+  );
+  --ort-admonition-border: color-mix(
+    in srgb,
+    var(--ort-admonition-accent) 30%,
+    var(--ifm-background-color)
+  );
+}
+
+[data-theme='dark'] .theme-admonition {
+  --ort-admonition-background: color-mix(
+    in srgb,
+    var(--ort-admonition-accent) 12%,
+    var(--ifm-background-color)
+  );
+}
+
+[data-theme='dark'] .theme-admonition-note {
+  --ort-admonition-title: #ccced0;
+}
+
+[data-theme='dark'] .theme-admonition-tip {
+  --ort-admonition-title: #80d280;
+}
+
+[data-theme='dark'] .theme-admonition-info {
+  --ort-admonition-accent: #54c7ec;
+  --ort-admonition-title: #7fd3f0;
+}
+
+[data-theme='dark'] .theme-admonition-warning,
+[data-theme='dark'] .theme-admonition-caution {
+  --ort-admonition-title: #ffdd80;
+}
+
+[data-theme='dark'] .theme-admonition-danger {
+  --ort-admonition-title: #fd9c9f;
+}
+
+/* Navbar: a hairline instead of the shadow and a translucent, blurred backdrop. */
+.navbar {
+  border-bottom: 1px solid var(--ort-border);
+  background-color: transparent;
+  box-shadow: none;
+}
+
+/*
+ * The backdrop is a pseudo-element, because a backdrop-filter on the navbar
+ * itself would break the fixed positioning of the mobile sidebar inside it.
+ */
+.navbar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-color: color-mix(
+    in srgb,
+    var(--ifm-navbar-background-color) 85%,
+    transparent
+  );
+  backdrop-filter: blur(12px) saturate(1.4);
+}
+
+@media (min-width: 997px) {
+  .navbar__inner .navbar__link--active {
+    position: relative;
+  }
+
+  /* Underline aligned with the bottom edge of the navbar. */
+  .navbar__inner .navbar__link--active::after {
+    content: '';
+    position: absolute;
+    right: 0.75rem;
+    bottom: calc((100% - var(--ifm-navbar-height)) / 2);
+    left: 0.75rem;
+    height: 2px;
+    border-radius: 2px;
+    background-color: var(--ifm-color-primary);
+  }
+}
+
+/* The search shortcut hint was 1.5:1, #5b646d on white is 6.0:1. */
+.navbar kbd {
+  border: 1px solid var(--ort-border-strong);
+  background: var(--ort-surface);
+  box-shadow: none;
+  color: var(--ifm-color-emphasis-700);
+}
+
+/* Search results: palette greys, #5b646d on white is 6.0:1. */
+:root {
+  --search-local-modal-background: var(--ifm-color-emphasis-100);
+  --search-local-muted-color: var(--ifm-color-emphasis-700);
+}
+
+/* The selected result has white text, which fails on the light dark-mode primary. */
+html[data-theme='dark']
+  [class*='dropdownMenu_']
+  [class*='suggestion_'][class*='cursor_'] {
+  background-color: #be3459;
+}
+
+/* Sidebar */
+.menu {
+  font-size: 0.9375rem;
+}
+
+.menu__link {
+  border-radius: var(--ort-radius-sm);
+}
+
+.menu__link--active:not(.menu__link--sublist) {
+  background-color: var(--ort-primary-soft);
+  box-shadow: inset 3px 0 0 var(--ifm-color-primary);
+  color: var(--ort-primary-on-soft);
+  font-weight: 600;
+}
+
+/* Table of contents */
+.table-of-contents {
+  font-size: 0.875rem;
+}
+
+.table-of-contents__left-border {
+  border-left: 0;
+}
+
+.table-of-contents__link {
+  display: block;
+  padding-left: 0.625rem;
+  border-left: 2px solid var(--ort-border);
+  color: var(--ifm-color-content-secondary);
+}
+
+.table-of-contents__link:hover {
+  color: var(--ifm-color-content);
+}
+
+.table-of-contents__link--active,
+.table-of-contents__link--active:hover {
+  border-left-color: var(--ifm-color-primary);
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
+
+/* Previous and next page cards, matching the homepage cards. */
+.pagination-nav__link {
+  position: relative;
+  top: 0;
+  border-color: var(--ort-border);
+  border-radius: var(--ort-radius-md);
+  background-color: var(--ort-surface);
+  box-shadow: var(--ort-shadow-sm);
+  transition:
+    top var(--ifm-transition-fast),
+    border-color var(--ifm-transition-fast),
+    box-shadow var(--ifm-transition-fast);
+}
+
+.pagination-nav__link:hover {
+  top: -2px;
+  border-color: var(--ort-border-strong);
+  box-shadow: var(--ort-shadow-md);
+}
+
+.pagination-nav__sublabel {
+  color: var(--ifm-color-content-secondary);
+}
+
+.pagination-nav__link--prev .pagination-nav__label::before {
+  content: '← ';
+}
+
+.pagination-nav__link--next .pagination-nav__label::after {
+  content: ' →';
+}
+
+.theme-edit-this-page {
+  color: var(--ifm-color-content-secondary);
+}
+
+.theme-edit-this-page:hover {
+  color: var(--ifm-color-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .markdown a:is(:not([class]), [class='']),
+  .pagination-nav__link {
+    transition: none;
+  }
+
+  .pagination-nav__link:hover {
+    top: 0;
+  }
+}
+
+/* API reference */
+
+/*
+ * Colors for HTTP methods and status codes. The text colors are at least
+ * 5.2:1 against the tinted badge backgrounds in both themes.
+ */
+html[data-theme] {
+  --ort-get: #2d6b80;
+  --ort-get-accent: #3b8ba5;
+  --ort-post: #007300;
+  --ort-post-accent: #00a400;
+  --ort-put: #805400;
+  --ort-put-accent: #ffba00;
+  --ort-patch: #634caf;
+  --ort-patch-accent: #634caf;
+  --ort-delete: #af272b;
+  --ort-delete-accent: #fa383e;
+  --ort-badge-tint: 12%;
+
+  /* #af272b on white is 6.7:1, #2d6b80 is 6.0:1. */
+  --openapi-required: var(--ort-delete);
+  --openapi-nullable: var(--ort-get);
+  --openapi-card-border-radius: var(--ort-radius-md);
+  --openapi-card-background-color: var(--ifm-color-emphasis-100);
+  --openapi-explorer-border-color: var(--ort-border);
+  --openapi-code-tab-border-color: var(--ort-border-strong);
+}
+
+html[data-theme='dark'] {
+  --ort-get: #7fd3f0;
+  --ort-get-accent: #54c7ec;
+  --ort-post: #80d280;
+  --ort-put: #ffdd80;
+  --ort-patch: #b3a7dd;
+  --ort-delete: #fd9c9f;
+  --ort-badge-tint: 16%;
+}
+
+.api-method.get,
+.openapi__method-endpoint .badge--primary,
+.openapi-tabs__response-code-item.info {
+  --ort-method: var(--ort-get);
+  --ort-method-accent: var(--ort-get-accent);
+  --ort-method-label: 'GET';
+}
+
+.api-method.post,
+.openapi__method-endpoint .badge--success,
+.openapi-tabs__response-code-item.success {
+  --ort-method: var(--ort-post);
+  --ort-method-accent: var(--ort-post-accent);
+  --ort-method-label: 'POST';
+}
+
+.api-method.put,
+.openapi__method-endpoint .badge--info {
+  --ort-method: var(--ort-put);
+  --ort-method-accent: var(--ort-put-accent);
+  --ort-method-label: 'PUT';
+}
+
+.api-method.patch,
+.openapi__method-endpoint .badge--warning {
+  --ort-method: var(--ort-patch);
+  --ort-method-accent: var(--ort-patch-accent);
+  --ort-method-label: 'PATCH';
+}
+
+.api-method.delete,
+.openapi__method-endpoint .badge--danger,
+.openapi-tabs__response-code-item.danger {
+  --ort-method: var(--ort-delete);
+  --ort-method-accent: var(--ort-delete-accent);
+  --ort-method-label: 'DELETE';
+  --ort-method-short-label: 'DEL';
+}
+
+/* Soft method badges in the page header, the sidebar and on tag pages. */
+.openapi__method-endpoint .badge,
+.menu__list-item.api-method > .menu__link::before,
+.theme-doc-card-container.api-method .theme-doc-card-icon::before {
+  display: inline-block;
+  flex-shrink: 0;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid
+    color-mix(
+      in srgb,
+      var(--ort-method-accent) 35%,
+      var(--ifm-background-color)
+    );
+  border-radius: var(--ort-radius-sm);
+  background-color: color-mix(
+    in srgb,
+    var(--ort-method-accent) var(--ort-badge-tint),
+    var(--ifm-background-color)
+  );
+  color: var(--ort-method);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.menu__list-item.api-method > .menu__link {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.375rem;
+}
+
+/* Compact badges in the sidebar, wide enough for "PATCH". */
+.menu__list-item.api-method > .menu__link::before {
+  content: var(--ort-method-short-label, var(--ort-method-label));
+  width: 2.375rem;
+  margin-top: 0.125rem;
+  padding: 0.25rem 0.125rem;
+  font-size: 0.625rem;
+  letter-spacing: 0;
+}
+
+/* The badge takes space, so show the full operation name instead of 2 lines. */
+.menu__list-item.api-method > .menu__link > [class*='linkLabel_'] {
+  display: block;
+  -webkit-line-clamp: unset;
+}
+
+/* Tag pages: a method badge instead of the generic page icon. */
+.theme-doc-card-container.api-method .theme-doc-card-icon {
+  font-size: 0;
+}
+
+.theme-doc-card-container.api-method .theme-doc-card-icon::before {
+  content: var(--ort-method-label);
+  margin-right: 0.5rem;
+  vertical-align: 0.2em;
+}
+
+/* Cards on tag and category pages, matching the homepage cards. */
+.theme-doc-card-container {
+  position: relative;
+  top: 0;
+  border: 1px solid var(--ort-border);
+  border-radius: var(--ort-radius-md);
+  background-color: var(--ort-surface);
+  box-shadow: var(--ort-shadow-sm);
+  transition:
+    top var(--ifm-transition-fast),
+    border-color var(--ifm-transition-fast),
+    box-shadow var(--ifm-transition-fast);
+}
+
+.theme-doc-card-container:hover {
+  top: -2px;
+  border-color: var(--ort-border-strong);
+  box-shadow: var(--ort-shadow-md);
+}
+
+.theme-doc-card-title.text--truncate {
+  overflow: visible;
+  white-space: normal;
+}
+
+/* Endpoint header with method badge and path. */
+.openapi__method-endpoint {
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--ort-border);
+  border-radius: var(--ort-radius-md);
+  background-color: var(--ort-surface-alt);
+}
+
+.openapi__method-endpoint .badge {
+  font-size: 0.75rem;
+}
+
+.openapi__method-endpoint-path {
+  margin-left: 0;
+  color: var(--ifm-color-content);
+  font-size: 0.875rem;
+}
+
+/* Response status tabs use the same soft colors as the method badges. */
+.tabs .openapi-tabs__response-code-item,
+.tabs .openapi-tabs__response-code-item:not(.active) {
+  border-radius: var(--ort-radius-sm);
+  color: var(--ifm-color-emphasis-700);
+  opacity: 1;
+}
+
+.tabs .openapi-tabs__response-code-item:is(.success, .danger, .info).active {
+  border-color: color-mix(
+    in srgb,
+    var(--ort-method-accent) 35%,
+    var(--ifm-background-color)
+  );
+  background-color: color-mix(
+    in srgb,
+    var(--ort-method-accent) var(--ort-badge-tint),
+    var(--ifm-background-color)
+  );
+  color: var(--ort-method);
+}
+
+/* Media type and schema tabs as soft crimson pills. */
+.tabs .openapi-tabs__mime-item,
+.tabs .openapi-tabs__schema-item {
+  border-radius: 999px;
+}
+
+.tabs .openapi-tabs__mime-item.active,
+.tabs .openapi-tabs__schema-item.active {
+  border-color: color-mix(
+    in srgb,
+    var(--ifm-color-primary) 35%,
+    var(--ifm-background-color)
+  );
+  background-color: var(--ort-primary-soft);
+  color: var(--ort-primary-on-soft);
+}
+
+/* Request and response panels on the right, in the card style. */
+.openapi-explorer__request-form,
+.openapi-explorer__response-container,
+.openapi-security__summary-container {
+  border: 1px solid var(--ort-border);
+  box-shadow: none;
+}
+
+.openapi-explorer__request-form:hover,
+.openapi-explorer__response-container:hover {
+  box-shadow: var(--ort-shadow-md);
+}
+
+.openapi-security__summary-container {
+  border-radius: var(--ort-radius-md);
+}
+
+.openapi-tabs__code-container .openapi-tabs__code-item {
+  border-radius: var(--ort-radius-sm);
+}
+
+.openapi-tabs__code-container .openapi-tabs__code-item.active {
+  border-color: var(--ifm-color-primary);
+  background-color: var(--ort-primary-soft);
+  box-shadow: none;
+}
+
+.openapi-explorer__form-item-input {
+  border: 1px solid var(--ort-border-strong);
+  border-radius: var(--ort-radius-sm);
+}
+
+.openapi-explorer__form-item-input:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 1px;
+}
+
+/* API landing page */
+.theme-doc-version-badge {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--ort-border);
+  border-radius: 999px;
+  background-color: var(--ifm-color-emphasis-100);
+  color: var(--ifm-color-emphasis-700);
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: 500;
+}
+
+.openapi__heading {
+  margin-bottom: 1.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-doc-card-container {
+    transition: none;
+  }
+
+  .theme-doc-card-container:hover {
+    top: 0;
+  }
 }

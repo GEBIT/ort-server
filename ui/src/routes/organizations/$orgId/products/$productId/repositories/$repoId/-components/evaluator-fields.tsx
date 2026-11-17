@@ -20,7 +20,7 @@
 import { UseFormReturn } from 'react-hook-form';
 
 import { PreconfiguredPluginDescriptor, Secret } from '@/api';
-import { PluginMultiSelectField } from '@/components/form/plugin-multi-select-field.tsx';
+import { PluginMultiSelectField } from '@/components/form/plugin-multi-select-field';
 import {
   AccordionContent,
   AccordionItem,
@@ -34,7 +34,11 @@ import {
   FormLabel,
 } from '@/components/ui/form';
 import { Switch } from '@/components/ui/switch';
-import { CreateRunFormValues } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
+import { jobConfigFields } from '@/lib/job-config-fields';
+import {
+  CreateRunFormValues,
+  DefaultPluginSelections,
+} from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
 
 type EvaluatorFieldsProps = {
   form: UseFormReturn<CreateRunFormValues>;
@@ -43,7 +47,8 @@ type EvaluatorFieldsProps = {
   isSuperuser: boolean;
   packageConfigurationProviderPlugins: PreconfiguredPluginDescriptor[];
   secrets: Secret[];
-  isRerun: boolean;
+  /** The plugins that are selected by default, to which the plugin lists can be reset, if known. */
+  defaultPluginSelections?: DefaultPluginSelections;
 };
 
 export const EvaluatorFields = ({
@@ -53,7 +58,7 @@ export const EvaluatorFields = ({
   isSuperuser,
   packageConfigurationProviderPlugins,
   secrets,
-  isRerun,
+  defaultPluginSelections,
 }: EvaluatorFieldsProps) => {
   return (
     <div className='flex flex-row align-middle'>
@@ -78,19 +83,20 @@ export const EvaluatorFields = ({
           <PluginMultiSelectField
             form={form}
             name='jobConfigs.evaluator.packageConfigurationProviders'
+            defaultPluginIds={
+              defaultPluginSelections?.packageConfigurationProviders
+            }
             configName='jobConfigs.evaluator.packageConfigurationProviderConfig'
-            label='Package configuration providers'
+            label={
+              jobConfigFields['evaluator.packageConfigurationProviders'].label
+            }
             description={
-              <>
-                Configure the package configuration providers to use. Providers
-                higher in the list take precedence over lower providers. Change
-                the order of providers via drag & drop.
-              </>
+              jobConfigFields['evaluator.packageConfigurationProviders']
+                .description
             }
             plugins={packageConfigurationProviderPlugins}
             secrets={secrets}
             enableReordering
-            showSelectedPluginsFirst={isRerun}
           />
           {isSuperuser && (
             <FormField
@@ -99,11 +105,11 @@ export const EvaluatorFields = ({
               render={({ field }) => (
                 <FormItem className='mb-4 flex flex-row items-center justify-between rounded-lg border p-4'>
                   <div className='space-y-0.5'>
-                    <FormLabel>Keep worker alive</FormLabel>
+                    <FormLabel>
+                      {jobConfigFields['evaluator.keepAliveWorker'].label}
+                    </FormLabel>
                     <FormDescription>
-                      A flag to control whether the worker is kept alive for
-                      debugging purposes. This flag only has an effect if the
-                      ORT Server is deployed on Kubernetes.
+                      {jobConfigFields['evaluator.keepAliveWorker'].description}
                     </FormDescription>
                   </div>
                   <FormControl>

@@ -20,7 +20,7 @@
 import { UseFormReturn } from 'react-hook-form';
 
 import { PreconfiguredPluginDescriptor, Secret } from '@/api';
-import { PluginMultiSelectField } from '@/components/form/plugin-multi-select-field.tsx';
+import { PluginMultiSelectField } from '@/components/form/plugin-multi-select-field';
 import {
   AccordionContent,
   AccordionItem,
@@ -34,7 +34,11 @@ import {
   FormLabel,
 } from '@/components/ui/form';
 import { Switch } from '@/components/ui/switch';
-import { CreateRunFormValues } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
+import { jobConfigFields } from '@/lib/job-config-fields';
+import {
+  CreateRunFormValues,
+  DefaultPluginSelections,
+} from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
 
 type AdvisorFieldsProps = {
   form: UseFormReturn<CreateRunFormValues>;
@@ -43,6 +47,8 @@ type AdvisorFieldsProps = {
   advisorPlugins: PreconfiguredPluginDescriptor[];
   secrets: Secret[];
   isSuperuser: boolean;
+  /** The plugins that are selected by default, to which the plugin lists can be reset, if known. */
+  defaultPluginSelections?: DefaultPluginSelections;
 };
 
 export const AdvisorFields = ({
@@ -52,6 +58,7 @@ export const AdvisorFields = ({
   advisorPlugins,
   secrets,
   isSuperuser,
+  defaultPluginSelections,
 }: AdvisorFieldsProps) => {
   return (
     <div className='flex flex-row align-middle'>
@@ -72,17 +79,18 @@ export const AdvisorFields = ({
       />
       <AccordionItem value={value} className='flex-1'>
         <AccordionTrigger onClick={onToggle}>Advisor</AccordionTrigger>
-        <AccordionContent>
+        <AccordionContent className='flex flex-col gap-6'>
           <FormField
             control={form.control}
             name='jobConfigs.advisor.skipExcluded'
             render={({ field }) => (
-              <FormItem className='mb-4 flex flex-row items-center justify-between rounded-lg border p-4'>
+              <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
                 <div className='space-y-2'>
-                  <FormLabel>Skip excluded</FormLabel>
+                  <FormLabel>
+                    {jobConfigFields['advisor.skipExcluded'].label}
+                  </FormLabel>
                   <FormDescription>
-                    A flag to control whether excluded scopes and paths should
-                    be skipped by the advisor.
+                    {jobConfigFields['advisor.skipExcluded'].description}
                   </FormDescription>
                 </div>
                 <FormControl>
@@ -97,9 +105,10 @@ export const AdvisorFields = ({
           <PluginMultiSelectField
             form={form}
             name='jobConfigs.advisor.advisors'
+            defaultPluginIds={defaultPluginSelections?.advisors}
             configName='jobConfigs.advisor.config'
-            label='Enabled advisors'
-            description={<>Select the advisors enabled for this run.</>}
+            label={jobConfigFields['advisor.advisors'].label}
+            description={jobConfigFields['advisor.advisors'].description}
             plugins={advisorPlugins}
             secrets={secrets}
           />
@@ -110,11 +119,11 @@ export const AdvisorFields = ({
               render={({ field }) => (
                 <FormItem className='mb-4 flex flex-row items-center justify-between rounded-lg border p-4'>
                   <div className='space-y-0.5'>
-                    <FormLabel>Keep worker alive</FormLabel>
+                    <FormLabel>
+                      {jobConfigFields['advisor.keepAliveWorker'].label}
+                    </FormLabel>
                     <FormDescription>
-                      A flag to control whether the worker is kept alive for
-                      debugging purposes. This flag only has an effect if the
-                      ORT Server is deployed on Kubernetes.
+                      {jobConfigFields['advisor.keepAliveWorker'].description}
                     </FormDescription>
                   </div>
                   <FormControl>

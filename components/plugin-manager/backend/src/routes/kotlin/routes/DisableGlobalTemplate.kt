@@ -19,6 +19,7 @@
 
 package org.eclipse.apoapsis.ortserver.components.pluginmanager.routes
 
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -29,19 +30,20 @@ import org.eclipse.apoapsis.ortserver.components.authorization.routes.requireSup
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginTemplateService
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginType
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.handleTemplateResult
+import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireEnumParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 
 internal fun Route.disableGlobalTemplate(
     pluginTemplateService: PluginTemplateService
 ) = post("admin/plugins/{pluginType}/{pluginId}/templates/{templateName}/disableGlobal", {
-    operationId = "DisableGlobalPluginTemplate"
+    operationId = "disableGlobalPluginTemplate"
     summary = "Disable a global plugin template"
     description = "Disable a global plugin template for a specific plugin. This will disable the template globally, " +
             "but it can still be used in organization-specific configurations."
     tags = listOf("Plugins")
 
     request {
-        pathParameter<String>("pluginType") {
+        pathParameter<PluginType>("pluginType") {
             description = "The type of the plugin this template is for."
             required = true
         }
@@ -60,10 +62,17 @@ internal fun Route.disableGlobalTemplate(
     response {
         HttpStatusCode.OK to {
             description = "Successfully disabled the global plugin template."
+            body<String> {
+                mediaTypes = setOf(ContentType.Text.Plain)
+                example("Success message") {
+                    value = "Global plugin template disabled successfully."
+                }
+            }
         }
 
         HttpStatusCode.BadRequest to {
-            description = "The specified plugin is not installed or the template could not be disabled."
+            description = "The specified plugin is not installed or the template could not be disabled. An invalid " +
+                    "plugin type also results in this status."
         }
 
         HttpStatusCode.NotFound to {
@@ -72,7 +81,7 @@ internal fun Route.disableGlobalTemplate(
     }
 }, requireSuperuser()) {
     val userId = requirePrincipal().userId
-    val pluginType = enumValueOf<PluginType>(call.requireParameter("pluginType"))
+    val pluginType = call.requireEnumParameter<PluginType>("pluginType")
     val pluginId = call.requireParameter("pluginId")
     val templateName = call.requireParameter("templateName")
 

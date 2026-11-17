@@ -144,7 +144,7 @@ class AuthorizedRoutesTest : WordSpec() {
         val slotHierarchyId = slot<HierarchyId>()
         val slotChecker = slot<PermissionChecker>()
         coVerify {
-            service.checkPermissions(USERNAME, capture(slotHierarchyId), capture(slotChecker))
+            service.checkPermissions(USERNAME, capture(slotHierarchyId), capture(slotChecker), USER_ID)
         }
 
         when (requiredPermission) {
@@ -239,10 +239,10 @@ class AuthorizedRoutesTest : WordSpec() {
 
             "support POST with an organization permission" {
                 runAuthorizationTest(
-                    OrganizationPermission.MANAGE_GROUPS,
+                    OrganizationPermission.MANAGE_ROLES,
                     routeBuilder = {
                         route("test/{organizationId}") {
-                            post(testDocs, requirePermission(OrganizationPermission.MANAGE_GROUPS)) {
+                            post(testDocs, requirePermission(OrganizationPermission.MANAGE_ROLES)) {
                                 call.principal<OrtServerPrincipal>().shouldNotBeNull {
                                     username shouldBe USERNAME
                                 }
@@ -362,7 +362,9 @@ class AuthorizedRoutesTest : WordSpec() {
                     every { isSuperuser } returns true
                 }
                 val service = mockk<AuthorizationService> {
-                    coEvery { checkPermissions(USERNAME, CompoundHierarchyId.WILDCARD, any()) } returns effectiveRole
+                    coEvery {
+                        checkPermissions(USERNAME, CompoundHierarchyId.WILDCARD, any(), USER_ID)
+                    } returns effectiveRole
                 }
 
                 runAuthorizationTest(
@@ -412,12 +414,12 @@ class AuthorizedRoutesTest : WordSpec() {
 
             "support POST with a path" {
                 runAuthorizationTest(
-                    OrganizationPermission.MANAGE_GROUPS,
+                    OrganizationPermission.MANAGE_ROLES,
                     routeBuilder = {
                         post(
                             "test/{organizationId}",
                             testDocs,
-                            requirePermission(OrganizationPermission.MANAGE_GROUPS)
+                            requirePermission(OrganizationPermission.MANAGE_ROLES)
                         ) {
                             call.principal<OrtServerPrincipal>().shouldNotBeNull {
                                 username shouldBe USERNAME
@@ -543,7 +545,7 @@ class AuthorizedRoutesTest : WordSpec() {
                     service,
                     routeBuilder = {
                         route("test/{organizationId}") {
-                            patch(testDocs, requirePermission(OrganizationPermission.MANAGE_GROUPS)) {
+                            patch(testDocs, requirePermission(OrganizationPermission.MANAGE_ROLES)) {
                                 call.respond(HttpStatusCode.OK)
                             }
                         }
@@ -594,7 +596,7 @@ class AuthorizedRoutesTest : WordSpec() {
         "exceptions" should {
             "be mapped to correct status codes" {
                 val service = mockk<AuthorizationService> {
-                    coEvery { checkPermissions(any(), any<HierarchyId>(), any()) } throws
+                    coEvery { checkPermissions(any(), any<HierarchyId>(), any(), any()) } throws
                         InvalidHierarchyIdException(OrganizationId(42))
                 }
 
@@ -623,20 +625,19 @@ private val testDocs: RouteConfig.() -> Unit = {
 
 private const val ID_PARAMETER = 42L
 private const val USERNAME = "test-user"
+private const val USER_ID = "$USERNAME-ID"
 
 private const val JWT_SECRET = "secret"
 private const val JWT_ISSUER = "http://0.0.0.0:8080/"
 private const val JWT_AUDIENCE = "test-audience"
 private const val JWT_REALM = "Access to 'test'"
 
-/**
- * Create a token for the test user.
- */
+/** Create a token for the test user. */
 private fun createToken(): String =
     JWT.create()
         .withIssuer(JWT_ISSUER)
         .withAudience(JWT_AUDIENCE)
-        .withSubject("$USERNAME-ID")
+        .withSubject(USER_ID)
         .withClaim("preferred_username", USERNAME)
         .withClaim("name", "$USERNAME-full-name")
         .withExpiresAt(Date(System.currentTimeMillis() + 60000))
@@ -647,5 +648,5 @@ private fun createToken(): String =
  * returns a mock effective role.
  */
 private fun createAuthorizationService(effectiveRole: EffectiveRole? = mockk()): AuthorizationService = mockk {
-    coEvery { checkPermissions(any(), any<HierarchyId>(), any()) } returns effectiveRole
+    coEvery { checkPermissions(any(), any<HierarchyId>(), any(), any()) } returns effectiveRole
 }

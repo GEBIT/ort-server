@@ -26,10 +26,9 @@ import io.kotest.matchers.maps.beEmpty as beEmptyMap
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
-import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.mockk
 
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerjob.AnalyzerJobsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.AnalyzerRunsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.PackagesAnalyzerRunsTable
@@ -37,14 +36,15 @@ import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.PackagesTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifiersTable
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
 import org.eclipse.apoapsis.ortserver.dao.test.Fixtures
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.resolvedconfiguration.PackageCurationProviderConfig
 import org.eclipse.apoapsis.ortserver.model.resolvedconfiguration.ResolvedPackageCurations
 import org.eclipse.apoapsis.ortserver.model.runs.Identifier
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCuration
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCurationData
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.innerJoin
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.select
 
@@ -60,6 +60,8 @@ import org.ossreviewtoolkit.scanner.FileList as ScannerFileList
 import org.ossreviewtoolkit.scanner.utils.FileListResolver
 
 class UtilsTest : WordSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     lateinit var db: Database
@@ -85,8 +87,8 @@ class UtilsTest : WordSpec({
             )
 
             val fileListResolver = mockk<FileListResolver> {
-                every { get(provenance1) } returns fileList1
-                every { get(provenance2) } returns fileList2
+                coEvery { get(provenance1) } returns fileList1
+                coEvery { get(provenance2) } returns fileList2
             }
 
             val fileLists = getFileLists(fileListResolver, setOf(provenance1, provenance2))
@@ -108,7 +110,7 @@ class UtilsTest : WordSpec({
             val provenance2 = ArtifactProvenance(RemoteArtifact("url", Hash.NONE))
 
             val fileListResolver = mockk<FileListResolver> {
-                every { get(any<KnownProvenance>()) } returns null
+                coEvery { get(any<KnownProvenance>()) } returns null
             }
 
             val fileLists = getFileLists(fileListResolver, setOf(provenance1, provenance2))
@@ -161,7 +163,7 @@ class UtilsTest : WordSpec({
                 listOf(higherPriorityCurations, lowerPriorityCurations)
             )
 
-            val identifierIds = db.dbQuery {
+            val identifierIds = db.transaction {
                 IdentifiersTable
                     .innerJoin(PackagesTable)
                     .innerJoin(PackagesAnalyzerRunsTable)
@@ -185,7 +187,7 @@ class UtilsTest : WordSpec({
                     }
             }
 
-            val purls = db.dbQuery {
+            val purls = db.transaction {
                 getPurlByIdentifierIdForOrtRun(ortRun.id, identifierIds.values)
             }
 

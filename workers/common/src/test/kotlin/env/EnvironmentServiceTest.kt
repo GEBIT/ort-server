@@ -62,9 +62,9 @@ import org.eclipse.apoapsis.ortserver.model.Repository
 import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.RepositoryType
 import org.eclipse.apoapsis.ortserver.model.Secret
-import org.eclipse.apoapsis.ortserver.workers.common.ResolvedInfrastructureService
-import org.eclipse.apoapsis.ortserver.workers.common.auth.SecretResolverFun
-import org.eclipse.apoapsis.ortserver.workers.common.auth.undefinedSecretResolver
+import org.eclipse.apoapsis.ortserver.shared.authenticator.ResolvedInfrastructureService
+import org.eclipse.apoapsis.ortserver.shared.authenticator.SecretResolverFun
+import org.eclipse.apoapsis.ortserver.shared.authenticator.undefinedSecretResolver
 import org.eclipse.apoapsis.ortserver.workers.common.context.WorkerContext
 import org.eclipse.apoapsis.ortserver.workers.common.env.MockConfigFileBuilder.Companion.REPOSITORY_URL
 import org.eclipse.apoapsis.ortserver.workers.common.env.MockConfigFileBuilder.Companion.createInfrastructureService
@@ -1022,9 +1022,7 @@ private val repositoryFolder = File("repositoryCheckoutLocation")
 /** A default [AdminConfig] object used in tests. */
 val adminConfig = AdminConfig()
 
-/**
- * Create an InfrastructureServiceDeclaration with the given [name] and [credentialsTypes].
- */
+/** Create an InfrastructureServiceDeclaration with the given [name] and [credentialsTypes]. */
 fun createInfrastructureServiceDeclaration(
     name: String,
     credentialsTypes: Set<CredentialsType> = EnumSet.of(CredentialsType.NETRC_FILE)
@@ -1065,9 +1063,7 @@ private fun mockSecretService(extraSetup: SecretService.() -> Unit = {}): Secret
         extraSetup()
     }
 
-/**
- * Create a mock [EnvironmentConfigLoader] that is prepared to return the given [config].
- */
+/** Create a mock [EnvironmentConfigLoader] that is prepared to return the given [config]. */
 private fun mockConfigLoader(config: ResolvedEnvironmentConfig): EnvironmentConfigLoader {
     val envConfig = mockk<EnvironmentConfig>(relaxed = true)
 
@@ -1099,11 +1095,9 @@ private fun mockConfigLoader(
     }
 }
 
-/**
- * Create a mock [AdminConfigService] that is prepared to return the [adminConfig] when loading the admin config.
- */
+/** Create a mock [AdminConfigService] that is prepared to return the [adminConfig] when loading the admin config. */
 private fun createMockAdminConfigService(): AdminConfigService = mockk<AdminConfigService> {
-    every { loadAdminConfig(ResolvedConfigContext(RESOLVED_JOB_CONFIG_CONTEXT)) } returns adminConfig
+    coEvery { loadAdminConfig(ResolvedConfigContext(RESOLVED_JOB_CONFIG_CONTEXT)) } returns adminConfig
 }
 
 /**

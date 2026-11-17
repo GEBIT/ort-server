@@ -24,7 +24,7 @@ import {
   useSuspenseQuery,
 } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { Eye, Loader2, Pen, Shield } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -33,6 +33,8 @@ import {
   getRepositoryUsersQueryKey,
   putRepositoryRoleToUserMutation,
 } from '@/api/@tanstack/react-query.gen';
+import { DisabledReasonTooltip } from '@/components/action-tooltip-trigger';
+import { RoleSelect } from '@/components/role-select';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -51,14 +53,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { getRoleIcon } from '@/helpers/role-helpers.ts';
+import { useRepositoryPermission } from '@/hooks/use-authorization';
 import { ApiError } from '@/lib/api-error';
 import { toast, toastError } from '@/lib/toast';
 import { roleSchema } from '@/schemas';
@@ -88,6 +83,13 @@ const ManageUsers = () => {
     }),
   });
 
+  // Unresolved permissions leave the controls disabled until they are known.
+  const { isAllowed } = useRepositoryPermission(
+    Number.parseInt(params.repoId),
+    'MANAGE_ROLES'
+  );
+  const canManageRoles = isAllowed === true;
+
   const queryClient = useQueryClient();
 
   const { mutateAsync: addUser, isPending: isAddUserPending } = useMutation({
@@ -110,6 +112,8 @@ const ManageUsers = () => {
   });
 
   async function onAddUser(values: z.infer<typeof formSchema>) {
+    if (!canManageRoles) return;
+
     await addUser({
       path: {
         repositoryId: Number.parseInt(params.repoId),
@@ -127,22 +131,12 @@ const ManageUsers = () => {
     <Card>
       <CardHeader>
         <CardTitle>Manage Users</CardTitle>
-        <CardDescription className='flex flex-col gap-2'>
-          <span>
-            Assign or remove roles to users in the{' '}
-            <span className='font-semibold'>
-              {repository.name ?? repository.url}
-            </span>{' '}
-            repository.
-          </span>
-          <div className='grid grid-cols-[auto_1fr] items-center gap-x-1 gap-y-1'>
-            <Eye size={16} />
-            <span>READERS can view the repository.</span>
-            <Pen size={16} />
-            <span>WRITERS can view and edit the repository.</span>
-            <Shield size={16} />
-            <span>ADMINS can view, edit, and delete the repository.</span>
-          </div>
+        <CardDescription>
+          Assign or remove roles to users in the{' '}
+          <span className='font-semibold'>
+            {repository.name ?? repository.url}
+          </span>{' '}
+          repository.
         </CardDescription>
       </CardHeader>
       <CardContent className='space-y-4'>
@@ -155,9 +149,14 @@ const ManageUsers = () => {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Username</FormLabel>
-                    <FormControl autoFocus>
-                      <Input {...field} />
-                    </FormControl>
+                    <DisabledReasonTooltip
+                      disabled={!canManageRoles}
+                      className='w-full'
+                    >
+                      <FormControl autoFocus>
+                        <Input {...field} disabled={!canManageRoles} />
+                      </FormControl>
+                    </DisabledReasonTooltip>
                     <FormDescription>
                       Enter the exact username of an existing user account.
                     </FormDescription>
@@ -171,50 +170,43 @@ const ManageUsers = () => {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Role</FormLabel>
-                    <Select
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
+                    <DisabledReasonTooltip
+                      disabled={!canManageRoles}
+                      className='w-full'
                     >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder='Select a role' />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {roleSchema.options.map((role) => (
-                          <SelectItem key={role} value={role}>
-                            <div className='flex items-center gap-2'>
-                              {getRoleIcon(role)}
-                              {role}
-                            </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      <RoleSelect
+                        value={field.value}
+                        onChange={field.onChange}
+                        disabled={!canManageRoles}
+                        level='repository'
+                      />
+                    </DisabledReasonTooltip>
                     <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
-            <Button
-              size='sm'
-              className='ml-auto gap-1'
-              type='submit'
-              disabled={isAddUserPending}
-              onClick={form.handleSubmit(onAddUser)}
-            >
-              {isAddUserPending ? (
-                <>
-                  <span className='sr-only'>Adding user...</span>
-                  <Loader2 size={16} className='mx-3 animate-spin' />
-                </>
-              ) : (
-                'Assign role'
-              )}
-            </Button>
+            <DisabledReasonTooltip disabled={!canManageRoles}>
+              <Button
+                size='sm'
+                className='ml-auto gap-1'
+                type='submit'
+                disabled={!canManageRoles || isAddUserPending}
+                onClick={form.handleSubmit(onAddUser)}
+              >
+                {isAddUserPending ? (
+                  <>
+                    <span className='sr-only'>Adding user...</span>
+                    <Loader2 size={16} className='mx-3 animate-spin' />
+                  </>
+                ) : (
+                  'Assign role'
+                )}
+              </Button>
+            </DisabledReasonTooltip>
           </form>
         </Form>
-        <RepositoryUsersTable />
+        <RepositoryUsersTable canManageRoles={canManageRoles} />
       </CardContent>
     </Card>
   );

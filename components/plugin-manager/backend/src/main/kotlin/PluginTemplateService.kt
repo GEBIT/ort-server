@@ -27,12 +27,14 @@ import com.github.michaelbull.result.map
 import com.github.michaelbull.result.onErr
 import com.github.michaelbull.result.toErrorIfNull
 import com.github.michaelbull.result.toResultOr
-import com.github.michaelbull.result.tryFold
 
+import org.eclipse.apoapsis.ortserver.components.adminconfig.AdminConfigService
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.queries.GetPluginTemplateForOrganizationQuery
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.queries.GetPluginTemplateQuery
+import org.eclipse.apoapsis.ortserver.components.pluginmanager.queries.GetPluginTemplatesForOrganizationQuery
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.queries.GetPluginTemplatesQuery
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
+import org.eclipse.apoapsis.ortserver.config.ResolvedConfigContext
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.OrganizationId
 import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.ResolvablePluginConfig
@@ -41,8 +43,6 @@ import org.eclipse.apoapsis.ortserver.model.repositories.OrganizationRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.RepositoryRepository
 
 import org.jetbrains.exposed.v1.jdbc.Database
-
-import org.ossreviewtoolkit.utils.ort.runBlocking
 
 internal const val ADMIN_SECRET_PLACEHOLDER = "[set by admin]"
 
@@ -53,20 +53,21 @@ class PluginTemplateService(
     private val eventStore: PluginTemplateEventStore,
     private val pluginService: PluginService,
     private val organizationRepository: OrganizationRepository,
-    private val repositoryRepository: RepositoryRepository
+    private val repositoryRepository: RepositoryRepository,
+    private val adminConfigService: AdminConfigService
 ) {
     /**
      * Assign the plugin template with the given [templateName], [pluginType], and [pluginId] to the organization with
      * the given [organizationId].
      */
-    internal fun addOrganization(
+    internal suspend fun addOrganization(
         templateName: String,
         pluginType: PluginType,
         pluginId: String,
         organizationId: OrganizationId,
         userId: String
     ): Result<Unit, TemplateError> =
-        db.blockingQuery {
+        db.transaction {
             validateOrganizationExists(organizationId)
                 .andThen { validatePlugin(pluginType, pluginId) }
                 .andThen { normalizedPluginId -> getTemplateState(templateName, pluginType, normalizedPluginId) }
@@ -97,13 +98,13 @@ class PluginTemplateService(
      * Create a new plugin template with the given [templateName], [pluginType], and [pluginId] with the provided
      * [options].
      */
-    internal fun create(
+    suspend fun create(
         templateName: String,
         pluginType: PluginType,
         pluginId: String,
         userId: String,
         options: List<PluginOptionTemplate>
-    ): Result<Unit, TemplateError> = db.blockingQuery {
+    ): Result<Unit, TemplateError> = db.transaction {
         validatePlugin(pluginType, pluginId)
             .andThen { normalizedPluginId -> validatePluginOptions(pluginType, normalizedPluginId, options) }
             .andThen { normalizedPluginId -> validateNotExisting(templateName, pluginType, normalizedPluginId) }
@@ -123,12 +124,12 @@ class PluginTemplateService(
     }
 
     /** Delete the plugin template with the given [templateName], [pluginType], and [pluginId]. */
-    internal fun delete(
+    internal suspend fun delete(
         templateName: String,
         pluginType: PluginType,
         pluginId: String,
         userId: String
-    ): Result<Unit, TemplateError> = db.blockingQuery {
+    ): Result<Unit, TemplateError> = db.transaction {
         validatePlugin(pluginType, pluginId)
             .andThen { normalizedPluginId -> getTemplateState(templateName, pluginType, normalizedPluginId) }
             .andThen(::validateNotDeleted)
@@ -147,12 +148,12 @@ class PluginTemplateService(
     }
 
     /** Disable the plugin template with the given [templateName], [pluginType], and [pluginId] globally. */
-    internal fun disableGlobal(
+    internal suspend fun disableGlobal(
         templateName: String,
         pluginType: PluginType,
         pluginId: String,
         userId: String
-    ): Result<Unit, TemplateError> = db.blockingQuery {
+    ): Result<Unit, TemplateError> = db.transaction {
         validatePlugin(pluginType, pluginId)
             .andThen { normalizedPluginId -> getTemplateState(templateName, pluginType, normalizedPluginId) }
             .andThen(::validateNotDeleted)
@@ -178,12 +179,12 @@ class PluginTemplateService(
     }
 
     /** Enable the plugin template with the given [templateName], [pluginType], and [pluginId] globally. */
-    internal fun enableGlobal(
+    suspend fun enableGlobal(
         templateName: String,
         pluginType: PluginType,
         pluginId: String,
         userId: String
-    ): Result<Unit, TemplateError> = db.blockingQuery {
+    ): Result<Unit, TemplateError> = db.transaction {
         validatePlugin(pluginType, pluginId)
             .andThen { normalizedPluginId -> getTemplateState(templateName, pluginType, normalizedPluginId) }
             .andThen(::validateNotDeleted)
@@ -209,61 +210,68 @@ class PluginTemplateService(
             }
     }
 
-    internal fun getPluginsForRepository(
-        repositoryId: RepositoryId
-    ): Result<List<PreconfiguredPluginDescriptor>, TemplateError> = db.blockingQuery {
-        val organizationId = repositoryRepository.get(repositoryId.value)?.organizationId?.let { OrganizationId(it) }
-            ?: return@blockingQuery TemplateError.NotFound("No repository with ID '$repositoryId' found.").toErr()
+    /**
+     * Return the plugins that are available for the organization with the given [organizationId], together with the
+     * template that applies to them for this organization. Disabled plugins are excluded, and restricted plugins are
+     * only included if a template applies to them. If [organizationId] is `null`, the plugins that can be made
+     * available to any organization are returned: Restricted plugins are included, because they can be made available
+     * to organizations by templates, and no templates are returned.
+     */
+    internal suspend fun getAvailablePlugins(organizationId: OrganizationId?): List<AvailablePlugin> = db.transaction {
+        val templates = organizationId?.let { GetPluginTemplatesForOrganizationQuery(it).execute() }.orEmpty()
+            .associateBy { it.pluginType to it.pluginId.lowercase() }
 
-        pluginService.getPlugins().filter { it.availability != PluginAvailability.DISABLED }
-            .tryFold(initial = emptyList<PreconfiguredPluginDescriptor>()) { acc, plugin ->
-                getTemplateForOrganization(plugin.type, plugin.id, organizationId).map { template ->
-                    if (plugin.availability == PluginAvailability.RESTRICTED && template == null) {
-                        acc
-                    } else {
-                        acc + PreconfiguredPluginDescriptor(
-                            id = plugin.id,
-                            type = plugin.type,
-                            displayName = plugin.displayName,
-                            summary = plugin.summary,
-                            description = plugin.description,
-                            options = plugin.options.map { option ->
-                                val templateOption = template?.options?.find { it.option == option.name }
+        pluginService.getPlugins()
+            .filter { it.availability != PluginAvailability.DISABLED }
+            .mapNotNull { plugin ->
+                // Plugin IDs are case-insensitive, and their spelling can change between ORT versions.
+                val template = templates[plugin.type to plugin.id.lowercase()]
 
-                                val defaultValue = when (option.type) {
-                                    PluginOptionType.SECRET -> {
-                                        // Do not expose the name of config secrets used by admins. Return a placeholder
-                                        // instead, so that users can see that there is a default value. Also ignore the
-                                        // default value of the option, because secret options should never have default
-                                        // values, and if they had, they would not work with the way the server handles
-                                        // secret options.
-                                        if (templateOption?.value != null) ADMIN_SECRET_PLACEHOLDER else null
-                                    }
-
-                                    else -> templateOption?.value ?: option.defaultValue
-                                }
-
-                                PreconfiguredPluginOption(
-                                    name = option.name,
-                                    description = option.description,
-                                    type = option.type,
-                                    enumEntries = option.enumEntries,
-                                    defaultValue = defaultValue,
-                                    isFixed = templateOption?.isFinal == true,
-                                    isNullable = option.isNullable,
-                                    isRequired = option.isRequired
-                                )
-                            }
-                        )
-                    }
+                AvailablePlugin(plugin, template).takeUnless {
+                    organizationId != null && plugin.availability == PluginAvailability.RESTRICTED && template == null
                 }
             }
     }
 
+    /**
+     * Return the plugins available for the repository with the given [repositoryId] using the admin configuration from
+     * the given config [context]. See [getPluginsForOrganization] for details.
+     */
+    internal suspend fun getPluginsForRepository(
+        repositoryId: RepositoryId,
+        context: ResolvedConfigContext
+    ): Result<List<PreconfiguredPluginDescriptor>, TemplateError> = db.transaction {
+        val organizationId = repositoryRepository.get(repositoryId.value)?.organizationId?.let { OrganizationId(it) }
+            ?: return@transaction TemplateError.NotFound("No repository with ID '$repositoryId' found.").toErr()
+
+        getPluginsForOrganization(organizationId, context)
+    }
+
+    /**
+     * Return the plugins available for the organization with the given [organizationId] using the admin configuration
+     * from the given config [context], or an error if the organization does not exist. Disabled plugins and restricted
+     * plugins without a template for the organization are excluded. The default values of the plugin options are taken
+     * from the templates for the organization. The report definitions from the admin configuration are added as
+     * reporters and replace the reporters they use, if these reporters are available.
+     */
+    internal suspend fun getPluginsForOrganization(
+        organizationId: OrganizationId,
+        context: ResolvedConfigContext
+    ): Result<List<PreconfiguredPluginDescriptor>, TemplateError> = db.transaction {
+        validateOrganizationExists(organizationId).onErr { return@transaction it.toErr() }
+
+        val reportDefinitions = adminConfigService.loadAdminConfig(context).reporterConfig.resolvedReportDefinitions
+
+        val plugins = getAvailablePlugins(organizationId).withReportDefinitions(reportDefinitions)
+            .map { (plugin, template) -> plugin.toPreconfiguredPluginDescriptor(template) }
+
+        Ok(plugins)
+    }
+
     /** Return the plugin template with the given [templateName], [pluginType], and [pluginId]. */
-    internal fun getTemplate(
+    internal suspend fun getTemplate(
         templateName: String, pluginType: PluginType, pluginId: String
-    ): Result<PluginTemplate, TemplateError> = db.blockingQuery {
+    ): Result<PluginTemplate, TemplateError> = db.transaction {
         validatePlugin(pluginType, pluginId)
             .map { normalizedPluginId ->
                 GetPluginTemplateQuery(templateName, pluginType, normalizedPluginId).execute()
@@ -280,11 +288,11 @@ class PluginTemplateService(
      *  [organizationId]. This is either a template that is assigned to the organization, a global template if no
      *  template is assigned to the organization, or `null` if no template exists for the organization.
      */
-    fun getTemplateForOrganization(
+    suspend fun getTemplateForOrganization(
         pluginType: PluginType,
         pluginId: String,
         organizationId: OrganizationId
-    ): Result<PluginTemplate?, TemplateError> = db.blockingQuery {
+    ): Result<PluginTemplate?, TemplateError> = db.transaction {
         validatePlugin(pluginType, pluginId)
             .map { normalizedPluginId ->
                 GetPluginTemplateForOrganizationQuery(pluginType, normalizedPluginId, organizationId).execute()
@@ -292,9 +300,9 @@ class PluginTemplateService(
     }
 
     /** Return the plugin templates for the given [pluginType] and [pluginId]. */
-    internal fun getTemplates(
+    internal suspend fun getTemplates(
         pluginType: PluginType, pluginId: String
-    ): Result<List<PluginTemplate>, TemplateError> = db.blockingQuery {
+    ): Result<List<PluginTemplate>, TemplateError> = db.transaction {
         validatePlugin(pluginType, pluginId)
             .map { normalizedPluginId -> GetPluginTemplatesQuery(pluginType, normalizedPluginId).execute() }
     }
@@ -303,14 +311,14 @@ class PluginTemplateService(
      * Remove the plugin template with the given [templateName], [pluginType], and [pluginId] from the organization
      * with the given [organizationId].
      */
-    internal fun removeOrganization(
+    internal suspend fun removeOrganization(
         templateName: String,
         pluginType: PluginType,
         pluginId: String,
         organizationId: OrganizationId,
         userId: String
     ): Result<Unit, TemplateError> =
-        db.blockingQuery {
+        db.transaction {
             validatePlugin(pluginType, pluginId)
                 .andThen { normalizedPluginId -> getTemplateState(templateName, pluginType, normalizedPluginId) }
                 .andThen(::validateNotDeleted)
@@ -340,13 +348,13 @@ class PluginTemplateService(
      * Update the plugin template with the given [templateName], [pluginType], and [pluginId] with the provided
      * [options].
      */
-    internal fun updateOptions(
+    internal suspend fun updateOptions(
         templateName: String,
         pluginType: PluginType,
         pluginId: String,
         userId: String,
         options: List<PluginOptionTemplate>
-    ): Result<Unit, TemplateError> = db.blockingQuery {
+    ): Result<Unit, TemplateError> = db.transaction {
         validatePlugin(pluginType, pluginId)
             .andThen { normalizedPluginId -> validatePluginOptions(pluginType, normalizedPluginId, options) }
             .andThen { normalizedPluginId -> getTemplateState(templateName, pluginType, normalizedPluginId) }
@@ -367,11 +375,15 @@ class PluginTemplateService(
 
     /**
      * Validate the provided [pluginConfigs] against the admin configuration for the provided
-     * [organization][organizationId].
+     * [organization][organizationId]. Reporters can also be referenced by the names of the report definitions from
+     * the admin configuration of the given config [context]. In this case, the reporter plugin used by the report
+     * definition is validated, but the options are not checked against the final options of a template for this
+     * plugin, because templates are not applied to report definitions.
      */
-    fun validatePluginConfigs(
+    suspend fun validatePluginConfigs(
         pluginConfigs: Map<PluginType, Map<String, ResolvablePluginConfig>>,
-        organizationId: OrganizationId
+        organizationId: OrganizationId,
+        context: ResolvedConfigContext
     ): PluginConfigValidationResult {
         validateOrganizationExists(organizationId).onErr { error ->
             return PluginConfigValidationResult(listOf(error.message))
@@ -380,8 +392,18 @@ class PluginTemplateService(
         val plugins = pluginService.getPlugins()
         val errors = mutableListOf<String>()
 
+        val reporterConfig = if (pluginConfigs[PluginType.REPORTER].isNullOrEmpty()) {
+            null
+        } else {
+            adminConfigService.loadAdminConfig(context).reporterConfig
+        }
+
         pluginConfigs.forEach { (pluginType, configs) ->
-            configs.forEach { (pluginId, config) ->
+            configs.forEach { (configuredId, config) ->
+                val reportDefinition = reporterConfig?.takeIf { pluginType == PluginType.REPORTER }
+                    ?.getReportDefinition(configuredId)
+                val pluginId = reportDefinition?.pluginId ?: configuredId
+
                 val descriptor = plugins.singleOrNull {
                     it.type == pluginType && it.id == normalizePluginId(pluginType, pluginId)
                 }
@@ -425,7 +447,10 @@ class PluginTemplateService(
                         else -> value
                     }
 
-                    if (templateOption?.isFinal == true && configValue != templateOption.value) {
+                    // Templates are not applied to report definitions, so their final options do not apply either.
+                    if (reportDefinition == null && templateOption?.isFinal == true &&
+                        configValue != templateOption.value
+                    ) {
                         errors += "The plugin option '$option' for the plugin with type '$pluginType' and ID " +
                                 "'$pluginId' is set to a fixed value by the server administrators and cannot be" +
                                 " changed."
@@ -438,7 +463,7 @@ class PluginTemplateService(
     }
 
     /** Returns the [PluginTemplateState] with the given [templateName], [pluginType], and [pluginId] if it exists. */
-    private fun getTemplateState(
+    private suspend fun getTemplateState(
         templateName: String,
         pluginType: PluginType,
         pluginId: String
@@ -458,7 +483,7 @@ class PluginTemplateService(
      * Returns the [PluginTemplateState] with the given [templateName], [pluginType], and [pluginId] if it exists, or
      * an empty template state if it does not exist.
      */
-    private fun getTemplateStateOrEmpty(
+    private suspend fun getTemplateStateOrEmpty(
         templateName: String,
         pluginType: PluginType,
         pluginId: String
@@ -483,7 +508,7 @@ class PluginTemplateService(
      * Validate that no plugin template with the given [templateName], [pluginType], and [pluginId] already exists and
      * return the [pluginId] on success.
      */
-    private fun validateNotExisting(
+    private suspend fun validateNotExisting(
         templateName: String,
         pluginType: PluginType,
         pluginId: String
@@ -501,17 +526,15 @@ class PluginTemplateService(
     }
 
     /** Validate that the organization with the given [organizationId] exists. */
-    private fun validateOrganizationExists(organizationId: OrganizationId): Result<Unit, TemplateError> =
-        runBlocking {
-            if (organizationRepository.get(organizationId.value) == null) {
-                TemplateError.NotFound("No organization with ID '$organizationId' found.").toErr()
-            } else {
-                Ok(Unit)
-            }
+    private suspend fun validateOrganizationExists(organizationId: OrganizationId): Result<Unit, TemplateError> =
+        if (organizationRepository.get(organizationId.value) == null) {
+            TemplateError.NotFound("No organization with ID '$organizationId' found.").toErr()
+        } else {
+            Ok(Unit)
         }
 
     /** Validate that there is no other global template for the same plugin. */
-    private fun validateNoOtherGlobalTemplate(
+    private suspend fun validateNoOtherGlobalTemplate(
         template: PluginTemplateState
     ): Result<PluginTemplateState, TemplateError> =
         getTemplates(template.pluginType, template.pluginId).map { templates ->
@@ -539,7 +562,7 @@ class PluginTemplateService(
      * Validate that the provided [options] are valid for the given [pluginType] and [pluginId]. Returns the plugin ID
      * on success.
      */
-    private fun validatePluginOptions(
+    private suspend fun validatePluginOptions(
         pluginType: PluginType,
         pluginId: String,
         options: List<PluginOptionTemplate>
@@ -587,6 +610,48 @@ class PluginTemplateService(
         return Ok(pluginId)
     }
 }
+
+/** A plugin that is available for an organization, together with the [template] that applies to it, if any. */
+internal data class AvailablePlugin(val plugin: PluginDescriptor, val template: PluginTemplate?)
+
+/**
+ * Convert this [PluginDescriptor] to a [PreconfiguredPluginDescriptor], using the values from the given [template] as
+ * the default values of the plugin options.
+ */
+private fun PluginDescriptor.toPreconfiguredPluginDescriptor(template: PluginTemplate?) =
+    PreconfiguredPluginDescriptor(
+        id = id,
+        type = type,
+        displayName = displayName,
+        summary = summary,
+        description = description,
+        options = options.map { option ->
+            val templateOption = template?.options?.find { it.option == option.name }
+
+            val defaultValue = when (option.type) {
+                PluginOptionType.SECRET -> {
+                    // Do not expose the name of config secrets used by admins. Return a placeholder instead, so that
+                    // users can see that there is a default value. Also ignore the default value of the option,
+                    // because secret options should never have default values, and if they had, they would not work
+                    // with the way the server handles secret options.
+                    if (templateOption?.value != null) ADMIN_SECRET_PLACEHOLDER else null
+                }
+
+                else -> templateOption?.value ?: option.defaultValue
+            }
+
+            PreconfiguredPluginOption(
+                name = option.name,
+                description = option.description,
+                type = option.type,
+                enumEntries = option.enumEntries,
+                defaultValue = defaultValue,
+                isFixed = templateOption?.isFinal == true,
+                isNullable = option.isNullable,
+                isRequired = option.isRequired
+            )
+        }
+    )
 
 sealed interface TemplateError {
     val message: String

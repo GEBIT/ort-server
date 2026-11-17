@@ -21,9 +21,11 @@ package org.eclipse.apoapsis.ortserver.core.apiDocs
 
 import io.github.smiley4.ktoropenapi.config.RouteConfig
 
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 
 import org.eclipse.apoapsis.ortserver.api.v1.model.AdvisorDetails
 import org.eclipse.apoapsis.ortserver.api.v1.model.ComparisonOperator
@@ -61,6 +63,7 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.VulnerabilityWithDetails
 import org.eclipse.apoapsis.ortserver.shared.apimodel.AppliedIssueResolution
 import org.eclipse.apoapsis.ortserver.shared.apimodel.AppliedRuleViolationResolution
 import org.eclipse.apoapsis.ortserver.shared.apimodel.AppliedVulnerabilityResolution
+import org.eclipse.apoapsis.ortserver.shared.apimodel.ErrorResponse
 import org.eclipse.apoapsis.ortserver.shared.apimodel.Identifier
 import org.eclipse.apoapsis.ortserver.shared.apimodel.IssueResolution
 import org.eclipse.apoapsis.ortserver.shared.apimodel.IssueResolutionReason
@@ -112,10 +115,16 @@ val getRun: RouteConfig.() -> Unit = {
                         resolvedJobConfigContext = "32f955941e94d0a318e1c985903f42af924e9050",
                         traceId = "35b67724-a85a-4cc4-b2a4-60fd914634e7",
                         environmentConfigPath = null,
-                        userDisplayName = UserDisplayName("john.doe", "John Doe")
+                        userDisplayName = UserDisplayName("john.doe", "John Doe"),
+                        paths = examplePathIncludesExcludes,
+                        scopes = exampleScopeIncludesExcludes
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The ORT run does not exist."
         }
     }
 }
@@ -183,7 +192,7 @@ val getRunLogs: RouteConfig.() -> Unit = {
 
         queryParameter<String>("level") {
             description = "The log level; can be one of " +
-                    LogLevel.entries.joinToString { "'$it'" } + " (ignoring case)." +
+                    LogLevel.entries.joinToString { "'$it'" } + " (ignoring case). " +
                     "Only logs of this level or higher are retrieved. Defaults to 'INFO' if missing."
         }
 
@@ -197,6 +206,12 @@ val getRunLogs: RouteConfig.() -> Unit = {
     response {
         HttpStatusCode.OK to {
             description = "Success. The response body contains a Zip archive with the selected log files."
+            header<String>("Content-Type") {
+                description = "The content type is set to 'application/zip'."
+            }
+            header<String>("Content-Disposition") {
+                description = "Contains the suggested file name of the archive."
+            }
         }
 
         HttpStatusCode.NotFound to {
@@ -213,8 +228,7 @@ val getRunIssues: RouteConfig.() -> Unit = {
     operationId = "getRunIssues"
     summary = "Get the issues of an ORT run"
     description = "Supported sort fields are 'timestamp', 'source', 'message', 'severity', 'affectedPath', " +
-            "'identifier', 'purl', 'status', and 'worker'. Package ID tables use 'identifier' or 'purl'; status, " +
-            "severity, and source can also be sorted."
+            "'identifier', 'purl', 'status', and 'worker'."
     tags = listOf("Runs")
 
     request {
@@ -262,6 +276,7 @@ val getRunIssues: RouteConfig.() -> Unit = {
                                 severity = Severity.ERROR,
                                 source = "source",
                                 timestamp = CREATED_AT,
+                                howToFix = "Upgrade the affected dependency to version **2.0** or later.",
                                 resolutions = listOf(
                                     AppliedIssueResolution(
                                         message = "An issue",
@@ -302,11 +317,25 @@ val getRunIssues: RouteConfig.() -> Unit = {
 val getRunVulnerabilities: RouteConfig.() -> Unit = {
     operationId = "getRunVulnerabilities"
     summary = "Get the vulnerabilities found in an ORT run"
+    description = """
+        Supported sort fields are 'rating', 'externalId', 'identifier', and 'purl'.
+
+        The vulnerabilities are prepared for querying when they are requested for the first time. Usually, the request
+        waits until they are prepared. If that takes too long, the response has the status 'Service Unavailable' and a
+        'Retry-After' header with the number of seconds after which the request should be repeated. Clients that send
+        the header 'Prefer: respond-async' receive the status 'Accepted' instead, after a shorter time.
+    """.trimIndent()
     tags = listOf("Runs")
 
     request {
         pathParameter<Long>("runId") {
             description = "The ID of the ORT run."
+        }
+
+        headerParameter<String>(HttpHeaders.Prefer) {
+            description = "Set to 'respond-async' to receive the status 'Accepted' while the vulnerabilities are " +
+                    "being prepared."
+            required = false
         }
 
         standardListQueryParameters()
@@ -332,8 +361,9 @@ val getRunVulnerabilities: RouteConfig.() -> Unit = {
 
         queryParameter<String>("rating") {
             description = "Defines the ratings to filter the results by. This is a comma-separated string with the " +
-                    "following allowed ratings: " + VulnerabilityRating.entries.joinToString { "'$it" } + ". Add a " +
-                    "minus as the first item to exclude packages with the specified ratings, e.g. '-,HIGH'."
+                    "following allowed ratings: " + VulnerabilityRating.entries.joinToString { "'$it'" } +
+                    " (ignoring case). Add a minus as the first item to exclude vulnerabilities with the specified " +
+                    "ratings, e.g. '-,HIGH'."
         }
 
         queryParameter<String>("identifier") {
@@ -413,8 +443,36 @@ val getRunVulnerabilities: RouteConfig.() -> Unit = {
             }
         }
 
+        HttpStatusCode.Accepted to {
+            description = "The vulnerabilities are being prepared and the client prefers an asynchronous response. " +
+                    "Repeat the request after the time given in the 'Retry-After' header."
+            header<Int>(HttpHeaders.RetryAfter) {
+                description = "The number of seconds after which the request should be repeated."
+            }
+            header<String>(HttpHeaders.PreferenceApplied) {
+                description = "Set to 'respond-async' if the preference for an asynchronous response was applied."
+            }
+        }
+
+        HttpStatusCode.ServiceUnavailable to {
+            description = "The vulnerabilities are still being prepared. Repeat the request after the time given in " +
+                    "the 'Retry-After' header."
+            header<Int>(HttpHeaders.RetryAfter) {
+                description = "The number of seconds after which the request should be repeated."
+            }
+        }
+
+        HttpStatusCode.InternalServerError to {
+            description = "Preparing the vulnerabilities failed. They are prepared again on a later request."
+            jsonBody<ErrorResponse> {}
+        }
+
         HttpStatusCode.NotFound to {
             description = "The ORT run does not exist."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "An unsupported sort field was provided."
         }
     }
 }
@@ -606,6 +664,13 @@ val getRunRuleViolationRules: RouteConfig.() -> Unit = {
 val getRunPackages: RouteConfig.() -> Unit = {
     operationId = "getRunPackages"
     summary = "Get the packages found in an ORT run"
+    description = "Supported sort fields are 'identifier', 'purl', 'processedDeclaredLicense', and 'publishedAt'. " +
+            "By default, packages are sorted by purl in ascending order. When sorting by 'publishedAt', packages " +
+            "with an unknown publication date come last in both directions. A package's 'publishedAt' is the date " +
+            "from its applied curation with the highest priority that has one, or else the package's own date. " +
+            "Publication dates are provided by package curation providers such as 'ClearlyDefined' or " +
+            "'OpenSourceInsights', which must be enabled in the analyzer job configuration of the run. Dates are " +
+            "not known for every package."
     tags = listOf("Runs")
 
     request {
@@ -615,7 +680,12 @@ val getRunPackages: RouteConfig.() -> Unit = {
 
         queryParameter<String>("identifier") {
             description = "Defines an ORT package identifier for which the packages are to be retrieved. This uses a " +
-                    "case-insensitive substring match."
+                    "case-insensitive substring match by default."
+        }
+
+        queryParameter<String>("identifierMatchType") {
+            description = "How to match the identifier filter: 'substring' performs a case-insensitive substring " +
+                    "match (the default), while 'exact' performs case-sensitive equality."
         }
 
         queryParameter<String>("purl") {
@@ -666,6 +736,7 @@ val getRunPackages: RouteConfig.() -> Unit = {
                                 isModified = false,
                                 sourceCodeOrigins = null,
                                 labels = emptyMap(),
+                                publishedAt = Instant.parse("2024-05-06T07:08:09Z"),
                                 shortestDependencyPaths = listOf(
                                     ShortestDependencyPath(
                                         scope = "productionRuntimeClasspath",
@@ -680,7 +751,7 @@ val getRunPackages: RouteConfig.() -> Unit = {
                                     PackageCuration(
                                         providerName = "Example",
                                         data = PackageCurationData(
-                                            comment = "Fix the homepage URL.",
+                                            comment = "Fix the homepage URL and add the publication date.",
                                             purl = null,
                                             cpe = null,
                                             authors = null,
@@ -694,7 +765,8 @@ val getRunPackages: RouteConfig.() -> Unit = {
                                             isModified = null,
                                             declaredLicenseMapping = emptyMap(),
                                             sourceCodeOrigins = null,
-                                            labels = emptyMap()
+                                            labels = emptyMap(),
+                                            publishedAt = Instant.parse("2024-05-06T07:08:09Z")
                                         )
                                     )
                                 )
@@ -729,6 +801,10 @@ val getRunPackages: RouteConfig.() -> Unit = {
         HttpStatusCode.NotFound to {
             description = "The ORT run does not exist."
         }
+
+        HttpStatusCode.BadRequest to {
+            description = "If 'identifierMatchType' or the sort field has an unsupported value."
+        }
     }
 }
 
@@ -745,7 +821,12 @@ val getRunProjects: RouteConfig.() -> Unit = {
 
         queryParameter<String>("identifier") {
             description = "Defines an ORT project identifier to filter the results by. Uses a case-insensitive " +
-                    "substring match against the full ORT coordinates."
+                    "substring match against the full ORT coordinates by default."
+        }
+
+        queryParameter<String>("identifierMatchType") {
+            description = "How to match the identifier filter: 'substring' performs a case-insensitive substring " +
+                    "match (the default), while 'exact' performs case-sensitive equality."
         }
 
         queryParameter<String>("declaredLicense") {
@@ -792,7 +873,7 @@ val getRunProjects: RouteConfig.() -> Unit = {
                             limit = 20,
                             offset = 0,
                             totalCount = 1,
-                            sortProperties = listOf(SortProperty("identifier", SortDirection.ASCENDING))
+                            sortProperties = listOf(SortProperty("id", SortDirection.ASCENDING))
                         ),
                         ProjectFilters(
                             identifier = FilterOperatorAndValue(ComparisonOperator.ILIKE, "org.namespace"),
@@ -806,6 +887,10 @@ val getRunProjects: RouteConfig.() -> Unit = {
 
         HttpStatusCode.NotFound to {
             description = "The ORT run does not exist."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "If 'identifierMatchType' or the sort field has an unsupported value."
         }
     }
 }
@@ -981,13 +1066,17 @@ val getRunStatistics: RouteConfig.() -> Unit = {
                 }
             }
         }
+
+        HttpStatusCode.NotFound to {
+            description = "The ORT run does not exist."
+        }
     }
 }
 
 val getRunPackageLicenses: RouteConfig.() -> Unit = {
     operationId = "getRunPackageLicenses"
     summary = "Get the declared licenses for packages found in an ORT run"
-    description = "The response contains independently deduplicated and alphabetically sorted processed and " +
+    description = "The response contains independently deduplicated and case-insensitively sorted processed and " +
             "unmapped declared licenses."
     tags = listOf("Runs")
 
@@ -1010,6 +1099,10 @@ val getRunPackageLicenses: RouteConfig.() -> Unit = {
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The ORT run does not exist."
         }
     }
 }

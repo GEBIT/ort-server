@@ -29,7 +29,7 @@ import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
-import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.mockk
 
 import org.eclipse.apoapsis.ortserver.components.resolutions.issues.IssueResolutionService
@@ -42,6 +42,7 @@ import org.eclipse.apoapsis.ortserver.model.runs.repository.ResolutionSource
 import org.eclipse.apoapsis.ortserver.services.ortrun.IssueService
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrtRunService
 import org.eclipse.apoapsis.ortserver.services.ortrun.mapToModel
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.Database
 
@@ -63,6 +64,8 @@ import org.ossreviewtoolkit.model.config.Resolutions
  * unresolved in the UI despite having a matching resolution.
  */
 class MatchResolutionsIdentifierRegressionTest : WordSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     lateinit var db: Database
@@ -102,7 +105,7 @@ class MatchResolutionsIdentifierRegressionTest : WordSpec({
         // No resolutions managed by the server are used in these tests, so the resolution service can just return
         // an empty list.
         val issueResolutionService = mockk<IssueResolutionService> {
-            every { getResolutionsForRepository(any()) } returns Ok(emptyList())
+            coEvery { getResolutionsForRepository(any()) } returns Ok(emptyList())
         }
         issueService = IssueService(db, ortRunService, issueResolutionService)
     }

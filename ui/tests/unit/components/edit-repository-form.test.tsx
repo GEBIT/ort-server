@@ -26,6 +26,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { EditRepositoryForm } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/settings/-components/edit-repository-form';
 
 describe('EditRepositoryForm', () => {
+  // The form reads `formState.isValid` during render, on the compiled form.
+
   it('enables submitting only when the URL is valid', async () => {
     const user = userEvent.setup();
 
@@ -44,16 +46,8 @@ describe('EditRepositoryForm', () => {
     );
 
     const urlInput = screen.getByLabelText('URL');
-    const typeInput = screen.getByLabelText('Type');
     const submitButton = screen.getByRole('button', { name: 'Submit' });
-    const urlField = urlInput.closest('[data-slot="form-item"]');
-    const typeField = typeInput.closest('[data-slot="form-item"]');
 
-    expect(urlField?.parentElement).toBe(typeField?.parentElement);
-    expect(urlField?.parentElement).toHaveClass(
-      'grid',
-      'md:grid-cols-[minmax(0,1fr)_auto]'
-    );
     await waitFor(() => expect(submitButton).toBeEnabled());
 
     for (const invalidUrl of ['not a URL', 's:', 'httttps:']) {

@@ -20,11 +20,11 @@
 import { useQuery, useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { PlusIcon } from 'lucide-react';
-import { useMemo } from 'react';
 import z from 'zod';
 
 import { Organization } from '@/api';
 import { getOrganizationsOptions } from '@/api/@tanstack/react-query.gen';
+import { ActionTooltipTrigger } from '@/components/action-tooltip-trigger';
 import { DataTable } from '@/components/data-table/data-table';
 import { OrganizationFavoriteButton } from '@/components/favorite-button';
 import { LoadingIndicator } from '@/components/loading-indicator';
@@ -36,11 +36,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent } from '@/components/ui/tooltip';
 import {
   createAppColumnHelper,
   selectNoTableState,
@@ -64,18 +60,9 @@ export const OrganizationsPage = () => {
   const navigate = Route.useNavigate();
   const { isSuperuser } = useIsSuperuser();
 
-  const pageIndex = useMemo(
-    () => (search.page ? search.page - 1 : 0),
-    [search.page]
-  );
-  const pageSize = useMemo(
-    () => (search.pageSize ? search.pageSize : orgPageSize),
-    [search.pageSize, orgPageSize]
-  );
-  const nameFilter = useMemo(
-    () => (search.filter ? search.filter : undefined),
-    [search.filter]
-  );
+  const pageIndex = search.page ? search.page - 1 : 0;
+  const pageSize = search.pageSize ? search.pageSize : orgPageSize;
+  const nameFilter = search.filter ? search.filter : undefined;
 
   const { data: totalOrganizations } = useSuspenseQuery({
     ...getOrganizationsOptions({
@@ -100,49 +87,45 @@ export const OrganizationsPage = () => {
     staleTime: routePrefetchStaleTime,
   });
 
-  const columns = useMemo(
-    () =>
-      columnHelper.columns([
-        columnHelper.accessor('name', {
-          id: 'organization',
-          header: 'Organizations',
-          cell: ({ row }) => (
-            <>
-              <div className='flex items-center gap-1.5'>
-                <Link
-                  className='font-semibold text-blue-400 hover:underline'
-                  to={`/organizations/$orgId`}
-                  params={{ orgId: row.original.id.toString() }}
-                >
-                  {row.original.name}
-                </Link>
-                <OrganizationFavoriteButton
-                  organization={row.original}
-                  size='xs'
-                  variant='ghost'
-                  className='size-6 p-0'
-                />
-              </div>
+  const columns = columnHelper.columns([
+    columnHelper.accessor('name', {
+      id: 'organization',
+      header: 'Organizations',
+      cell: ({ row }) => (
+        <>
+          <div className='flex items-center gap-1.5'>
+            <Link
+              className='font-semibold text-blue-400 hover:underline'
+              to={`/organizations/$orgId`}
+              params={{ orgId: row.original.id.toString() }}
+            >
+              {row.original.name}
+            </Link>
+            <OrganizationFavoriteButton
+              organization={row.original}
+              size='xs'
+              variant='ghost'
+              className='size-6 p-0'
+            />
+          </div>
 
-              <div className='text-muted-foreground hidden text-sm md:inline'>
-                {row.original.description}
-              </div>
-            </>
-          ),
-          meta: {
-            filter: {
-              filterVariant: 'regex',
-              setFilterValue: (value: string | undefined) => {
-                navigate({
-                  search: { ...search, page: 1, filter: value },
-                });
-              },
-            },
+          <div className='text-muted-foreground hidden text-sm md:inline'>
+            {row.original.description}
+          </div>
+        </>
+      ),
+      meta: {
+        filter: {
+          filterVariant: 'regex',
+          setFilterValue: (value: string | undefined) => {
+            navigate({
+              search: { ...search, page: 1, filter: value },
+            });
           },
-        }),
-      ]),
-    [navigate, search]
-  );
+        },
+      },
+    }),
+  ]);
 
   const table = useAppTable(
     {
@@ -189,7 +172,7 @@ export const OrganizationsPage = () => {
         </CardDescription>
         <div className='py-2'>
           <Tooltip>
-            <TooltipTrigger asChild>
+            <ActionTooltipTrigger disabled={isSuperuser === false}>
               <Button
                 asChild
                 size='sm'
@@ -201,7 +184,7 @@ export const OrganizationsPage = () => {
                   <PlusIcon className='h-4 w-4' />
                 </Link>
               </Button>
-            </TooltipTrigger>
+            </ActionTooltipTrigger>
             <TooltipContent>
               {isSuperuser !== false
                 ? 'Add an organization for managing products'

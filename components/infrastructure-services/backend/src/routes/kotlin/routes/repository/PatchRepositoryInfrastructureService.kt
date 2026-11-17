@@ -41,7 +41,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 
 internal fun Route.patchRepositoryInfrastructureService(
     infrastructureServiceService: InfrastructureServiceService
-) = patch("/repositories/{repositoryId}/infrastructure-services/{serviceName}", {
+) = patch("repositories/{repositoryId}/infrastructure-services/{serviceName}", {
     operationId = "patchRepositoryInfrastructureService"
     summary = "Update an infrastructure service for a repository"
     tags = listOf("Repositories")
@@ -63,7 +63,8 @@ internal fun Route.patchRepositoryInfrastructureService(
                     credentialsTypes = setOf(CredentialsType.NETRC_FILE).asPresent()
                 )
             }
-            description = "Set the values that should be updated. To delete a value, set it explicitly to null."
+            description = "Set the values that should be updated. Omitted values are not changed. To delete the " +
+                    "description, set it explicitly to null."
         }
     }
 
@@ -82,6 +83,10 @@ internal fun Route.patchRepositoryInfrastructureService(
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The repository or the infrastructure service does not exist."
         }
     }
 }, requirePermission(RepositoryPermission.WRITE)) {

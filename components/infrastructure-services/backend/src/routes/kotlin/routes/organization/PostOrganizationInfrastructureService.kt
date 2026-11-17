@@ -38,7 +38,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
 
 internal fun Route.postOrganizationInfrastructureService(
     infrastructureServiceService: InfrastructureServiceService
-) = post("/organizations/{organizationId}/infrastructure-services", {
+) = post("organizations/{organizationId}/infrastructure-services", {
     operationId = "postOrganizationInfrastructureService"
     summary = "Create an infrastructure service for an organization"
     tags = listOf("Organizations")
@@ -74,6 +74,14 @@ internal fun Route.postOrganizationInfrastructureService(
                     )
                 }
             }
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The infrastructure service name is invalid."
+        }
+
+        HttpStatusCode.Conflict to {
+            description = "An infrastructure service with the same name already exists."
         }
     }
 }, requirePermission(OrganizationPermission.WRITE)) {

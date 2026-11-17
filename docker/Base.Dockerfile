@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.27
+# syntax=docker/dockerfile:1.29
 
 # Copyright (C) 2020 The ORT Project Authors (see <https://github.com/oss-review-toolkit/ort/blob/main/NOTICE>)
 # Copyright (C) 2025 The ORT Server Authors (See <https://github.com/eclipse-apoapsis/ort-server/blob/main/NOTICE>)
@@ -22,7 +22,7 @@
 # setting file permissions for the user, setting up certificates, etc. And, it defines the temurin base image.
 
 ARG CREDENTIAL_HELPER_VERSION=0.2.1
-ARG TEMURIN_VERSION=25.0.4_7-jdk-noble@sha256:534968c051301957beae735e7ba1db54d99ddecf08746d3b9d4f318cc132dbc3
+ARG TEMURIN_VERSION=25.0.5_8-jdk-noble@sha256:80f67fb3d6f76e2d817d98a4cc2a9cf05f054d4e6adc5e2144bde671d722e63f
 
 FROM alpine:3.24 AS credential-helper
 
@@ -114,11 +114,11 @@ RUN echo "$USERNAME ALL=(root) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME \
     && chmod 0440 /etc/sudoers.d/$USERNAME
 
 # Support for custom certificates at build time.
-COPY scripts/*.sh /etc/scripts/
+COPY --chmod=755 scripts/*.sh /etc/scripts/
 
 # Set this to a directory containing CRT-files for custom certificates that ORT and all build tools should know about.
 ARG CRT_FILES="*.crt"
-COPY "$CRT_FILES" /tmp/certificates/
+COPY --chmod=644 "$CRT_FILES" /tmp/certificates/
 
 RUN /etc/scripts/export_proxy_certificates.sh /tmp/certificates/ \
     &&  /etc/scripts/import_certificates.sh /tmp/certificates/ \

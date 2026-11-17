@@ -42,16 +42,13 @@ vi.mock('@/hooks/use-authorization', () => ({
 }));
 
 const renderCard = () =>
-  renderStaticWithRouter(
-    <OrganizationProductsStatisticsCard orgId='42' className='col-span-2' />,
-    {
-      path: '/organizations/42',
-      routes: [
-        { path: '/organizations/$orgId' },
-        { path: '/organizations/$orgId/create-product' },
-      ],
-    }
-  );
+  renderStaticWithRouter(<OrganizationProductsStatisticsCard orgId='42' />, {
+    path: '/organizations/42',
+    routes: [
+      { path: '/organizations/$orgId' },
+      { path: '/organizations/$orgId/create-product' },
+    ],
+  });
 
 describe('OrganizationProductsStatisticsCard', () => {
   beforeEach(() => {
@@ -73,7 +70,6 @@ describe('OrganizationProductsStatisticsCard', () => {
     expect(markup).toContain('>12<');
     expect(markup).toContain('Add product');
     expect(markup).toContain('href="/organizations/42/create-product"');
-    expect(markup).toContain('col-span-2');
     expect(mocks.useOrganizationPermission).toHaveBeenCalledWith(
       42,
       'CREATE_PRODUCT'
@@ -86,5 +82,7 @@ describe('OrganizationProductsStatisticsCard', () => {
     const markup = await renderCard();
 
     expect(markup).toContain('aria-disabled="true"');
+    // Without a target, the link cannot be followed by mouse or keyboard.
+    expect(markup).not.toContain('href="/organizations/42/create-product"');
   });
 });

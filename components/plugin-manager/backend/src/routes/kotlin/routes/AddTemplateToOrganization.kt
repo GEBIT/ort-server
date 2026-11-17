@@ -19,9 +19,7 @@
 
 package org.eclipse.apoapsis.ortserver.components.pluginmanager.routes
 
-import com.github.michaelbull.result.onErr
-import com.github.michaelbull.result.onOk
-
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -31,22 +29,23 @@ import org.eclipse.apoapsis.ortserver.components.authorization.routes.post
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.requireSuperuser
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginTemplateService
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginType
-import org.eclipse.apoapsis.ortserver.components.pluginmanager.TemplateError
+import org.eclipse.apoapsis.ortserver.components.pluginmanager.handleTemplateResult
 import org.eclipse.apoapsis.ortserver.model.OrganizationId
+import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireEnumParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 
 internal fun Route.addTemplateToOrganization(
     pluginTemplateService: PluginTemplateService
-) = post("/admin/plugins/{pluginType}/{pluginId}/templates/{templateName}/addToOrganization", {
-    operationId = "AddTemplateToOrganization"
+) = post("admin/plugins/{pluginType}/{pluginId}/templates/{templateName}/addToOrganization", {
+    operationId = "addTemplateToOrganization"
     summary = "Add a plugin template to an organization"
     description = "Add a template to an organization. Only one template for a plugin can be assigned to an " +
             "organization at the same time. An organization-specific template will override any global templates."
     tags = listOf("Plugins")
 
     request {
-        pathParameter<String>("pluginType") {
+        pathParameter<PluginType>("pluginType") {
             description = "The type of the plugin this template is for."
             required = true
         }
@@ -61,7 +60,7 @@ internal fun Route.addTemplateToOrganization(
             required = true
         }
 
-        queryParameter<String>("organizationId") {
+        queryParameter<Long>("organizationId") {
             description = "The ID of the organization to which the template should be added."
             required = true
         }
@@ -70,30 +69,32 @@ internal fun Route.addTemplateToOrganization(
     response {
         HttpStatusCode.OK to {
             description = "The template was successfully added to the organization."
+            body<String> {
+                mediaTypes = setOf(ContentType.Text.Plain)
+                example("Success message") {
+                    value = "Template added to organization successfully."
+                }
+            }
         }
 
         HttpStatusCode.NotFound to {
-            description = "The specified plugin, plugin template, or organization does not exist."
+            description = "The template or the organization does not exist."
         }
 
         HttpStatusCode.BadRequest to {
-            description = "The template is already assigned to the organization."
+            description = "The specified plugin is not installed, the template was deleted, or the template is " +
+                    "already assigned to the organization. An invalid plugin type also results in this status."
         }
     }
 }, requireSuperuser()) {
     val userId = requirePrincipal().userId
-    val pluginType = enumValueOf<PluginType>(call.requireParameter("pluginType"))
+    val pluginType = call.requireEnumParameter<PluginType>("pluginType")
     val pluginId = call.requireParameter("pluginId")
     val templateName = call.requireParameter("templateName")
     val organizationId = OrganizationId(call.requireIdParameter("organizationId"))
 
-    pluginTemplateService.addOrganization(templateName, pluginType, pluginId, organizationId, userId).onOk {
-        call.respond(HttpStatusCode.OK, "Template added to organization successfully.")
-    }.onErr {
-        when (it) {
-            is TemplateError.InvalidPlugin -> call.respond(HttpStatusCode.BadRequest, it.message)
-            is TemplateError.InvalidState -> call.respond(HttpStatusCode.BadRequest, it.message)
-            is TemplateError.NotFound -> call.respond(HttpStatusCode.NotFound, it.message)
+    pluginTemplateService.addOrganization(templateName, pluginType, pluginId, organizationId, userId)
+        .handleTemplateResult {
+            call.respond(HttpStatusCode.OK, "Template added to organization successfully.")
         }
-    }
 }

@@ -17,57 +17,59 @@
 
 [versions]
 # Gradle plugins
-buildConfigPlugin = "6.0.10"
+buildConfigPlugin = "6.1.2"
 detektPlugin = "2.0.0-alpha.6"
-gitSemverPlugin = "0.19.5"
-koinCompilerPlugin = "1.1.0"
-tinyJibPlugin = "0.4.0"
-kotlinPlugin = "2.4.20"
+gitSemverPlugin = "0.19.6"
+koinCompilerPlugin = "1.2.3"
+tinyJibPlugin = "0.5.0"
+kotlinPlugin = "2.4.21"
 kotlinxCoroutines = "1.11.0"
-kotlinxSerialization = "1.11.0"
-kspPlugin = "2.3.11"
+kotlinxSerialization = "1.13.0"
+kspPlugin = "2.3.13"
 mavenPublishPlugin = "0.37.0"
 
 # Gradle dependencies
 aedile = "3.0.4"
-awsSdk = "1.8.47"
-azureIdentity = "1.18.6"
-azureMessagingServicebus = "7.17.20"
-azureSecurityKeyvaultSecrets = "4.11.2"
-azureStorageBlob = "12.35.1"
+awsSdk = "1.9.32"
+azureIdentity = "1.19.0"
+azureMessagingServicebus = "7.19.1"
+azureSecurityKeyvaultSecrets = "4.13.1"
+azureStorageBlob = "12.37.2"
 clikt = "5.1.0"
 commonsText = "1.15.0"
-exposed = "1.5.0"
-flociTestcontainerVersion = "2.16.1"
-flyway = "13.5.0"
+exposed = "1.6.1"
+flociTestcontainerVersion = "2.17.0"
+flyway = "13.12.2"
 hikari = "7.1.0"
-hoplite = "2.9.0"
-jsonSchemaValidator = "3.0.7"
+hoplite = "3.0.7"
+jsonSchemaValidator = "3.0.9"
+jgit = "7.8.1.202611041320-r"
 kaml = "0.104.0"
 ivy = "2.5.3"
-keycloakTestcontainerVersion = "4.3.1"
+keycloakTestcontainerVersion = "4.4.0"
 koin = "4.2.2"
 konform = "0.11.1"
-kotest = "6.2.4"
+kotest = "6.2.7"
 kotestAssertionsKtor = "2.0.0"
 kotlinResult = "2.3.1"
 ktorOpenApi = "5.7.0"
-ktorRateLimit = "3.5.2"
-kubernetesClient = "27.0.0"
+ktorRateLimit = "3.6.1"
+kubernetesClient = "28.0.0"
 log4j = "2.26.1"
-logback = "1.6.3"
-micrometer = "1.17.1"
-mockk = "1.14.11"
-mordant = "3.1.0"
+logback = "1.6.6"
+micrometer = "1.17.2"
+mockk = "1.14.12"
+mordant = "3.1.1"
+netty = "4.2.20.Final"
 okio = "3.18.2"
-postgres = "42.7.13"
-springSecurityCrypto = "7.1.1"
+postgres = "42.7.14"
+springSecurityCrypto = "7.1.2"
 qpidJmsClient = "2.11.0"
-rabbitMq = "5.35.0"
+rabbitMq = "5.37.1"
 schemaKenerator = "2.7.2"
-slf4j = "2.0.19"
+slf4j = "2.0.20"
 testContainers = "2.0.5"
-typesafeConfig = "1.4.9"
+typesafeConfig = "1.4.10"
 wiremock = "3.13.2"
 
 [plugins]
@@ -103,6 +105,7 @@ hikari = { module = "com.zaxxer:HikariCP", version.ref = "hikari" }
 hoplite-core = { module = "com.sksamuel.hoplite:hoplite-core", version.ref = "hoplite" }
 hoplite-hocon = { module = "com.sksamuel.hoplite:hoplite-hocon", version.ref = "hoplite" }
 jsonSchemaValidator = { module = "com.networknt:json-schema-validator", version.ref = "jsonSchemaValidator" }
+jgit = { module = "org.eclipse.jgit:org.eclipse.jgit", version.ref = "jgit" }
 kaml = { module = "com.charleskorn.kaml:kaml", version.ref = "kaml" }
 ivy = { module = "org.apache.ivy:ivy", version.ref = "ivy" }
 koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
@@ -118,6 +121,7 @@ kotest-framework-engine = { module = "io.kotest:kotest-framework-engine", versio
 kotest-runner-junit5 = { module = "io.kotest:kotest-runner-junit5", version.ref = "kotest" }
 kotlin-bom = { module = "org.jetbrains.kotlin:kotlin-bom", version.ref = "kotlinPlugin" }
 kotlinResult = { module = "com.michael-bull.kotlin-result:kotlin-result", version.ref = "kotlinResult" }
+kotlinResult-coroutines = { module = "com.michael-bull.kotlin-result:kotlin-result-coroutines", version.ref = "kotlinResult" }
 kotlinx-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
 kotlinx-coroutines-slf4j = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-slf4j", version.ref = "kotlinxCoroutines" }
 kotlinx-serialization-core = { module = "org.jetbrains.kotlinx:kotlinx-serialization-core", version.ref = "kotlinxSerialization" }
@@ -127,11 +131,13 @@ ktor-swaggerUi = { module = "io.github.smiley4:ktor-swagger-ui", version.ref = "
 ktor-rateLimit = { module = "io.ktor:ktor-server-rate-limit-jvm", version.ref = "ktorRateLimit" }
 kubernetes-client = { module = "io.kubernetes:client-java", version.ref = "kubernetesClient" }
 kubernetes-clientApiFluent = { module = "io.kubernetes:client-java-api-fluent", version.ref = "kubernetesClient" }
-log4jToSlf4j = { module = "org.apache.logging.log4j:log4j-to-slf4j", version.ref = "log4j" }
+log4j-to-slf4j = { module = "org.apache.logging.log4j:log4j-to-slf4j", version.ref = "log4j" }
 logback = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+micrometerCore = { module = "io.micrometer:micrometer-core", version.ref = "micrometer" }
 micrometerRegistryGraphite = { module = "io.micrometer:micrometer-registry-graphite", version.ref = "micrometer" }
 mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
 mordantCoroutines = { module =  "com.github.ajalt.mordant:mordant-coroutines", version.ref = "mordant" }
+netty-bom = { module = "io.netty:netty-bom", version.ref = "netty" }
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 postgres = { module = "org.postgresql:postgresql", version.ref = "postgres" }
 spring-security-crypto = { module = "org.springframework.security:spring-security-crypto", version.ref = "springSecurityCrypto" }
@@ -144,7 +150,7 @@ schemaKenerator-swagger = { module = "io.github.smiley4:schema-kenerator-swagger
 slf4j = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 sqs = { module = "aws.sdk.kotlin:sqs", version.ref = "awsSdk" }
 testContainers = { module = "org.testcontainers:testcontainers", version.ref = "testContainers" }
-testContainers-floci = { module = "io.floci:testcontainers-floci", version.ref = "flociTestcontainerVersion" }
+testContainers-floci-aws = { module = "io.floci:testcontainers-floci-aws", version.ref = "flociTestcontainerVersion" }
 testContainers-keycloak = { module = "com.github.dasniko:testcontainers-keycloak", version.ref = "keycloakTestcontainerVersion" }
 testContainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql", version.ref = "testContainers" }
 testContainers-rabbitMq = { module = "org.testcontainers:testcontainers-rabbitmq", version.ref = "testContainers" }

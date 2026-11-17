@@ -17,11 +17,10 @@
  * License-Filename: LICENSE
  */
 
-import { UseFormReturn } from 'react-hook-form';
+import { UseFormReturn, useWatch } from 'react-hook-form';
 
 import { PreconfiguredPluginDescriptor, Secret } from '@/api';
-import { MultiSelectField } from '@/components/form/multi-select-field';
-import { PluginMultiSelectField } from '@/components/form/plugin-multi-select-field.tsx';
+import { PluginMultiSelectField } from '@/components/form/plugin-multi-select-field';
 import {
   AccordionContent,
   AccordionItem,
@@ -35,7 +34,11 @@ import {
   FormLabel,
 } from '@/components/ui/form';
 import { Switch } from '@/components/ui/switch';
-import { CreateRunFormValues } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
+import { jobConfigFields } from '@/lib/job-config-fields';
+import {
+  CreateRunFormValues,
+  DefaultPluginSelections,
+} from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
 
 type ReporterFieldsProps = {
   form: UseFormReturn<CreateRunFormValues>;
@@ -45,7 +48,8 @@ type ReporterFieldsProps = {
   isSuperuser: boolean;
   packageConfigurationProviderPlugins: PreconfiguredPluginDescriptor[];
   secrets: Secret[];
-  isRerun: boolean;
+  /** The plugins that are selected by default, to which the plugin lists can be reset, if known. */
+  defaultPluginSelections?: DefaultPluginSelections;
 };
 
 export const ReporterFields = ({
@@ -56,14 +60,12 @@ export const ReporterFields = ({
   isSuperuser,
   packageConfigurationProviderPlugins,
   secrets,
-  isRerun,
+  defaultPluginSelections,
 }: ReporterFieldsProps) => {
-  const reporterOptions = reporterPlugins.map((plugin) => ({
-    id: plugin.id,
-    label: plugin.displayName,
-    summary: plugin.summary,
-  }));
-  const evaluatorEnabled = form.watch('jobConfigs.evaluator.enabled');
+  const evaluatorEnabled = useWatch({
+    control: form.control,
+    name: 'jobConfigs.evaluator.enabled',
+  });
 
   return (
     <div className='flex flex-row align-middle'>
@@ -85,63 +87,34 @@ export const ReporterFields = ({
       <AccordionItem value={value} className='flex-1'>
         <AccordionTrigger onClick={onToggle}>Reporter</AccordionTrigger>
         <AccordionContent className='flex flex-col gap-6'>
-          <MultiSelectField
+          <PluginMultiSelectField
             form={form}
             name='jobConfigs.reporter.formats'
-            label='Report formats'
-            description={
-              <>Select the report formats to generate from the run.</>
-            }
-            options={reporterOptions}
+            defaultPluginIds={defaultPluginSelections?.reporters}
+            configName='jobConfigs.reporter.config'
+            label={jobConfigFields['reporter.formats'].label}
+            description={jobConfigFields['reporter.formats'].description}
+            plugins={reporterPlugins}
+            secrets={secrets}
           />
           {!evaluatorEnabled && (
             <PluginMultiSelectField
               form={form}
               name='jobConfigs.reporter.packageConfigurationProviders'
+              defaultPluginIds={
+                defaultPluginSelections?.packageConfigurationProviders
+              }
               configName='jobConfigs.reporter.packageConfigurationProviderConfig'
-              label='Package configuration providers'
+              label={
+                jobConfigFields['reporter.packageConfigurationProviders'].label
+              }
               description={
-                <>
-                  Configure the package configuration providers to use.
-                  Providers higher in the list take precedence over lower
-                  providers. Change the order of providers via drag & drop.
-                </>
+                jobConfigFields['reporter.packageConfigurationProviders']
+                  .description
               }
               plugins={packageConfigurationProviderPlugins}
               secrets={secrets}
               enableReordering
-              showSelectedPluginsFirst={isRerun}
-            />
-          )}
-          {form.watch('jobConfigs.reporter.formats').includes('WebApp') && (
-            <FormField
-              control={form.control}
-              name='jobConfigs.reporter.deduplicateDependencyTree'
-              render={({ field }) => (
-                <FormItem className='mb-4 flex flex-row items-center justify-between rounded-lg border p-4'>
-                  <div className='space-y-0.5'>
-                    <FormLabel>Deduplicate dependency tree</FormLabel>
-                    <FormDescription>
-                      A flag to control whether subtrees occurring multiple
-                      times in the dependency tree are stripped.
-                    </FormDescription>
-                    <FormDescription>
-                      This will significantly reduce memory consumption of the
-                      Reporter and might alleviate some out-of-memory issues.
-                    </FormDescription>
-                    <FormDescription>
-                      NOTE: This option is currently effective only for the
-                      WebApp report format.
-                    </FormDescription>
-                  </div>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  </FormControl>
-                </FormItem>
-              )}
             />
           )}
           {isSuperuser && (
@@ -151,11 +124,11 @@ export const ReporterFields = ({
               render={({ field }) => (
                 <FormItem className='mb-4 flex flex-row items-center justify-between rounded-lg border p-4'>
                   <div className='space-y-0.5'>
-                    <FormLabel>Keep worker alive</FormLabel>
+                    <FormLabel>
+                      {jobConfigFields['reporter.keepAliveWorker'].label}
+                    </FormLabel>
                     <FormDescription>
-                      A flag to control whether the worker is kept alive for
-                      debugging purposes. This flag only has an effect if the
-                      ORT Server is deployed on Kubernetes.
+                      {jobConfigFields['reporter.keepAliveWorker'].description}
                     </FormDescription>
                   </div>
                   <FormControl>

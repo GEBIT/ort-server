@@ -39,8 +39,11 @@ import org.eclipse.apoapsis.ortserver.model.runs.advisor.AdvisorResult
 import org.eclipse.apoapsis.ortserver.model.runs.advisor.AdvisorRun
 import org.eclipse.apoapsis.ortserver.model.runs.advisor.Vulnerability
 import org.eclipse.apoapsis.ortserver.model.runs.advisor.VulnerabilityReference
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 class DaoAdvisorRunRepositoryTest : WordSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     lateinit var advisorRunRepository: DaoAdvisorRunRepository
@@ -101,7 +104,7 @@ class DaoAdvisorRunRepositoryTest : WordSpec({
     }
 })
 
-private fun DaoAdvisorRunRepository.create(advisorJobId: Long, advisorRun: AdvisorRun) = create(
+private suspend fun DaoAdvisorRunRepository.create(advisorJobId: Long, advisorRun: AdvisorRun) = create(
     advisorJobId = advisorJobId,
     startTime = advisorRun.startTime,
     endTime = advisorRun.endTime,
@@ -231,14 +234,10 @@ private val advisorRun = AdvisorRun(
     results = mapOf(identifier to listOf(advisorResult), otherIdentifier to listOf(otherAdvisorResult))
 )
 
-/**
- * Return a copy of this [AdvisorResult] with the issues converted to plain issues.
- */
+/** Return a copy of this [AdvisorResult] with the issues converted to plain issues. */
 private fun AdvisorResult.withPlainIssues(): AdvisorResult =
     copy(issues = issues.map { it.toPlain() })
 
-/**
- * Return an [Issue] derived from this one with the fields removed that are set when the entity is created.
- */
+/** Return an [Issue] derived from this one with the fields removed that are set when the entity is created. */
 private fun Issue.toPlain(): Issue =
     copy(identifier = null, worker = null)

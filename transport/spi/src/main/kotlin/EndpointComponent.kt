@@ -31,6 +31,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 
 import org.koin.core.component.KoinComponent
 import org.koin.core.context.startKoin
@@ -69,9 +70,7 @@ abstract class EndpointComponent<T : Any>(
         private const val KEEP_ALIVE_FILE_NAME = "keep-alive.lock"
         private val logger: Logger = LoggerFactory.getLogger(EndpointComponent::class.java)
 
-        /**
-         * Get the keep-alive file in the system's temporary directory.
-         */
+        /** Get the keep-alive file in the system's temporary directory. */
         private fun getKeepAliveFile(): File {
             val tmpDir = File(System.getProperty("java.io.tmpdir"))
             return tmpDir.resolve(KEEP_ALIVE_FILE_NAME)
@@ -98,12 +97,12 @@ abstract class EndpointComponent<T : Any>(
          * See also [sleepWhileKeepAliveFileExists].
          */
         suspend fun generateKeepAliveFile() =
-            withContext(Dispatchers.IO) {
+            withContext(Dispatchers.Virtual) {
                 val file = getKeepAliveFile()
                 file.createNewFile().let {
                     logger.info("Keep-alive lock file ${file.absolutePath} created.")
+                }
             }
-        }
     }
 
     abstract val endpointHandler: EndpointHandler<T>

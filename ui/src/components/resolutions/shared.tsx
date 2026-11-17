@@ -29,10 +29,10 @@ import {
   getRunVulnerabilitiesQueryKey,
   patchIssueResolutionForRepositoryMutation,
   patchRuleViolationResolutionForRepositoryMutation,
-  patchVulnerabilityResolutionMutation,
+  patchVulnerabilityResolutionForRepositoryMutation,
   postIssueResolutionForRepositoryMutation,
   postRuleViolationResolutionForRepositoryMutation,
-  postVulnerabilityResolutionMutation,
+  postVulnerabilityResolutionForRepositoryMutation,
 } from '@/api/@tanstack/react-query.gen';
 import {
   IssueResolutionReason,
@@ -285,7 +285,7 @@ export function ResolutionForm({
   });
 
   const vulnerabilityCreateMutation = useMutation({
-    ...postVulnerabilityResolutionMutation(),
+    ...postVulnerabilityResolutionForRepositoryMutation(),
     onSuccess() {
       queryClient.invalidateQueries({
         queryKey: getRunVulnerabilitiesQueryKey({
@@ -307,7 +307,7 @@ export function ResolutionForm({
     },
   });
   const vulnerabilityUpdateMutation = useMutation({
-    ...patchVulnerabilityResolutionMutation(),
+    ...patchVulnerabilityResolutionForRepositoryMutation(),
     onSuccess() {
       queryClient.invalidateQueries({
         queryKey: getRunVulnerabilitiesQueryKey({
@@ -379,7 +379,7 @@ export function ResolutionForm({
       if (mode === 'create') {
         await issueCreateMutation.mutateAsync({
           path: {
-            repositoryId: context.repositoryId,
+            repositoryId: Number.parseInt(context.repositoryId),
           },
           body: {
             comment: values.comment,
@@ -390,7 +390,7 @@ export function ResolutionForm({
       } else {
         await issueUpdateMutation.mutateAsync({
           path: {
-            repositoryId: context.repositoryId,
+            repositoryId: Number.parseInt(context.repositoryId),
             messageHash: context.identifier,
           },
           body: {
@@ -403,7 +403,7 @@ export function ResolutionForm({
       if (mode === 'create') {
         await ruleViolationCreateMutation.mutateAsync({
           path: {
-            repositoryId: context.repositoryId,
+            repositoryId: Number.parseInt(context.repositoryId),
           },
           body: {
             comment: values.comment,
@@ -414,7 +414,7 @@ export function ResolutionForm({
       } else {
         await ruleViolationUpdateMutation.mutateAsync({
           path: {
-            repositoryId: context.repositoryId,
+            repositoryId: Number.parseInt(context.repositoryId),
             messageHash: context.identifier,
           },
           body: {
@@ -427,7 +427,7 @@ export function ResolutionForm({
       if (mode === 'create') {
         await vulnerabilityCreateMutation.mutateAsync({
           path: {
-            repositoryId: context.repositoryId,
+            repositoryId: Number.parseInt(context.repositoryId),
             externalId: context.identifier,
           },
           body: values as PostVulnerabilityResolution,
@@ -435,7 +435,7 @@ export function ResolutionForm({
       } else {
         await vulnerabilityUpdateMutation.mutateAsync({
           path: {
-            repositoryId: context.repositoryId,
+            repositoryId: Number.parseInt(context.repositoryId),
             externalId: context.identifier,
           },
           body: {
@@ -489,6 +489,36 @@ export function ResolutionForm({
 
   return <CardContent>{formContent}</CardContent>;
 }
+
+const ITEM_TYPE_LABELS: Record<ManagedResolutionContext['itemType'], string> = {
+  issue: 'issue',
+  'rule-violation': 'rule violation',
+  vulnerability: 'vulnerability',
+};
+
+type ResolutionPermissionNoteProps = {
+  itemType: ManagedResolutionContext['itemType'];
+  hasResolutions: boolean;
+};
+
+/**
+ * Tell users who cannot manage resolutions why they are not offered to create or change one.
+ */
+export function ResolutionPermissionNote({
+  itemType,
+  hasResolutions,
+}: ResolutionPermissionNoteProps) {
+  const label = ITEM_TYPE_LABELS[itemType];
+
+  return (
+    <p className='text-muted-foreground text-sm'>
+      {hasResolutions
+        ? `Changing the resolutions of this ${label} requires the permission to manage resolutions in this repository.`
+        : `This ${label} has no resolutions. Resolving it requires the permission to manage resolutions in this repository.`}
+    </p>
+  );
+}
+
 type ResolutionCardProps = {
   displayItem: ResolutionDisplayItem;
   editingKey: string | null;

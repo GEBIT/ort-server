@@ -37,7 +37,8 @@ import org.eclipse.apoapsis.ortserver.model.OrtRun
 import org.eclipse.apoapsis.ortserver.model.ProductId
 import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.Secret
-import org.eclipse.apoapsis.ortserver.workers.common.ResolvedInfrastructureService
+import org.eclipse.apoapsis.ortserver.shared.authenticator.ResolvedInfrastructureService
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 import org.eclipse.apoapsis.ortserver.workers.common.context.WorkerContext
 import org.eclipse.apoapsis.ortserver.workers.common.env.config.EnvironmentConfigLoader
 import org.eclipse.apoapsis.ortserver.workers.common.env.config.ResolvedEnvironmentConfig
@@ -163,7 +164,7 @@ class EnvironmentService(
         val netRcManager = NetRcManager.create(context.secretResolverFun)
         context.setupAuthentication(services, netRcManager)
 
-        withContext(Dispatchers.IO) {
+        withContext(Dispatchers.Virtual) {
             generators.map { generator ->
                 val builder = ConfigFileBuilder(
                     context.secretResolverFun,
@@ -258,14 +259,12 @@ class EnvironmentService(
         }
     }
 
-    /**
-     * Resolve the given [services] into [ResolvedInfrastructureService]s by looking up their associated secrets.
-     */
+    /** Resolve the given [services] into [ResolvedInfrastructureService]s by looking up their associated secrets. */
     suspend fun resolveInfrastructureServices(
         context: WorkerContext,
         services: Collection<InfrastructureService>
     ): List<ResolvedInfrastructureService> =
-        withContext(Dispatchers.IO) {
+        withContext(Dispatchers.Virtual) {
             services.map { service ->
                 async {
                     val usernameSecret = resolveSecretByName(
@@ -324,9 +323,7 @@ internal fun EnvironmentConfig.merge(other: EnvironmentConfig?): EnvironmentConf
     return EnvironmentConfig(mergedInfrastructureService, mergedEnvironmentDefinitions, mergedEnvironmentVariables)
 }
 
-/**
- * Convert this [InfrastructureServiceDeclaration] to an [InfrastructureService].
- */
+/** Convert this [InfrastructureServiceDeclaration] to an [InfrastructureService]. */
 internal fun InfrastructureServiceDeclaration.toInfrastructureService(): InfrastructureService =
     InfrastructureService(
         name = name,

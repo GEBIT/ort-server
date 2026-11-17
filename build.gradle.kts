@@ -48,6 +48,7 @@ dependencyAnalysis {
             onRuntimeOnly { severity("ignore") }
             onUnusedAnnotationProcessors { severity("fail") }
             onRedundantPlugins { severity("fail") }
+            onDuplicateClassWarnings { severity("ignore") }
         }
 
         project(projects.api.v1.apiV1Client) {
@@ -192,6 +193,10 @@ tasks.register("buildAllImages") {
     val tinyJibDocker = getTasksByName("tinyJibDocker", /* recursive = */ true).onEach {
         it.dependsOn(":buildBaseWorkerImage")
         it.mustRunAfter(buildAllWorkerImages)
+    }
+
+    tinyJibDocker.zipWithNext().forEach { (a, b) ->
+        b.mustRunAfter(a)
     }
 
     val uiDockerBuild = getTasksByName("buildUIImage", /* recursive = */ false).single()

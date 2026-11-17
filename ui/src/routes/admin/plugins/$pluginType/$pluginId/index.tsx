@@ -17,8 +17,13 @@
  * License-Filename: LICENSE
  */
 
-import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
-import { createFileRoute, Link, useLoaderData } from '@tanstack/react-router';
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useSuspenseQuery,
+} from '@tanstack/react-query';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { Pencil } from 'lucide-react';
 import { useState } from 'react';
 
@@ -28,12 +33,14 @@ import {
   deletePluginTemplateMutation,
   disableGlobalPluginTemplateMutation,
   enableGlobalPluginTemplateMutation,
+  getInstalledPluginsOptions,
   getOrganizationOptions,
   getOrganizationsInfiniteOptions,
   getPluginTemplatesOptions,
   getPluginTemplatesQueryKey,
   removeTemplateFromOrganizationMutation,
 } from '@/api/@tanstack/react-query.gen';
+import { zPluginType } from '@/api/zod.gen';
 import { DeleteDialog } from '@/components/delete-dialog.tsx';
 import { DeleteIconButton } from '@/components/delete-icon-button.tsx';
 import { LoadingIndicator } from '@/components/loading-indicator.tsx';
@@ -63,7 +70,6 @@ import { queryClient, routePrefetchStaleTime } from '@/lib/query-client.ts';
 import { toSearchFilter } from '@/lib/regex';
 import { toast, toastError } from '@/lib/toast';
 import { getPluginTypeLabel } from '@/lib/types';
-import { Route as LayoutRoute } from '@/routes/admin/plugins/route.tsx';
 
 type PluginTemplateCardProps = {
   plugin: PluginDescriptor;
@@ -346,7 +352,7 @@ const PluginTemplateCard = ({ plugin, template }: PluginTemplateCardProps) => {
                     pluginId: template.pluginId,
                     templateName: template.name,
                   },
-                  query: { organizationId: opt.value },
+                  query: { organizationId: Number(opt.value) },
                 });
               }
             }
@@ -358,7 +364,7 @@ const PluginTemplateCard = ({ plugin, template }: PluginTemplateCardProps) => {
                     pluginId: template.pluginId,
                     templateName: template.name,
                   },
-                  query: { organizationId: id.toString() },
+                  query: { organizationId: id },
                 });
               }
             }
@@ -407,7 +413,10 @@ const PluginTemplateCard = ({ plugin, template }: PluginTemplateCardProps) => {
 
 const PluginTemplatesComponent = () => {
   const params = Route.useParams();
-  const { plugins } = useLoaderData({ from: LayoutRoute.id });
+  const { data: plugins } = useSuspenseQuery({
+    ...getInstalledPluginsOptions(),
+    staleTime: routePrefetchStaleTime,
+  });
 
   const pluginType = params.pluginType;
   const pluginId = params.pluginId;
@@ -501,16 +510,28 @@ const PluginTemplatesComponent = () => {
 };
 
 export const Route = createFileRoute('/admin/plugins/$pluginType/$pluginId/')({
+  params: {
+    parse: (params) => ({
+      ...params,
+      pluginType: zPluginType.parse(params.pluginType),
+    }),
+  },
   loader: async ({ context: { queryClient }, params }) => {
-    await queryClient.prefetchQuery({
-      ...getPluginTemplatesOptions({
-        path: {
-          pluginType: params.pluginType,
-          pluginId: params.pluginId,
-        },
+    await Promise.all([
+      queryClient.prefetchQuery({
+        ...getInstalledPluginsOptions(),
+        staleTime: routePrefetchStaleTime,
       }),
-      staleTime: routePrefetchStaleTime,
-    });
+      queryClient.prefetchQuery({
+        ...getPluginTemplatesOptions({
+          path: {
+            pluginType: params.pluginType,
+            pluginId: params.pluginId,
+          },
+        }),
+        staleTime: routePrefetchStaleTime,
+      }),
+    ]);
   },
   component: PluginTemplatesComponent,
   pendingComponent: LoadingIndicator,

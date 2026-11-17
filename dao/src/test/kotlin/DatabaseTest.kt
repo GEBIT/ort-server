@@ -22,18 +22,26 @@ package org.eclipse.apoapsis.ortserver.dao
 import com.typesafe.config.ConfigFactory
 
 import io.kotest.assertions.throwables.shouldNotThrowAny
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.koin.KoinExtension
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
+import io.kotest.matchers.types.shouldBeSameInstanceAs
+
+import kotlin.coroutines.cancellation.CancellationException
 
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
 import org.eclipse.apoapsis.ortserver.config.ConfigSecretProviderFactoryForTesting
 import org.eclipse.apoapsis.ortserver.dao.repositories.organization.OrganizationsTable
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
 import org.eclipse.apoapsis.ortserver.dao.test.TEST_DB_SCHEMA
+import org.eclipse.apoapsis.ortserver.dao.utils.applyIRegex
 import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 
 import org.koin.dsl.module
@@ -46,6 +54,7 @@ val testModule = module {
     single { ConfigManager.create(get()) }
 }
 
+@Suppress("TooGenericExceptionThrown")
 class DatabaseTest : KoinTest, WordSpec() {
     init {
         tags(Integration)
@@ -94,6 +103,81 @@ class DatabaseTest : KoinTest, WordSpec() {
                             it[name] = "name"
                             it[description] = "description"
                         }
+                    }
+                }
+            }
+        }
+
+        "transaction" should {
+            "execute a block of code in a transaction" {
+                shouldNotThrowAny {
+                    dbExtension.db.transaction {
+                        OrganizationsTable.insert {
+                            it[name] = "name"
+                            it[description] = "description"
+                        }
+                    }
+                }
+            }
+
+            "run on a virtual thread" {
+                dbExtension.db.transaction {
+                    Thread.currentThread().isVirtual shouldBe true
+                }
+            }
+
+            "run a nested transaction in the same transaction" {
+                dbExtension.db.transaction {
+                    val outerTransaction = this
+
+                    dbExtension.db.transaction {
+                        this shouldBeSameInstanceAs outerTransaction
+                    }
+                }
+            }
+        }
+
+        "transactionCatching" should {
+            "execute a block of code in a transaction and return a Result" {
+                val result = dbExtension.db.transactionCatching {
+                    OrganizationsTable.insert {
+                        it[name] = "name"
+                        it[description] = "description"
+                    }
+                }
+
+                result.isSuccess shouldBe true
+            }
+
+            "return a failure Result if an exception is thrown" {
+                val result = dbExtension.db.transactionCatching {
+                    throw RuntimeException("Test exception")
+                }
+
+                result.isFailure shouldBe true
+            }
+
+            "propagate CancellationException" {
+                shouldThrow<CancellationException> {
+                    dbExtension.db.transactionCatching {
+                        throw CancellationException("Test cancellation")
+                    }
+                }
+            }
+
+            "map an invalid regular expression to a QueryParametersException" {
+                val result = dbExtension.db.transactionCatching {
+                    OrganizationsTable.selectAll().where { OrganizationsTable.name.applyIRegex("(") }.toList()
+                }
+
+                result.exceptionOrNull().shouldBeInstanceOf<QueryParametersException>()
+                    .message shouldBe "invalid regular expression: parentheses () not balanced"
+            }
+
+            "propagate Error" {
+                shouldThrow<Error> {
+                    dbExtension.db.transactionCatching {
+                        throw Error("Test error")
                     }
                 }
             }

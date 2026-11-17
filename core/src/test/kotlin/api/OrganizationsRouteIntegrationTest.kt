@@ -32,6 +32,7 @@ import io.kotest.matchers.maps.shouldContainExactly
 import io.kotest.matchers.nulls.beNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNot
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldStartWith
 
@@ -60,14 +61,16 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.PostProduct
 import org.eclipse.apoapsis.ortserver.api.v1.model.Product
 import org.eclipse.apoapsis.ortserver.api.v1.model.Severity as ApiSeverity
 import org.eclipse.apoapsis.ortserver.api.v1.model.User as ApiUser
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserGroup as ApiUserGroup
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithGroups as ApiUserWithGroups
+import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithOrganizationRole as ApiUserWithOrganizationRole
 import org.eclipse.apoapsis.ortserver.api.v1.model.Username
 import org.eclipse.apoapsis.ortserver.api.v1.model.VulnerabilityForRunsFilters
 import org.eclipse.apoapsis.ortserver.api.v1.model.VulnerabilityRating
 import org.eclipse.apoapsis.ortserver.api.v1.model.VulnerabilityWithStats
 import org.eclipse.apoapsis.ortserver.components.authorization.api.OrganizationRole as ApiOrganizationRole
+import org.eclipse.apoapsis.ortserver.components.authorization.rights.HierarchyPermissions
+import org.eclipse.apoapsis.ortserver.components.authorization.rights.OrganizationPermission
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.OrganizationRole
+import org.eclipse.apoapsis.ortserver.components.authorization.rights.ProductPermission
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.ProductRole
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.RepositoryRole
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.mapToModel
@@ -205,6 +208,25 @@ class OrganizationsRouteIntegrationTest : AbstractIntegrationTest({
                         sortProperties = listOf(SortProperty("name", SortDirection.ASCENDING))
                     )
                 )
+            }
+        }
+
+        "leave out an organization whose role is stored with another user ID" {
+            integrationTestApplication {
+                val org = createOrganization()
+                authorizationService.assignRole(
+                    TEST_USER.username.value,
+                    OrganizationRole.READER,
+                    org.hierarchyId,
+                    OTHER_USER_ID
+                )
+                val client = testUserClient
+
+                client.get("/api/v1/organizations/${org.id}") shouldHaveStatus HttpStatusCode.Forbidden
+
+                val response = client.get("/api/v1/organizations")
+                response shouldHaveStatus HttpStatusCode.OK
+                response.body<PagedResponse<Organization>>().data should beEmpty()
             }
         }
 
@@ -623,6 +645,33 @@ class OrganizationsRouteIntegrationTest : AbstractIntegrationTest({
             }
         }
 
+        "store the creator's role with the creator's ID" {
+            integrationTestApplication {
+                val org = createOrganization()
+                authorizationService.assignRole(
+                    TEST_USER.username.value,
+                    OrganizationRole.WRITER,
+                    org.hierarchyId,
+                    testUserId()
+                )
+
+                val response = testUserClient.post("/api/v1/organizations/${org.id}/products") {
+                    setBody(PostProduct("product", "description"))
+                }
+
+                response shouldHaveStatus HttpStatusCode.Created
+                val productId = ProductId(response.body<Product>().id)
+                val adminPermission = HierarchyPermissions.permissions(ProductPermission.DELETE)
+                val username = TEST_USER.username.value
+                val roleOfUser =
+                    authorizationService.checkPermissions(username, productId, adminPermission, testUserId())
+                val roleOfOtherUser =
+                    authorizationService.checkPermissions(username, productId, adminPermission, OTHER_USER_ID)
+                roleOfUser shouldNot beNull()
+                roleOfOtherUser should beNull()
+            }
+        }
+
         "respond with 'Bad Request' if the product's name is invalid" {
             integrationTestApplication {
                 val orgId = createOrganization().id
@@ -835,7 +884,7 @@ class OrganizationsRouteIntegrationTest : AbstractIntegrationTest({
             row(HttpMethod.Put),
             row(HttpMethod.Delete)
         ) { method ->
-            "require OrganizationPermission.MANAGE_GROUPS for method '${method.value}'" {
+            "require OrganizationPermission.MANAGE_ROLES for method '${method.value}'" {
                 val createdOrg = createOrganization()
                 val user = Username(TEST_USER.username.value)
 
@@ -992,6 +1041,26 @@ class OrganizationsRouteIntegrationTest : AbstractIntegrationTest({
                     members shouldHaveSize 1
                     members shouldContain TEST_USER.username.value
                 }
+            }
+        }
+
+        "store the ID of the user with the role" {
+            integrationTestApplication {
+                val org = createOrganization()
+
+                val response = superuserClient.put("/api/v1/organizations/${org.id}/roles/READER") {
+                    setBody(Username(TEST_USER.username.value))
+                }
+
+                response shouldHaveStatus HttpStatusCode.NoContent
+                val readPermission = HierarchyPermissions.permissions(OrganizationPermission.READ)
+                val username = TEST_USER.username.value
+                val roleOfUser =
+                    authorizationService.checkPermissions(username, org.hierarchyId, readPermission, testUserId())
+                val roleOfOtherUser =
+                    authorizationService.checkPermissions(username, org.hierarchyId, readPermission, OTHER_USER_ID)
+                roleOfUser shouldNot beNull()
+                roleOfOtherUser should beNull()
             }
         }
     }
@@ -2180,13 +2249,13 @@ class OrganizationsRouteIntegrationTest : AbstractIntegrationTest({
                 response shouldHaveStatus HttpStatusCode.OK
                 response shouldHaveBody PagedResponse(
                     listOf(
-                        ApiUserWithGroups(
+                        ApiUserWithOrganizationRole(
                             ApiUser(SUPERUSER.username.value, SUPERUSER.firstName, SUPERUSER.lastName, SUPERUSER.email),
-                            listOf(ApiUserGroup.ADMINS)
+                            ApiOrganizationRole.ADMIN
                         ),
-                        ApiUserWithGroups(
+                        ApiUserWithOrganizationRole(
                             ApiUser(TEST_USER.username.value, TEST_USER.firstName, TEST_USER.lastName, TEST_USER.email),
-                            listOf(ApiUserGroup.READERS)
+                            ApiOrganizationRole.READER
                         )
                     ),
                     PagingData(
@@ -2220,9 +2289,9 @@ class OrganizationsRouteIntegrationTest : AbstractIntegrationTest({
                 response shouldHaveStatus HttpStatusCode.OK
                 response shouldHaveBody PagedResponse(
                     listOf(
-                        ApiUserWithGroups(
+                        ApiUserWithOrganizationRole(
                             ApiUser(TEST_USER.username.value, TEST_USER.firstName, TEST_USER.lastName, TEST_USER.email),
-                            listOf(ApiUserGroup.READERS)
+                            ApiOrganizationRole.READER
                         )
                     ),
                     PagingData(
@@ -2242,7 +2311,7 @@ class OrganizationsRouteIntegrationTest : AbstractIntegrationTest({
                 val response = superuserClient.get("/api/v1/organizations/$orgId/users")
 
                 response shouldHaveStatus HttpStatusCode.OK
-                response shouldHaveBody PagedResponse<ApiUserWithGroups>(
+                response shouldHaveBody PagedResponse<ApiUserWithOrganizationRole>(
                     emptyList(),
                     PagingData(
                         limit = DEFAULT_LIMIT,
@@ -2281,9 +2350,9 @@ class OrganizationsRouteIntegrationTest : AbstractIntegrationTest({
                 response shouldHaveStatus HttpStatusCode.OK
                 response shouldHaveBody PagedResponse(
                     listOf(
-                        ApiUserWithGroups(
+                        ApiUserWithOrganizationRole(
                             ApiUser(SUPERUSER.username.value, SUPERUSER.firstName, SUPERUSER.lastName, SUPERUSER.email),
-                            listOf(ApiUserGroup.WRITERS)
+                            ApiOrganizationRole.WRITER
                         )
                     ),
                     PagingData(
@@ -2342,8 +2411,9 @@ private fun generateAdvisorResult(vulnerabilities: List<Vulnerability>) = Adviso
     vulnerabilities = vulnerabilities
 )
 
-/**
- * Return a [CompoundHierarchyId] for this [Organization].
- */
+/** Return a [CompoundHierarchyId] for this [Organization]. */
 private val org.eclipse.apoapsis.ortserver.model.Organization.hierarchyId: CompoundHierarchyId
         get() = CompoundHierarchyId.forOrganization(OrganizationId(id))
+
+/** The ID of a user other than [TEST_USER] who had the same username. */
+private const val OTHER_USER_ID = "other-user-id"

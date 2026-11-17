@@ -147,10 +147,12 @@ data class KubernetesSenderConfig(
          * The name of the configuration property that defines volume mounts based on persistent volume claims. Via
          * this mechanism, pods can be assigned volumes with shared data. The value of the property consists of a
          * number of mount declarations separated by whitespace. (If a mount declaration contains whitespace itself, it
-         * must be surrounded by quotes.) A single mount declaration has the form _pvcName->path,access_, where
-         * _pvcName_ is the name of the referenced persistent volume claim, _path_ is the path in the filesystem of
-         * the pod where the content of the volume is to be mounted, and _access_ is a flag determining whether the
-         * volume is read-only ('R') or writeable ('W').
+         * must be surrounded by quotes.) A single mount declaration has the form _pvcName->path|subPath,access_,
+         * where _pvcName_ is the name of the referenced persistent volume claim, _path_ is the path in the
+         * filesystem of the pod where the content of the volume is to be mounted, _subPath_ is an optional sub path
+         * of the volume to be mounted, and _access_ is a flag determining whether the volume is read-only ('R') or
+         * writeable ('W'). The _subPath_ component is optional; it defaults to an empty string (corresponding to the
+         * volume root).
          */
         private const val MOUNT_PVCS_PROPERTY = "mountPvcs"
 
@@ -159,8 +161,12 @@ data class KubernetesSenderConfig(
          * useful to mount writeable directories in environments that enforce read-only root filesystems. The value of
          * the property consists of a number of mount declarations separated by whitespace. If a mount declaration
          * contains whitespace itself, it must be surrounded by quotes. A single mount declaration has the form
-         * _name->path_, where _name_ is the name of the empty dir volume and _path_ is the path in the filesystem of
-         * the pod where the volume will be mounted.
+         * _name->path|subPath_, where _name_ is the name of the empty dir volume, _path_ is the path in the
+         * filesystem of the pod where the volume will be mounted, and _subPath_ is an optional sub path of the
+         * volume to be mounted. The _subPath_ component is optional; it defaults to an empty string (corresponding
+         * to the volume root). Declaring the same _name_ in multiple mount declarations causes the underlying
+         * emptyDir volume to be shared between them, while the _subPath_ component can be used to expose only a
+         * specific subdirectory of this shared volume to each individual mount.
          */
         private const val MOUNT_EMPTYDIRS_PROPERTY = "mountEmptyDirs"
 
@@ -222,9 +228,13 @@ data class KubernetesSenderConfig(
          * property name in upper snake case, for instance, `CONTROLLER_IMAGE_NAME` or `CONTROLLER_CPU_REQUEST` for a
          * container named _CONTROLLER_. The additional containers inherit a number of properties from the main
          * container unless they are overridden by the corresponding variables. There are some exceptions like
-         * resources and volume mounts which need to be explicitly defined for each container.
+         * resources and volume mounts which need to be explicitly defined for each container. Environment allowlists
+         * are also independent for each container.
          */
         private const val ADDITIONAL_CONTAINERS_PROPERTY = "additionalContainers"
+
+        /** The optional list of inherited environment variable names to pass to a container. */
+        private const val ENVIRONMENT_ALLOWLIST_PROPERTY = "environmentAllowlist"
 
         /** The default value for the user id. */
         private const val DEFAULT_USER_ID = 1000L
@@ -261,9 +271,7 @@ data class KubernetesSenderConfig(
         /** A regular expression to split key value pairs. */
         private val splitKeyValueRegex = splitRegex(KEY_VALUE_SEPARATOR)
 
-        /**
-         * Create a [KubernetesSenderConfig] for the given [endpoint] from the provided [config].
-         */
+        /** Create a [KubernetesSenderConfig] for the given [endpoint] from the provided [config]. */
         fun createConfig(config: Config, endpoint: Endpoint<*>): KubernetesSenderConfig {
             val mainContainer = createMainContainer(config, endpoint)
             val additionalContainerNames = config.getStringOrNull(ADDITIONAL_CONTAINERS_PROPERTY)
@@ -298,6 +306,7 @@ data class KubernetesSenderConfig(
                 imagePullPolicy = config.getStringOrDefault(IMAGE_PULL_POLICY_PROPERTY, DEFAULT_IMAGE_PULL_POLICY),
                 commands = config.getStringOrDefault(COMMANDS_PROPERTY, "").splitAtWhitespace(),
                 args = config.getStringOrDefault(ARGS_PROPERTY, "").splitAtWhitespace(),
+                environmentAllowlist = config.getStringOrNull(ENVIRONMENT_ALLOWLIST_PROPERTY).toEnvironmentAllowlist(),
                 cpuLimit = config.getStringOrNull(CPU_LIMIT_PROPERTY),
                 cpuRequest = config.getStringOrNull(CPU_REQUEST_PROPERTY),
                 memoryLimit = config.getStringOrNull(MEMORY_LIMIT_PROPERTY),
@@ -307,8 +316,8 @@ data class KubernetesSenderConfig(
 
         /**
          * Create a [Container] object for the additional container with the given [name]. Look for environment
-         * variables starting with a prefix derived from the container name. User properties from the given
-         * [mainContainer] as default values.
+         * variables starting with a prefix derived from the container name. Use properties from the given
+         * [mainContainer] as default values, except for resources, volume mounts, and the environment allowlist.
          */
         private fun createAdditionalContainer(name: String, mainContainer: Container): Container {
             val prefix = name.uppercase() + "_"
@@ -319,6 +328,7 @@ data class KubernetesSenderConfig(
                 imagePullPolicy = System.getenv("${prefix}IMAGE_PULL_POLICY") ?: mainContainer.imagePullPolicy,
                 commands = System.getenv("${prefix}COMMANDS")?.splitAtWhitespace() ?: mainContainer.commands,
                 args = System.getenv("${prefix}ARGS")?.splitAtWhitespace() ?: mainContainer.args,
+                environmentAllowlist = System.getenv("${prefix}ENVIRONMENT_ALLOWLIST").toEnvironmentAllowlist(),
                 cpuLimit = System.getenv("${prefix}CPU_LIMIT"),
                 cpuRequest = System.getenv("${prefix}CPU_REQUEST"),
                 memoryLimit = System.getenv("${prefix}MEMORY_LIMIT"),
@@ -327,6 +337,10 @@ data class KubernetesSenderConfig(
                 isInitContainer = System.getenv("${prefix}INIT_CONTAINER")?.toBoolean() ?: false
             )
         }
+
+        /** Parse an optional list of exact environment variable names, preserving an explicitly empty list. */
+        private fun String?.toEnvironmentAllowlist(): Set<String>? =
+            this?.split(splitCommaListRegex)?.map { it.trim() }?.filterNot { it.isEmpty() }?.toSet()
 
         /**
          * Return a [Regex] that can be used to split a string at the given [separator] and that handles whitespace
@@ -343,9 +357,7 @@ data class KubernetesSenderConfig(
                 if (s.startsWith('"') && s.endsWith('"')) s.substring(1..s.length - 2) else s
             }.filterNot { it.isEmpty() }
 
-        /**
-         * Split a nullable string using the given [regex] and return a list with the non-empty parts.
-         */
+        /** Split a nullable string using the given [regex] and return a list with the non-empty parts. */
         private fun String?.splitAt(regex: Regex): List<String> =
             this?.split(regex).orEmpty().filterNot { it.isEmpty() }
 
@@ -358,21 +370,15 @@ data class KubernetesSenderConfig(
             return declarations.splitAtWhitespace().mapNotNull(parse)
         }
 
-        /**
-         * Parse the secret volume mount declarations from this [Config].
-         */
+        /** Parse the secret volume mount declarations from this [Config]. */
         private fun Config.parseSecretVolumeMounts(): List<VolumeMount> =
             toVolumeMounts(MOUNT_SECRETS_PROPERTY, ::parseSecretVolumeMount)
 
-        /**
-         * Parse the PVC-based volume mount declarations from this [Config].
-         */
+        /** Parse the PVC-based volume mount declarations from this [Config]. */
         private fun Config.parsePvcVolumeMounts(): List<VolumeMount> =
             toVolumeMounts(MOUNT_PVCS_PROPERTY, ::parsePvcVolumeMount)
 
-        /**
-         * Parse the empty volume mount declarations from this [Config].
-         */
+        /** Parse the empty volume mount declarations from this [Config]. */
         private fun Config.parseEmptyDirVolumeMounts(): List<VolumeMount> =
             toVolumeMounts(MOUNT_EMPTYDIRS_PROPERTY, ::parseEmptyVolumeMount)
 

@@ -36,15 +36,19 @@ internal class AdvisorRunner {
     }
 
     suspend fun run(context: WorkerContext, ortResult: OrtResult, config: AdvisorJobConfiguration): OrtResult {
-        logger.info("Advisor run with these advisors: '{}'.", config.advisors)
+        val advisors = config.advisors.orEmpty()
+        logger.info("Advisor run with these advisors: '{}'.", advisors)
 
-        val providerFactories = config.advisors.mapNotNull { AdviceProviderFactory.ALL[it] }
-        if (providerFactories.size < config.advisors.size) {
-            val invalidAdvisors = config.advisors.filter { it !in AdviceProviderFactory.ALL }
+        val providerFactories = advisors.mapNotNull { AdviceProviderFactory.ALL[it] }
+        if (providerFactories.size < advisors.size) {
+            val invalidAdvisors = advisors.filter { it !in AdviceProviderFactory.ALL }
             logger.error("The following advisors could not be resolved: {}.", invalidAdvisors)
         }
 
-        val pluginConfigs = context.resolvePluginConfigSecrets(config.config)
+        // Plugin IDs are case-insensitive, so normalize the keys of the plugin configs to the IDs of the advisors.
+        val pluginConfigs = context.resolvePluginConfigSecrets(config.config).mapKeys { (advisor, _) ->
+            AdviceProviderFactory.ALL[advisor]?.descriptor?.id ?: advisor
+        }
         val advisorConfig = AdvisorConfiguration(
             config.skipExcluded,
             pluginConfigs.mapValues { it.value.mapToOrt() }

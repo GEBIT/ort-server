@@ -30,12 +30,13 @@ import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withContext
 
 import org.eclipse.apoapsis.ortserver.config.ConfigException
 import org.eclipse.apoapsis.ortserver.config.Path
 import org.eclipse.apoapsis.ortserver.config.RequestedConfigContext
 import org.eclipse.apoapsis.ortserver.config.ResolvedConfigContext
-import org.eclipse.apoapsis.ortserver.utils.logging.runBlocking
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 internal const val GIT_URL = "https://github.com/doubleopen-project/ort-config-test.git"
@@ -108,24 +109,6 @@ class GitConfigFileProviderTest : WordSpec({
             provider.contains(RESOLVED_CONTEXT_MAIN, Path("customer1/product1/copyright-garbage.yml")) shouldBe true
         }
 
-        "return `true`if a file from a submodule is present" {
-            val provider = GitConfigFileProvider(GIT_URL, tempdir())
-
-            provider.contains(
-                RESOLVED_CONTEXT_MAIN,
-                Path("ort-config-test-sm/license-classifications.yml")
-            ) shouldBe true
-        }
-
-        "return `true` if a file from a submodule, referred to by a symlink is present" {
-            val provider = GitConfigFileProvider(GIT_URL, tempdir())
-
-            provider.contains(
-                RESOLVED_CONTEXT_MAIN,
-                Path("customer1/product1/license-classifications.yml")
-            ) shouldBe true
-        }
-
         "return `false` if the path refers to a directory" {
             val provider = GitConfigFileProvider(GIT_URL, tempdir())
 
@@ -158,8 +141,7 @@ class GitConfigFileProviderTest : WordSpec({
             val filesPath = "customer2/product2"
             val expectedFiles = listOf(
                 "customer2/product2/copyright-garbage.yml",
-                "customer2/product2/evaluator.rules.kts",
-                "customer2/product2/license-classifications.yml"
+                "customer2/product2/evaluator.rules.kts"
             )
             val provider = GitConfigFileProvider(GIT_URL, tempdir())
 
@@ -172,8 +154,7 @@ class GitConfigFileProviderTest : WordSpec({
             val filesPath = "customer2/product2/"
             val expectedFiles = listOf(
                 "customer2/product2/copyright-garbage.yml",
-                "customer2/product2/evaluator.rules.kts",
-                "customer2/product2/license-classifications.yml"
+                "customer2/product2/evaluator.rules.kts"
             )
             val provider = GitConfigFileProvider(GIT_URL, tempdir())
 
@@ -287,7 +268,7 @@ class GitConfigFileProviderTest : WordSpec({
             val mainContent = "This is the main branch of the repository"
             val devContent = "This is a dev branch of the repository"
 
-            runBlocking(Dispatchers.IO) {
+            withContext(Dispatchers.Virtual) {
                 (1..10).map { index ->
                     async {
                         if (index % 2 == 0) {

@@ -19,7 +19,7 @@
 
 package org.eclipse.apoapsis.ortserver.components.pluginmanager
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.dao.utils.enumerationByName
 import org.eclipse.apoapsis.ortserver.dao.utils.jsonb
 
@@ -27,21 +27,25 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.lowerCase
 import org.jetbrains.exposed.v1.datetime.timestamp
 import org.jetbrains.exposed.v1.jdbc.Database
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
-import org.jetbrains.exposed.v1.jdbc.upsert
 
 class PluginEventStore(private val db: Database) {
-    private fun loadEvents(pluginType: PluginType, pluginId: String): List<PluginEvent> = db.blockingQuery {
+    private suspend fun loadEvents(pluginType: PluginType, pluginId: String): List<PluginEvent> = db.transaction {
         PluginEvents.selectAll()
-            .where { PluginEvents.pluginType eq pluginType and (PluginEvents.pluginId eq pluginId) }
+            .where {
+                // Plugin IDs are case-insensitive, and their spelling can change between ORT versions.
+                PluginEvents.pluginType eq pluginType and (PluginEvents.pluginId.lowerCase() eq pluginId.lowercase())
+            }
             .orderBy(PluginEvents.version)
             .map { it.toPluginEvent() }
     }
 
-    internal fun appendEvent(pluginEvent: PluginEvent): Unit = db.blockingQuery {
+    internal suspend fun appendEvent(pluginEvent: PluginEvent): Unit = db.transaction {
         PluginEvents.insert {
             it[pluginType] = pluginEvent.pluginType
             it[pluginId] = pluginEvent.pluginId
@@ -54,37 +58,29 @@ class PluginEventStore(private val db: Database) {
         updateReadModel(pluginEvent)
     }
 
-    /**
-     * Get the current state of the plugin with the given [pluginType] and [pluginId].
-     */
-    internal fun getPlugin(pluginType: PluginType, pluginId: String) =
+    /** Get the current state of the plugin with the given [pluginType] and [pluginId]. */
+    internal suspend fun getPlugin(pluginType: PluginType, pluginId: String) =
         Plugin().applyAll(loadEvents(pluginType, pluginId))
 
-    private fun updateReadModel(pluginEvent: PluginEvent): Unit = db.blockingQuery {
-        when (pluginEvent.payload) {
-            is PluginDisabled -> {
-                PluginsReadModel.upsert {
-                    it[pluginType] = pluginEvent.pluginType
-                    it[pluginId] = pluginEvent.pluginId
-                    it[availability] = PluginAvailability.DISABLED
-                }
-            }
+    private suspend fun updateReadModel(pluginEvent: PluginEvent): Unit = db.transaction {
+        val newAvailability = when (pluginEvent.payload) {
+            is PluginDisabled -> PluginAvailability.DISABLED
+            is PluginEnabled -> PluginAvailability.ENABLED
+            is PluginRestricted -> PluginAvailability.RESTRICTED
+        }
 
-            is PluginEnabled -> {
-                PluginsReadModel.upsert {
-                    it[pluginType] = pluginEvent.pluginType
-                    it[pluginId] = pluginEvent.pluginId
-                    it[availability] = PluginAvailability.ENABLED
-                }
-            }
+        // Plugin IDs are case-insensitive, and their spelling can change between ORT versions. Therefore, remove the
+        // entries for the plugin ignoring case, so that the read model contains a single entry using the current
+        // spelling.
+        PluginsReadModel.deleteWhere {
+            (PluginsReadModel.pluginType eq pluginEvent.pluginType) and
+                    (PluginsReadModel.pluginId.lowerCase() eq pluginEvent.pluginId.lowercase())
+        }
 
-            is PluginRestricted -> {
-                PluginsReadModel.upsert {
-                    it[pluginType] = pluginEvent.pluginType
-                    it[pluginId] = pluginEvent.pluginId
-                    it[availability] = PluginAvailability.RESTRICTED
-                }
-            }
+        PluginsReadModel.insert {
+            it[pluginType] = pluginEvent.pluginType
+            it[pluginId] = pluginEvent.pluginId
+            it[availability] = newAvailability
         }
     }
 
@@ -98,9 +94,7 @@ class PluginEventStore(private val db: Database) {
     )
 }
 
-/**
- * A table to store plugin events.
- */
+/** A table to store plugin events. */
 internal object PluginEvents : Table("plugin_events") {
     val pluginType = enumerationByName<PluginType>("plugin_type")
     val pluginId = text("plugin_id")

@@ -21,12 +21,16 @@ package org.eclipse.apoapsis.ortserver.workers.common
 
 import java.io.InputStream
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 import org.eclipse.apoapsis.ortserver.config.ConfigException
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
 import org.eclipse.apoapsis.ortserver.config.Path
 import org.eclipse.apoapsis.ortserver.config.ResolvedConfigContext
 import org.eclipse.apoapsis.ortserver.model.PluginConfig
 import org.eclipse.apoapsis.ortserver.model.ResolvablePluginConfig
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 import org.eclipse.apoapsis.ortserver.workers.common.context.WorkerContext
 
 import org.ossreviewtoolkit.model.fromYaml
@@ -36,9 +40,7 @@ import org.slf4j.LoggerFactory
 
 val logger: Logger = LoggerFactory.getLogger(ConfigManager::class.java)
 
-/**
- * Map the entries of all [PluginConfig.options] in this map using the provided [transform] function.
- */
+/** Map the entries of all [PluginConfig.options] in this map using the provided [transform] function. */
 fun Map<String, ResolvablePluginConfig>.mapOptions(
     transform: (Map.Entry<String, String>) -> String
 ): Map<String, ResolvablePluginConfig> =
@@ -54,7 +56,7 @@ fun Map<String, ResolvablePluginConfig>.mapOptions(
  * an exception, but the default file is allowed to not exist. Not being able to deserialize the file to the return type
  * [T] always leads to an exception.
  */
-inline fun <reified T> ConfigManager.readConfigFileValueWithDefault(
+suspend inline fun <reified T> ConfigManager.readConfigFileValueWithDefault(
     path: String?,
     defaultPath: String,
     fallbackValue: T,
@@ -69,7 +71,7 @@ inline fun <reified T> ConfigManager.readConfigFileValueWithDefault(
  * This function realizes the contract that if a specific config file is requested, not being able to read it leads to
  * an exception, but the default file is allowed to not exist.
  */
-fun ConfigManager.readConfigFileWithDefault(
+suspend fun ConfigManager.readConfigFileWithDefault(
     path: String?,
     defaultPath: String,
     fallbackValue: String,
@@ -86,12 +88,14 @@ fun ConfigManager.readConfigFileWithDefault(
  * an exception, but the default file is allowed to not exist.
  */
 @PublishedApi
-internal inline fun <reified T> getConfigFileWithDefault(
+internal suspend inline fun <reified T> getConfigFileWithDefault(
     path: String?,
     defaultPath: String,
     fallbackValue: T,
     context: ResolvedConfigContext,
-    getConfigFile: (path: String, context: ResolvedConfigContext, exceptionHandler: (ConfigException) -> T) -> T
+    crossinline getConfigFile: suspend (
+        path: String, context: ResolvedConfigContext, exceptionHandler: (ConfigException) -> T
+    ) -> T
 ): T = if (path != null && path != defaultPath) {
     getConfigFile(path, context) {
         logger.error("Could not get config file from path '$path'.")
@@ -109,14 +113,14 @@ internal inline fun <reified T> getConfigFileWithDefault(
  * [ConfigException] occurs while reading the file, the [exceptionHandler] is invoked which rethrows the exception by
  * default. If another exception occurs while reading the file, it is rethrown.
  */
-inline fun <reified T> ConfigManager.readConfigFileValue(
+suspend inline fun <reified T> ConfigManager.readConfigFileValue(
     path: String,
     context: ResolvedConfigContext,
     exceptionHandler: (ConfigException) -> T = { throw it }
 ): T = getConfigFile(
     path,
     context,
-    { inputStream -> inputStream.use { String(it.readAllBytes()).fromYaml<T>() } },
+    { inputStream -> inputStream.use { withContext(Dispatchers.Virtual) { String(it.readAllBytes()).fromYaml<T>() } } },
     exceptionHandler
 )
 
@@ -125,18 +129,23 @@ inline fun <reified T> ConfigManager.readConfigFileValue(
  * file, the [exceptionHandler] is invoked which rethrows the exception by default. If another exception occurs while
  * reading the file, it is rethrown.
  */
-fun ConfigManager.readConfigFile(
+suspend fun ConfigManager.readConfigFile(
     path: String,
     context: ResolvedConfigContext,
     exceptionHandler: (ConfigException) -> String = { throw it }
-): String = getConfigFile(path, context, { it.reader().readText() }, exceptionHandler)
+): String = getConfigFile(
+    path,
+    context,
+    { inputStream -> inputStream.use { withContext(Dispatchers.Virtual) { it.reader().readText() } } },
+    exceptionHandler
+)
 
 /**
  * Get an [InputStream] for the configuration file at [path] using the provided [context] and pass it to the provided
  * [resultHandler]. If a [ConfigException] occurs while reading the file, the [exceptionHandler] is invoked which
  * rethrows the exception by default. If another exception occurs while reading the file, it is rethrown.
  */
-inline fun <reified T> ConfigManager.getConfigFile(
+suspend inline fun <reified T> ConfigManager.getConfigFile(
     path: String,
     context: ResolvedConfigContext,
     resultHandler: (InputStream) -> T,
@@ -147,9 +156,7 @@ inline fun <reified T> ConfigManager.getConfigFile(
     if (it is ConfigException) exceptionHandler(it) else throw it
 }
 
-/**
- * Return the resolved context for accessing configuration files from this [WorkerContext] if it is defined.
- */
+/** Return the resolved context for accessing configuration files from this [WorkerContext] if it is defined. */
 val WorkerContext.resolvedConfigurationContext: ResolvedConfigContext
     get() = checkNotNull(ortRun.resolvedJobConfigContext) {
         "Job config context of ORT run '${ortRun.id}' must be resolved."

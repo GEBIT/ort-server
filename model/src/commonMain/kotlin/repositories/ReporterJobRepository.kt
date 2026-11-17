@@ -23,28 +23,20 @@ import org.eclipse.apoapsis.ortserver.model.ReporterJob
 import org.eclipse.apoapsis.ortserver.model.ReporterJobConfiguration
 import org.eclipse.apoapsis.ortserver.model.runs.reporter.Report
 
-/**
- * A repository of [ReporterJob]s.
- */
+/** A repository of [ReporterJob]s. */
 interface ReporterJobRepository : WorkerJobRepository<ReporterJob> {
-    /**
-     * Create a reporter job.
-     */
-    fun create(ortRunId: Long, configuration: ReporterJobConfiguration): ReporterJob
+    /** Create a reporter job. */
+    suspend fun create(ortRunId: Long, configuration: ReporterJobConfiguration): ReporterJob
 
-    /**
-     * Delete a reporter job by [id].
-     */
-    fun delete(id: Long)
+    /** Delete a reporter job by [id]. */
+    suspend fun delete(id: Long)
 
     /**
      * Get a report for the given [ortRunId] by its [token]. The token allows access to the report without
      * authentication. Returns *null* if the token cannot be resolved or has expired.
      */
-    fun getReportByToken(ortRunId: Long, token: String): Report?
+    suspend fun getReportByToken(ortRunId: Long, token: String): Report?
 
-    /**
-     * Get all reports for the [ortRunId] filtered by the expiration date of the [Report.downloadLink].
-     */
-    fun getNonExpiredReports(ortRunId: Long): List<Report>
+    /** Get all reports for the [ortRunId] filtered by the expiration date of the [Report.downloadLink]. */
+    suspend fun getNonExpiredReports(ortRunId: Long): List<Report>
 }

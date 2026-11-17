@@ -19,36 +19,32 @@
 
 package org.eclipse.apoapsis.ortserver.core.services
 
-import java.sql.Connection
-
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.model.JobConfigurations
 import org.eclipse.apoapsis.ortserver.model.OrtRun
-import org.eclipse.apoapsis.ortserver.model.UserDisplayName
+import org.eclipse.apoapsis.ortserver.model.User
 import org.eclipse.apoapsis.ortserver.model.orchestrator.CreateOrtRun
 import org.eclipse.apoapsis.ortserver.model.repositories.OrtRunRepository
+import org.eclipse.apoapsis.ortserver.model.runs.repository.RunIncludesExcludes
 import org.eclipse.apoapsis.ortserver.transport.Message
 import org.eclipse.apoapsis.ortserver.transport.MessageHeader
 import org.eclipse.apoapsis.ortserver.transport.MessageSenderFactory
 import org.eclipse.apoapsis.ortserver.transport.OrchestratorEndpoint
 
-import org.jetbrains.exposed.v1.jdbc.Database
-
 import org.slf4j.MDC
 
-/**
- * A service responsible for the communication with the Orchestrator.
- */
+/** A service responsible for the communication with the Orchestrator. */
 class OrchestratorService(
-    private val db: Database,
     private val ortRunRepository: OrtRunRepository,
     configManager: ConfigManager
 ) {
     private val orchestratorSender by lazy { MessageSenderFactory.createSender(OrchestratorEndpoint, configManager) }
 
     /**
-     * Create an ORT run in the database and notify the Orchestrator to handle this run.
+     * Create an ORT run in the database and notify the Orchestrator to handle this run. The
+     * [resolvedJobConfigContext] is the result of resolving the requested [jobConfigContext] and determines the
+     * configuration used by the run. The [includesExcludes] are applied in addition to those from the repository
+     * configuration file.
      */
     suspend fun createOrtRun(
         repositoryId: Long,
@@ -58,24 +54,25 @@ class OrchestratorService(
         jobConfigContext: String?,
         labels: Map<String, String>?,
         environmentConfigPath: String?,
-        userDisplayName: UserDisplayName?
+        userDisplayName: User?,
+        resolvedJobConfigContext: String,
+        includesExcludes: RunIncludesExcludes? = null
     ): OrtRun {
         val traceId = MDC.get("traceId")
 
-        val ortRun = db.dbQuery(transactionIsolation = Connection.TRANSACTION_SERIALIZABLE) {
-            maxAttempts = 25
-            ortRunRepository.create(
-                repositoryId,
-                revision,
-                path,
-                jobConfig,
-                jobConfigContext,
-                labels.orEmpty(),
-                traceId = traceId,
-                environmentConfigPath = environmentConfigPath,
-                userDisplayName = userDisplayName
-            )
-        }
+        val ortRun = ortRunRepository.create(
+            repositoryId,
+            revision,
+            path,
+            jobConfig,
+            jobConfigContext,
+            labels.orEmpty(),
+            traceId = traceId,
+            environmentConfigPath = environmentConfigPath,
+            userDisplayName = userDisplayName,
+            resolvedJobConfigContext = resolvedJobConfigContext,
+            includesExcludes = includesExcludes
+        )
 
         orchestratorSender.send(
             Message(

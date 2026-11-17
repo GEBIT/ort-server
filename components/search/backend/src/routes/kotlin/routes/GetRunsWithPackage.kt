@@ -23,7 +23,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 
-import kotlin.time.Clock
+import kotlin.time.Instant
 
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.OrtServerPrincipal.Companion.requirePrincipal
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.get
@@ -35,7 +35,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.jsonBody
 
 @Suppress("LongMethod")
 internal fun Route.getRunsWithPackage(searchService: SearchService) =
-    get("/search/package", {
+    get("search/package", {
         operationId = "getRunsWithPackage"
         summary = "Return ORT runs containing a package, possibly scoped by organization, product, or repository"
         tags = listOf("Search")
@@ -76,7 +76,7 @@ internal fun Route.getRunsWithPackage(searchService: SearchService) =
                                 ortRunId = 1042L,
                                 ortRunIndex = 42L,
                                 revision = "a1b2c3d4",
-                                createdAt = Clock.System.now(),
+                                createdAt = Instant.parse("2024-01-01T00:00:00Z"),
                                 packageId = Identifier(
                                     type = "Maven",
                                     namespace = "foo",
@@ -96,8 +96,13 @@ internal fun Route.getRunsWithPackage(searchService: SearchService) =
                                 ortRunId = 1042L,
                                 ortRunIndex = 42L,
                                 revision = "a1b2c3d4",
-                                createdAt = Clock.System.now(),
-                                packageId = null,
+                                createdAt = Instant.parse("2024-01-01T00:00:00Z"),
+                                packageId = Identifier(
+                                    type = "Maven",
+                                    namespace = "foo",
+                                    name = "bar",
+                                    version = "1.0.0"
+                                ),
                                 purl = "pkg:maven/foo/bar@1.0.0"
                             )
                         )
@@ -106,7 +111,8 @@ internal fun Route.getRunsWithPackage(searchService: SearchService) =
             }
             HttpStatusCode.BadRequest to {
                 description = "If more than one scope parameter (organizationId, productId, repositoryId) is " +
-                    "specified, or if neither/both 'identifier' and 'purl' are provided."
+                    "specified, a scope parameter is not a valid ID, 'identifier' or 'purl' is not a valid " +
+                    "regular expression, or if neither/both 'identifier' and 'purl' are provided."
             }
         }
     }, requireScopedReadPermission()) {
@@ -121,13 +127,14 @@ internal fun Route.getRunsWithPackage(searchService: SearchService) =
 
         // parseScope() throws QueryParametersException if multiple scope parameters are provided
         val scope = call.parseScope()
-        val userId = requirePrincipal().username
+        val principal = requirePrincipal()
 
         val ortRuns = searchService.findOrtRunsByPackage(
             identifier = identifierParam,
             purl = purlParam,
-            userId = userId,
-            scope = scope
+            userId = principal.username,
+            scope = scope,
+            userSub = principal.userId
         )
         call.respond(HttpStatusCode.OK, ortRuns)
     }

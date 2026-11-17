@@ -21,29 +21,30 @@ package org.eclipse.apoapsis.ortserver.dao.repositories.notifierrun
 
 import kotlin.time.Instant
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
-import org.eclipse.apoapsis.ortserver.dao.entityQuery
+import org.eclipse.apoapsis.ortserver.dao.getEntityOrNull
+import org.eclipse.apoapsis.ortserver.dao.transaction
+import org.eclipse.apoapsis.ortserver.dao.transactionCatching
 import org.eclipse.apoapsis.ortserver.model.repositories.NotifierRunRepository
 import org.eclipse.apoapsis.ortserver.model.runs.notifier.NotifierRun
 
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.Database
 
-/**
- * An implementation of [NotifierRunRepository] that stores notifier runs in [NotifierRunsTable].
- */
+/** An implementation of [NotifierRunRepository] that stores notifier runs in [NotifierRunsTable]. */
 class DaoNotifierRunRepository(private val db: Database) : NotifierRunRepository {
-    override fun create(notifierJobId: Long, startTime: Instant, endTime: Instant): NotifierRun = db.blockingQuery {
-        NotifierRunDao.new {
-            this.notifierJobId = notifierJobId
-            this.startTime = startTime
-            this.endTime = endTime
-        }.mapToModel()
-    }
+    override suspend fun create(notifierJobId: Long, startTime: Instant, endTime: Instant): NotifierRun =
+        db.transaction {
+            NotifierRunDao.new {
+                this.notifierJobId = notifierJobId
+                this.startTime = startTime
+                this.endTime = endTime
+            }.mapToModel()
+        }
 
-    override fun get(id: Long): NotifierRun? = db.entityQuery { NotifierRunDao[id].mapToModel() }
+    override suspend fun get(id: Long): NotifierRun? =
+        db.transactionCatching { NotifierRunDao[id].mapToModel() }.getEntityOrNull()
 
-    override fun getByJobId(notifierJobId: Long): NotifierRun? = db.entityQuery {
+    override suspend fun getByJobId(notifierJobId: Long): NotifierRun? = db.transactionCatching {
         NotifierRunDao.find { NotifierRunsTable.notifierJobId eq notifierJobId }.firstOrNull()?.mapToModel()
-    }
+    }.getEntityOrNull()
 }

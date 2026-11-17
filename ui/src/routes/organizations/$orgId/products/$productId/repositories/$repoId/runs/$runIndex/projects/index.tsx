@@ -69,6 +69,7 @@ import {
   markedSearchParameterSchema,
   paginationSearchParameterSchema,
   projectIdentifierSearchParameterSchema,
+  projectIdMatchTypeSearchParameterSchema,
   sortingSearchParameterSchema,
 } from '@/schemas';
 
@@ -177,7 +178,7 @@ const renderSubComponent = ({
                 expression={project.processedDeclaredLicense.spdxExpression}
               />
             ) : (
-              <div className='text-muted-foreground italic'>No value</div>
+              <div className='text-muted-foreground italic'>N/A</div>
             )}
           </div>
           <RenderProperty
@@ -192,7 +193,7 @@ const renderSubComponent = ({
                 licenses={project.processedDeclaredLicense.unmappedLicenses}
               />
             ) : (
-              <div className='text-muted-foreground italic'>No value</div>
+              <div className='text-muted-foreground italic'>N/A</div>
             )}
           </div>
         </div>
@@ -225,48 +226,32 @@ const ProjectsComponent = () => {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
 
-  // Memoize the search parameters to prevent unnecessary re-rendering
+  const pageIndex = search.page ? search.page - 1 : 0;
+  const pageSize = search.pageSize ? search.pageSize : defaultPageSize;
+  const projectIdentifier = search.projectId ? search.projectId : undefined;
 
-  const pageIndex = useMemo(
-    () => (search.page ? search.page - 1 : 0),
-    [search.page]
-  );
+  const definitionFilePath = search.definitionFilePath
+    ? search.definitionFilePath
+    : undefined;
 
-  const pageSize = useMemo(
-    () => (search.pageSize ? search.pageSize : defaultPageSize),
-    [search.pageSize]
-  );
+  const declaredLicense = search.declaredLicense
+    ? search.declaredLicense
+    : undefined;
 
-  const projectIdentifier = useMemo(
-    () => (search.projectId ? search.projectId : undefined),
-    [search.projectId]
-  );
+  const columnFilters = [];
+  if (projectIdentifier) {
+    columnFilters.push({ id: 'identifier', value: projectIdentifier });
+  }
+  if (definitionFilePath) {
+    columnFilters.push({ id: 'definitionFilePath', value: definitionFilePath });
+  }
+  if (declaredLicense) {
+    columnFilters.push({ id: 'declaredLicense', value: declaredLicense });
+  }
 
-  const definitionFilePath = useMemo(
-    () => (search.definitionFilePath ? search.definitionFilePath : undefined),
-    [search.definitionFilePath]
-  );
-
-  const declaredLicense = useMemo(
-    () => (search.declaredLicense ? search.declaredLicense : undefined),
-    [search.declaredLicense]
-  );
-
-  const columnFilters = useMemo(() => {
-    const filters = [];
-
-    if (projectIdentifier) {
-      filters.push({ id: 'identifier', value: projectIdentifier });
-    }
-    if (definitionFilePath) {
-      filters.push({ id: 'definitionFilePath', value: definitionFilePath });
-    }
-    if (declaredLicense) {
-      filters.push({ id: 'declaredLicense', value: declaredLicense });
-    }
-    return filters;
-  }, [projectIdentifier, definitionFilePath, declaredLicense]);
-
+  // The sorting is used again after the queries below. React Compiler does
+  // not memoize it on its own there, so without `useMemo` it would be a new
+  // array on every render.
   const sortBy = useMemo(
     () =>
       search.sortBy?.filter((sort) => supportedSortColumns.has(sort.id)) ??
@@ -320,6 +305,10 @@ const ProjectsComponent = () => {
         offset: pageIndex * pageSize,
         sort: convertToBackendSorting(sortBy),
         identifier: projectIdentifier,
+        identifierMatchType:
+          projectIdentifier && search.projectIdMatchType === 'exact'
+            ? 'exact'
+            : undefined,
         declaredLicense: declaredLicense?.join(','),
         definitionFilePath,
       },
@@ -384,8 +373,17 @@ const ProjectsComponent = () => {
           filter: {
             filterVariant: 'text',
             setFilterValue: (value: string | undefined) => {
+              // The filter also reports an unchanged value, for example on
+              // blur, which must not end an exact match.
+              if (value === search.projectId) return;
               navigate({
-                search: { ...search, page: 1, projectId: value },
+                search: {
+                  ...search,
+                  page: 1,
+                  projectId: value,
+                  projectIdMatchType: undefined,
+                  marked: undefined,
+                },
               });
             },
           },
@@ -543,6 +541,7 @@ export const Route = createFileRoute(
     ...definitionFilePathSearchParameterSchema.shape,
     ...paginationSearchParameterSchema.shape,
     ...projectIdentifierSearchParameterSchema.shape,
+    ...projectIdMatchTypeSearchParameterSchema.shape,
     ...sortingSearchParameterSchema.shape,
     ...markedSearchParameterSchema.shape,
   }),

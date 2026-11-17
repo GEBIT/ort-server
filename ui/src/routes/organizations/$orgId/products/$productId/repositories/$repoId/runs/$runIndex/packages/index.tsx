@@ -42,6 +42,7 @@ import {
 import { LoadingIndicator } from '@/components/loading-indicator';
 import { PackageCuration } from '@/components/package-curation';
 import { RenderProperty } from '@/components/render-property';
+import { TimestampWithUTC } from '@/components/timestamp-with-utc';
 import {
   Accordion,
   AccordionContent,
@@ -68,7 +69,10 @@ import {
   EMPTY_SORTING_STATE,
   updateColumnSorting,
 } from '@/helpers/handle-multisort';
-import { identifierToString } from '@/helpers/identifier-conversion';
+import {
+  getPackageIdFilter,
+  identifierToString,
+} from '@/helpers/identifier-conversion';
 import {
   createAppColumnHelper,
   selectNoTableState,
@@ -83,7 +87,9 @@ import {
   isDirectDependencySearchParameterSchema,
   markedSearchParameterSchema,
   packageIdentifierSearchParameterSchema,
+  packageIdMatchTypeSearchParameterSchema,
   PackageIdType,
+  packageIdTypeSchema,
   paginationSearchParameterSchema,
   sortingSearchParameterSchema,
 } from '@/schemas';
@@ -105,7 +111,7 @@ const LicenseList = ({ licenses }: { licenses: string[] }) => (
 const PackageCard = ({ pkg }: { pkg: Package }) => {
   const packageIdType = useUserSettingsStore((state) => state.packageIdType);
   const id =
-    packageIdType === 'PURL' && pkg.purl
+    packageIdType === packageIdTypeSchema.enum.PURL && pkg.purl
       ? pkg.purl
       : identifierToString(pkg.identifier);
   const declaredLicenses = [
@@ -118,27 +124,38 @@ const PackageCard = ({ pkg }: { pkg: Package }) => {
   return (
     <div className='flex flex-col gap-1'>
       <div className='flex items-start justify-between gap-4'>
-        <div className='min-w-0 basis-2/3 text-left font-semibold'>
+        <div className='min-w-0 text-left font-semibold'>
           <BreakableString text={id} />
           <CopyToClipboard copyText={id} className='h-5 px-2 align-middle' />
         </div>
+        {pkg.publishedAt && (
+          <TimestampWithUTC
+            timestamp={pkg.publishedAt}
+            label='Publishing timestamp'
+            className='shrink-0 text-sm'
+          />
+        )}
+      </div>
+      <div className='flex items-start justify-between gap-4'>
+        {declaredLicenses.length > 0 ? (
+          <div className='flex min-w-0 gap-2 text-sm'>
+            <div className='text-muted-foreground'>Declared License:</div>
+            <LicenseList licenses={declaredLicenses} />
+          </div>
+        ) : (
+          <div className='text-muted-foreground italic'>
+            No declared license
+          </div>
+        )}
         <a
           href={pkg.homepageUrl}
           target='_blank'
           rel='noopener noreferrer'
-          className='min-w-0 basis-1/3 wrap-break-word text-blue-400 hover:underline'
+          className='max-w-1/2 min-w-0 text-right wrap-break-word text-blue-400 hover:underline'
         >
           {pkg.homepageUrl}
         </a>
       </div>
-      {declaredLicenses.length > 0 ? (
-        <div className='flex gap-2 text-sm'>
-          <div className='text-muted-foreground'>Declared License:</div>
-          <LicenseList licenses={declaredLicenses} />
-        </div>
-      ) : (
-        <div className='text-muted-foreground italic'>No declared license</div>
-      )}
 
       <div className='flex gap-2'>
         {pkg.curations.length > 0 && (
@@ -203,17 +220,20 @@ const renderSubComponent = ({
   row,
   packageIdType,
   runId,
+  params,
 }: {
   row: AppRow<Package>;
   packageIdType?: PackageIdType;
   runId: number;
+  params: ReturnType<typeof Route.useParams>;
 }) => {
   const pkg = row.original;
   const hasCurations = pkg.curations.length > 0;
 
   // The card title shows one of the package identifiers, depending on the user
   // preference, so show the other one here.
-  const showsPurlInTitle = packageIdType === 'PURL' && !!pkg.purl;
+  const showsPurlInTitle =
+    packageIdType === packageIdTypeSchema.enum.PURL && !!pkg.purl;
   const alternativeIdLabel = showsPurlInTitle ? 'ORT ID' : 'PURL';
   const alternativeId = showsPurlInTitle
     ? identifierToString(pkg.identifier)
@@ -332,6 +352,7 @@ const renderSubComponent = ({
           <DependencyPaths
             pkg={pkg}
             pkgIdType={packageIdType}
+            params={params}
             className='flex flex-col gap-2'
           />
         </div>
@@ -345,8 +366,9 @@ const renderSubComponent = ({
             </AccordionTrigger>
             <AccordionContent>
               <div className='mb-4'>
-                The curations appear in the order in which they were applied to
-                the original metadata, resulting in the metadata as shown above.
+                Curations are shown from highest to lowest priority, where
+                higher-priority values take precedence over lower-priority
+                values.
               </div>
               {pkg.curations.map((curation, idx) => (
                 <div key={idx} className=''>
@@ -374,6 +396,11 @@ const PackagesComponent = () => {
       ? undefined
       : search.isDirectDependency === 'true';
   const packageIdType = useUserSettingsStore((state) => state.packageIdType);
+  const packageIdFilterType = search.pkgIdType ?? packageIdType;
+  const exactIdentifierMatch =
+    !!packageId &&
+    search.pkgIdMatchType === 'exact' &&
+    packageIdFilterType === packageIdTypeSchema.enum.ORT_ID;
 
   const { data: ortRun } = useSuspenseQuery({
     ...getRepositoryRunOptions({
@@ -410,14 +437,20 @@ const PackagesComponent = () => {
         limit: pageSize,
         offset: pageIndex * pageSize,
         sort: convertToBackendSorting(search.sortBy),
-        ...(packageIdType === 'ORT_ID'
-          ? { identifier: packageId }
-          : { purl: packageId }),
+        ...getPackageIdFilter(packageId, packageIdFilterType),
+        identifierMatchType: exactIdentifierMatch ? 'exact' : undefined,
         declaredLicense: declaredLicense?.join(','),
         isDirectDependency,
       },
     }),
   });
+
+  // A link finds its package by ORT ID. Show the PURL of the found package in
+  // the filter instead if the user has chosen to see PURLs.
+  const shownPackageId =
+    exactIdentifierMatch && packageIdType === packageIdTypeSchema.enum.PURL
+      ? packages.data[0]?.purl || packageId
+      : packageId;
 
   const columns = columnHelper.columns([
     // Leftmost action column.
@@ -491,21 +524,31 @@ const PackagesComponent = () => {
     }),
     columnHelper.accessor(
       (pkg) => {
-        if (packageIdType === 'ORT_ID') {
+        if (packageIdType === packageIdTypeSchema.enum.ORT_ID) {
           return identifierToString(pkg.identifier);
         } else {
           return pkg.purl;
         }
       },
       {
-        id: `${packageIdType === 'ORT_ID' ? 'identifier' : 'purl'}`,
+        id: `${packageIdType === packageIdTypeSchema.enum.ORT_ID ? 'identifier' : 'purl'}`,
         header: 'Package ID',
         meta: {
           filter: {
             filterVariant: 'text',
             setFilterValue: (value: string | undefined) => {
+              // The filter also reports an unchanged value, for example on
+              // blur, which must not end an exact match.
+              if (value === shownPackageId) return;
               navigate({
-                search: { ...search, page: 1, pkgId: value },
+                search: {
+                  ...search,
+                  page: 1,
+                  pkgId: value,
+                  pkgIdType: packageIdType,
+                  pkgIdMatchType: undefined,
+                  marked: undefined,
+                },
               });
             },
           },
@@ -552,13 +595,28 @@ const PackagesComponent = () => {
         },
       }
     ),
+    columnHelper.accessor((pkg) => pkg.publishedAt, {
+      id: 'publishedAt',
+      header: 'Published',
+      enableColumnFilter: false,
+    }),
   ]);
 
-  const columnId = packageIdType === 'ORT_ID' ? 'identifier' : 'purl';
+  const columnId =
+    packageIdType === packageIdTypeSchema.enum.ORT_ID ? 'identifier' : 'purl';
 
   const [expanded, setExpanded] = useState<ExpandedState>(
     search.marked ? { [search.marked]: true } : {}
   );
+  // A link to another package on this page, such as one in a dependency path,
+  // keeps the page mounted, so open the newly marked row here.
+  const [openedMarked, setOpenedMarked] = useState(search.marked);
+  if (search.marked !== openedMarked) {
+    setOpenedMarked(search.marked);
+    if (search.marked && expanded !== true) {
+      setExpanded({ ...expanded, [search.marked]: true });
+    }
+  }
 
   const table = useAppTable(
     {
@@ -574,7 +632,7 @@ const PackagesComponent = () => {
         expanded: expanded,
         columnFilters: [
           { id: 'isDirectDependency', value: search.isDirectDependency },
-          { id: columnId, value: packageId },
+          { id: columnId, value: shownPackageId },
           { id: 'processedDeclaredLicense', value: declaredLicense },
         ],
         // Always hide the columns that are used for filtering/sorting only.
@@ -582,11 +640,13 @@ const PackagesComponent = () => {
           isDirectDependency: false,
           [columnId]: false,
           processedDeclaredLicense: false,
+          publishedAt: false,
         },
       },
       onExpandedChange: setExpanded,
       getRowCanExpand: () => true,
       manualPagination: true,
+      getRowId: (row) => identifierToString(row.identifier),
     },
     selectNoTableState
   );
@@ -615,7 +675,12 @@ const PackagesComponent = () => {
         <DataTableCards
           table={table}
           renderSubComponent={({ row }) =>
-            renderSubComponent({ row, packageIdType, runId: ortRun.id })
+            renderSubComponent({
+              row,
+              packageIdType,
+              runId: ortRun.id,
+              params,
+            })
           }
           setCurrentPageOptions={(currentPage) => {
             return {
@@ -634,6 +699,7 @@ const PackagesComponent = () => {
               to: Route.to,
               search: {
                 ...search,
+                page: 1,
                 sortBy: updateColumnSorting(search.sortBy, sortBy),
               },
             };
@@ -651,6 +717,7 @@ export const Route = createFileRoute(
     ...paginationSearchParameterSchema.shape,
     ...sortingSearchParameterSchema.shape,
     ...packageIdentifierSearchParameterSchema.shape,
+    ...packageIdMatchTypeSearchParameterSchema.shape,
     ...declaredLicenseSearchParameterSchema.shape,
     ...isDirectDependencySearchParameterSchema.shape,
     ...markedSearchParameterSchema.shape,

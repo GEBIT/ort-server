@@ -25,13 +25,13 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.route
 
-import org.eclipse.apoapsis.ortserver.api.v1.mapping.mapToApi
 import org.eclipse.apoapsis.ortserver.api.v1.model.PostUser
 import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithSuperuserStatus
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.OrganizationRole
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.OrtServerPrincipal.Companion.requirePrincipal
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.delete
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.get
+import org.eclipse.apoapsis.ortserver.components.authorization.routes.mapToApi
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.post
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.put
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.requireSuperuser
@@ -43,6 +43,11 @@ import org.eclipse.apoapsis.ortserver.core.apiDocs.getUsers
 import org.eclipse.apoapsis.ortserver.core.apiDocs.postUser
 import org.eclipse.apoapsis.ortserver.core.apiDocs.putSuperuser
 import org.eclipse.apoapsis.ortserver.model.CompoundHierarchyId
+import org.eclipse.apoapsis.ortserver.shared.apimappings.mapToApi
+import org.eclipse.apoapsis.ortserver.shared.apimappings.mapToModel
+import org.eclipse.apoapsis.ortserver.shared.apimodel.SortDirection
+import org.eclipse.apoapsis.ortserver.shared.apimodel.SortProperty
+import org.eclipse.apoapsis.ortserver.shared.ktorutils.pagingOptions
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.respondError
 
@@ -55,19 +60,21 @@ fun Route.admin() = route("admin") {
         val userService by inject<UserService>()
 
         get(getUsers, requireSuperuser()) {
+            val pagingOptions = call.pagingOptions(SortProperty("username", SortDirection.ASCENDING))
+            val users = userService.listUsers(pagingOptions.mapToModel(), call.parameters["search"])
             val superusers = authorizationService.listUsersWithRole(
                 OrganizationRole.ADMIN,
                 CompoundHierarchyId.WILDCARD
             )
 
-            val users = userService.getUsers().map { user ->
-                UserWithSuperuserStatus(
-                    user = user.mapToApi(),
-                    isSuperuser = user.username in superusers
-                )
-            }
-
-            call.respond(users)
+            call.respond(
+                users.mapToApi { user ->
+                    UserWithSuperuserStatus(
+                        user = user.mapToApi(),
+                        isSuperuser = user.username in superusers
+                    )
+                }
+            )
         }
 
         post(postUser, requireSuperuser()) {
@@ -86,6 +93,10 @@ fun Route.admin() = route("admin") {
 
         delete(deleteUser, requireSuperuser()) {
             val username = call.requireParameter("username")
+
+            runCatching { userService.getUserById(username) }
+                .getOrElse { return@delete call.respond(HttpStatusCode.NotFound) }
+
             userService.deleteUser(username)
 
             call.respond(HttpStatusCode.NoContent)
@@ -95,10 +106,9 @@ fun Route.admin() = route("admin") {
             put(putSuperuser, requireSuperuser()) {
                 val username = call.requireParameter("username")
 
-                runCatching { userService.getUserById(username) }
-                    .getOrElse { return@put call.respond(HttpStatusCode.NotFound) }
+                val userSub = userService.findUserId(username) ?: return@put call.respond(HttpStatusCode.NotFound)
 
-                authorizationService.assignRole(username, OrganizationRole.ADMIN, CompoundHierarchyId.WILDCARD)
+                authorizationService.assignRole(username, OrganizationRole.ADMIN, CompoundHierarchyId.WILDCARD, userSub)
 
                 call.respond(HttpStatusCode.NoContent)
             }

@@ -20,7 +20,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { getRouteApi, Link } from '@tanstack/react-router';
 import { Loader2 } from 'lucide-react';
-import { useMemo } from 'react';
 
 import { Product } from '@/api';
 import {
@@ -48,6 +47,107 @@ const columnHelper = createAppColumnHelper<Product>();
 
 const routeApi = getRouteApi('/organizations/$orgId/');
 
+export const ProductTotalRunsCell = ({ product }: { product: Product }) => {
+  const { data, isPending, isError } = useQuery({
+    ...getProductRepositoriesOptions({
+      path: { productId: product.id },
+      query: { limit: 1 },
+    }),
+  });
+
+  if (isPending)
+    return (
+      <>
+        <span className='sr-only'>Loading...</span>
+        <Loader2 size={16} className='mx-3 animate-spin' />
+      </>
+    );
+
+  if (isError) return <span>Error loading data.</span>;
+
+  if (data.pagination.totalCount === 1 && data.data[0])
+    return <TotalRuns repoId={data.data[0].id} />;
+  else return <span>-</span>;
+};
+
+export const ProductRunStatusCell = ({ product }: { product: Product }) => {
+  const { data, isPending, isError } = useQuery({
+    ...getProductRepositoriesOptions({
+      path: { productId: product.id },
+      query: { limit: 1 },
+    }),
+  });
+
+  if (isPending)
+    return (
+      <>
+        <span className='sr-only'>Loading...</span>
+        <Loader2 size={16} className='mx-3 animate-spin' />
+      </>
+    );
+
+  if (isError) return <span>Error loading data.</span>;
+
+  return (
+    <div className='flex flex-col gap-1'>
+      {data.pagination.totalCount === 1 && data.data[0] ? (
+        <LastRunStatus repoId={data.data[0].id} />
+      ) : (
+        <span>Contains {data.pagination.totalCount} repositories</span>
+      )}
+      <div className='flex'>
+        <ProductItemCounts productId={product.id} />
+      </div>
+    </div>
+  );
+};
+
+export const ProductLastRunDateCell = ({ product }: { product: Product }) => {
+  const { data, isPending, isError } = useQuery({
+    ...getProductRepositoriesOptions({
+      path: { productId: product.id },
+      query: { limit: 1 },
+    }),
+  });
+
+  if (isPending)
+    return (
+      <>
+        <span className='sr-only'>Loading...</span>
+        <Loader2 size={16} className='mx-3 animate-spin' />
+      </>
+    );
+
+  if (isError) return <span>Error loading data.</span>;
+
+  if (data.pagination.totalCount === 1 && data.data[0])
+    return <LastRunDate repoId={data.data[0].id} />;
+  else return null;
+};
+
+export const ProductJobStatusCell = ({ product }: { product: Product }) => {
+  const { data, isPending, isError } = useQuery({
+    ...getProductRepositoriesOptions({
+      path: { productId: product.id },
+      query: { limit: 1 },
+    }),
+  });
+
+  if (isPending)
+    return (
+      <>
+        <span className='sr-only'>Loading...</span>
+        <Loader2 size={16} className='mx-3 animate-spin' />
+      </>
+    );
+
+  if (isError) return <span>Error loading data.</span>;
+
+  if (data.pagination.totalCount === 1 && data.data[0])
+    return <LastJobStatus repoId={data.data[0].id} />;
+  else return null;
+};
+
 export const OrganizationProductTable = () => {
   const prodPageSize = useTablePrefsStore((state) => state.prodPageSize);
   const setProdPageSize = useTablePrefsStore((state) => state.setProdPageSize);
@@ -55,18 +155,9 @@ export const OrganizationProductTable = () => {
   const params = routeApi.useParams();
   const search = routeApi.useSearch();
 
-  const pageIndex = useMemo(
-    () => (search.page ? search.page - 1 : 0),
-    [search.page]
-  );
-  const pageSize = useMemo(
-    () => (search.pageSize ? search.pageSize : prodPageSize),
-    [search.pageSize, prodPageSize]
-  );
-  const nameFilter = useMemo(
-    () => (search.filter ? search.filter : undefined),
-    [search.filter]
-  );
+  const pageIndex = search.page ? search.page - 1 : 0;
+  const pageSize = search.pageSize ? search.pageSize : prodPageSize;
+  const nameFilter = search.filter ? search.filter : undefined;
 
   const { data: organization } = useQuery({
     ...getOrganizationOptions({
@@ -90,182 +181,83 @@ export const OrganizationProductTable = () => {
     }),
   });
 
-  const columns = useMemo(
-    () =>
-      columnHelper.columns([
-        columnHelper.accessor('name', {
-          id: 'product',
-          header: 'Products',
-          size: 300,
-          cell: ({ row }) => (
-            <>
-              <div className='flex items-center gap-1.5'>
-                <Link
-                  className='font-semibold text-blue-400 hover:underline'
-                  to={`/organizations/$orgId/products/$productId`}
-                  params={{
-                    orgId: row.original.organizationId.toString(),
-                    productId: row.original.id.toString(),
-                  }}
-                >
-                  {row.original.name}
-                </Link>
-                {organization && (
-                  <ProductFavoriteButton
-                    organization={organization}
-                    organizationId={row.original.organizationId}
-                    product={row.original}
-                    size='xs'
-                    variant='ghost'
-                    className='size-6 p-0'
-                  />
-                )}
-              </div>
-              <div className='text-muted-foreground text-sm md:inline'>
-                {row.original.description}
-              </div>
-            </>
-          ),
-          meta: {
-            filter: {
-              filterVariant: 'regex',
-              setFilterValue: (value: string | undefined) => {
-                navigate({
-                  search: { ...search, page: 1, filter: value },
-                });
-              },
-            },
-          },
-        }),
-        columnHelper.display({
-          id: 'runs',
-          header: 'Runs',
-          size: 50,
-          cell: function CellComponent({ row }) {
-            const { data, isPending, isError } = useQuery({
-              ...getProductRepositoriesOptions({
-                path: { productId: row.original.id },
-                query: { limit: 1 },
-              }),
+  const columns = columnHelper.columns([
+    columnHelper.accessor('name', {
+      id: 'product',
+      header: 'Products',
+      size: 300,
+      cell: ({ row }) => (
+        <>
+          <div className='flex items-center gap-1.5'>
+            <Link
+              className='font-semibold text-blue-400 hover:underline'
+              to={`/organizations/$orgId/products/$productId`}
+              params={{
+                orgId: row.original.organizationId.toString(),
+                productId: row.original.id.toString(),
+              }}
+            >
+              {row.original.name}
+            </Link>
+            {organization && (
+              <ProductFavoriteButton
+                organization={organization}
+                organizationId={row.original.organizationId}
+                product={row.original}
+                size='xs'
+                variant='ghost'
+                className='size-6 p-0'
+              />
+            )}
+          </div>
+          <div className='text-muted-foreground text-sm md:inline'>
+            {row.original.description}
+          </div>
+        </>
+      ),
+      meta: {
+        filter: {
+          filterVariant: 'regex',
+          setFilterValue: (value: string | undefined) => {
+            navigate({
+              search: { ...search, page: 1, filter: value },
             });
-
-            if (isPending)
-              return (
-                <>
-                  <span className='sr-only'>Loading...</span>
-                  <Loader2 size={16} className='mx-3 animate-spin' />
-                </>
-              );
-
-            if (isError) return <span>Error loading data.</span>;
-
-            if (data.pagination.totalCount === 1 && data.data[0])
-              return <TotalRuns repoId={data.data[0].id} />;
-            else return <span>-</span>;
           },
-          enableColumnFilter: false,
-        }),
-        columnHelper.display({
-          id: 'runStatus',
-          header: 'Last Run Status',
-          cell: function CellComponent({ row }) {
-            const { data, isPending, isError } = useQuery({
-              ...getProductRepositoriesOptions({
-                path: { productId: row.original.id },
-                query: { limit: 1 },
-              }),
-            });
-
-            if (isPending)
-              return (
-                <>
-                  <span className='sr-only'>Loading...</span>
-                  <Loader2 size={16} className='mx-3 animate-spin' />
-                </>
-              );
-
-            if (isError) return <span>Error loading data.</span>;
-
-            return (
-              <div className='flex flex-col gap-1'>
-                {data.pagination.totalCount === 1 && data.data[0] ? (
-                  <LastRunStatus repoId={data.data[0].id} />
-                ) : (
-                  <span>
-                    Contains {data.pagination.totalCount} repositories
-                  </span>
-                )}
-                <div className='flex'>
-                  <ProductItemCounts productId={row.original.id} />
-                </div>
-              </div>
-            );
-          },
-          enableColumnFilter: false,
-        }),
-        columnHelper.display({
-          id: 'lastRunDate',
-          header: 'Last Run Date',
-          cell: function CellComponent({ row }) {
-            const { data, isPending, isError } = useQuery({
-              ...getProductRepositoriesOptions({
-                path: { productId: row.original.id },
-                query: { limit: 1 },
-              }),
-            });
-
-            if (isPending)
-              return (
-                <>
-                  <span className='sr-only'>Loading...</span>
-                  <Loader2 size={16} className='mx-3 animate-spin' />
-                </>
-              );
-
-            if (isError) return <span>Error loading data.</span>;
-
-            if (data.pagination.totalCount === 1 && data.data[0])
-              return <LastRunDate repoId={data.data[0].id} />;
-            else return null;
-          },
-          meta: {
-            widthPercentage: 12,
-          },
-          enableColumnFilter: false,
-        }),
-        columnHelper.display({
-          id: 'jobStatus',
-          header: 'Job Statuses',
-          cell: function CellComponent({ row }) {
-            const { data, isPending, isError } = useQuery({
-              ...getProductRepositoriesOptions({
-                path: { productId: row.original.id },
-                query: { limit: 1 },
-              }),
-            });
-
-            if (isPending)
-              return (
-                <>
-                  <span className='sr-only'>Loading...</span>
-                  <Loader2 size={16} className='mx-3 animate-spin' />
-                </>
-              );
-
-            if (isError) return <span>Error loading data.</span>;
-
-            if (data.pagination.totalCount === 1 && data.data[0])
-              return <LastJobStatus repoId={data.data[0].id} />;
-            else return null;
-          },
-          meta: {
-            widthPercentage: 8,
-          },
-          enableColumnFilter: false,
-        }),
-      ]),
-    [navigate, organization, search]
-  );
+        },
+      },
+    }),
+    columnHelper.display({
+      id: 'runs',
+      header: 'Runs',
+      size: 50,
+      cell: ({ row }) => <ProductTotalRunsCell product={row.original} />,
+      enableColumnFilter: false,
+    }),
+    columnHelper.display({
+      id: 'runStatus',
+      header: 'Last Run Status',
+      cell: ({ row }) => <ProductRunStatusCell product={row.original} />,
+      enableColumnFilter: false,
+    }),
+    columnHelper.display({
+      id: 'lastRunDate',
+      header: 'Last Run Date',
+      cell: ({ row }) => <ProductLastRunDateCell product={row.original} />,
+      meta: {
+        widthPercentage: 12,
+      },
+      enableColumnFilter: false,
+    }),
+    columnHelper.display({
+      id: 'jobStatus',
+      header: 'Job Statuses',
+      cell: ({ row }) => <ProductJobStatusCell product={row.original} />,
+      meta: {
+        widthPercentage: 8,
+      },
+      enableColumnFilter: false,
+    }),
+  ]);
 
   const table = useAppTable(
     {

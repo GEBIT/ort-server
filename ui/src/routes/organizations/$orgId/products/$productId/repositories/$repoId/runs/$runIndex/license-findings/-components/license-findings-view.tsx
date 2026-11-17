@@ -19,7 +19,6 @@
 
 import { useSuspenseQuery } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { ExpandedState } from '@tanstack/react-table';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -29,8 +28,12 @@ import {
   getRunDetectedLicensesInfiniteOptions,
   getRunDetectedLicensesOptions,
 } from '@/api/@tanstack/react-query.gen';
-import { DataTable } from '@/components/data-table/data-table';
+import {
+  DataTable,
+  DEFAULT_PAGE_SIZE,
+} from '@/components/data-table/data-table';
 import { SpdxExpressionBadgeGroup } from '@/components/licenses';
+import { LoadingIndicator } from '@/components/loading-indicator';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -53,18 +56,20 @@ import type { AppRow } from '@/hooks/use-app-table';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useInfiniteList } from '@/hooks/use-infinite-list';
 import { DROPDOWN_PAGE_SIZE } from '@/lib/constants';
+import { KEEP_SCROLL_POSITION, markPanelOpened, panelKey } from '@/lib/scroll';
 import { toastError } from '@/lib/toast';
 import { useUserSettingsStore } from '@/store/user-settings.store';
 import { DetectedLicensePackagesTable } from './detected-license-packages-table';
 import {
   clearDetectedLicenseMarkers,
-  clearPackageMarker,
   getDetectedLicenseQueryFilter,
-  getMarkerExpandedState,
+  getLicenseTablesExpandedState,
+  normalizeLicenseFindingsSearch,
+  resetLicensePackageIdentifierControls,
+  toggleLicenseTable,
 } from './license-findings-state';
 
 const licenseColumnHelper = createAppColumnHelper<DetectedLicense>();
-const defaultPageSize = 10;
 const licenseFindingsRoutePath =
   '/organizations/$orgId/products/$productId/repositories/$repoId/runs/$runIndex/license-findings/';
 
@@ -81,7 +86,7 @@ export const LicenseFindingsView = () => {
   const search = useSearch({ from: licenseFindingsRoutePath });
   const navigate = useNavigate({ from: licenseFindingsRoutePath });
   const pageIndex = search.page ? search.page - 1 : 0;
-  const pageSize = search.pageSize ? search.pageSize : defaultPageSize;
+  const pageSize = search.pageSize ?? DEFAULT_PAGE_SIZE;
   const detectedLicenses = search.detectedLicense;
   const detectedLicenseFilter =
     detectedLicenses && detectedLicenses.length > 0
@@ -89,10 +94,12 @@ export const LicenseFindingsView = () => {
       : undefined;
   const packageIdType = useUserSettingsStore((state) => state.packageIdType);
   const previousPackageIdType = useRef(packageIdType);
-  const preserveManualExpansion = useRef(false);
-  const [expanded, setExpanded] = useState<ExpandedState>(
-    getMarkerExpandedState(search.marked)
+  const normalizedSearch = normalizeLicenseFindingsSearch(
+    search,
+    packageIdType
   );
+  const needsNormalization =
+    JSON.stringify(normalizedSearch) !== JSON.stringify(search);
   const [licenseFilterOpen, setLicenseFilterOpen] = useState(false);
   const [licenseSearchTerm, setLicenseSearchTerm] = useState('');
   const debouncedLicenseSearchTerm = useDebounce(licenseSearchTerm, 300).trim();
@@ -159,20 +166,16 @@ export const LicenseFindingsView = () => {
           <Button
             variant='outline'
             size='sm'
+            aria-label={`Packages for ${row.original.license}`}
+            aria-expanded={row.getIsExpanded()}
             onClick={() => {
-              const isOpening = !row.getIsExpanded();
-
-              setExpanded(isOpening ? { [row.id]: true } : {});
-              preserveManualExpansion.current = search.marked !== undefined;
+              if (!row.getIsExpanded()) {
+                markPanelOpened(panelKey(row.id));
+              }
               navigate({
-                search: clearDetectedLicenseMarkers({
-                  ...search,
-                  packagePage: 1,
-                  packageId: undefined,
-                  packageSortBy: undefined,
-                  findingsPage: 1,
-                }),
-                replace: true,
+                search: (previous) =>
+                  toggleLicenseTable(previous, row.id, packageIdType),
+                ...KEEP_SCROLL_POSITION,
               });
             }}
             style={{ cursor: 'pointer' }}
@@ -208,11 +211,12 @@ export const LicenseFindingsView = () => {
           onSearchTermChange: setLicenseSearchTerm,
           setSelected: (licenses: string[]) => {
             navigate({
-              search: clearDetectedLicenseMarkers({
-                ...search,
-                page: 1,
-                detectedLicense: licenses.length === 0 ? undefined : licenses,
-              }),
+              search: (previous) =>
+                clearDetectedLicenseMarkers({
+                  ...previous,
+                  page: 1,
+                  detectedLicense: licenses.length === 0 ? undefined : licenses,
+                }),
             });
           },
         },
@@ -240,7 +244,7 @@ export const LicenseFindingsView = () => {
           pageSize,
         },
         sorting: search.sortBy ?? EMPTY_SORTING_STATE,
-        expanded,
+        expanded: getLicenseTablesExpandedState(search),
         columnFilters: [{ id: 'license', value: detectedLicenses }],
       },
       getRowCanExpand: () => true,
@@ -251,31 +255,27 @@ export const LicenseFindingsView = () => {
   );
 
   useEffect(() => {
-    if (preserveManualExpansion.current) {
-      preserveManualExpansion.current = false;
-      return;
-    }
-
-    setExpanded(getMarkerExpandedState(search.marked));
-  }, [search.marked]);
-
-  useEffect(() => {
-    if (previousPackageIdType.current === packageIdType) {
-      return;
-    }
-
+    const identifierTypeChanged =
+      previousPackageIdType.current !== packageIdType;
     previousPackageIdType.current = packageIdType;
+    if (!needsNormalization && !identifierTypeChanged) return;
+
     navigate({
-      search: clearPackageMarker({
-        ...search,
-        packagePage: 1,
-        packageId: undefined,
-        packageSortBy: undefined,
-      }),
+      search: (previous) => {
+        const normalized = normalizeLicenseFindingsSearch(
+          previous,
+          packageIdType
+        );
+        return identifierTypeChanged
+          ? resetLicensePackageIdentifierControls(normalized)
+          : normalized;
+      },
       replace: true,
     });
-    // Identifier mode changes invalidate the nested package query inputs.
-  }, [navigate, packageIdType, search]);
+  }, [navigate, packageIdType, needsNormalization, search]);
+
+  // Resolve old links before mounting nested tables with their scoped query inputs.
+  if (needsNormalization) return <LoadingIndicator />;
 
   if (isError) {
     toastError('Unable to load data', error);
@@ -317,29 +317,32 @@ export const LicenseFindingsView = () => {
           setCurrentPageOptions={(currentPage) => {
             return {
               to: '.',
-              search: clearDetectedLicenseMarkers({
-                ...search,
-                page: currentPage,
-              }),
+              search: (previous) =>
+                clearDetectedLicenseMarkers({
+                  ...previous,
+                  page: currentPage,
+                }),
             };
           }}
           setPageSizeOptions={(size) => {
             return {
               to: '.',
-              search: clearDetectedLicenseMarkers({
-                ...search,
-                page: 1,
-                pageSize: size,
-              }),
+              search: (previous) =>
+                clearDetectedLicenseMarkers({
+                  ...previous,
+                  page: 1,
+                  pageSize: size,
+                }),
             };
           }}
           setSortingOptions={(sortBy) => {
             return {
               to: '.',
-              search: {
-                ...search,
-                sortBy: updateColumnSorting(search.sortBy, sortBy),
-              },
+              search: (previous) => ({
+                ...previous,
+                page: 1,
+                sortBy: updateColumnSorting(previous.sortBy, sortBy),
+              }),
             };
           }}
         />

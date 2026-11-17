@@ -37,19 +37,21 @@ import java.nio.charset.StandardCharsets
 
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
 
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.repositories.advisorrun.ResolvedVulnerabilitiesTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerjob.AnalyzerJobsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.AnalyzerRunsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.PackagesAnalyzerRunsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.PackagesTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.evaluatorrun.ResolvedRuleViolationsTable
+import org.eclipse.apoapsis.ortserver.dao.repositories.repositoryconfiguration.PackageCurationDataTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifiersTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.OrtRunsIssuesTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.ResolvedIssuesTable
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
 import org.eclipse.apoapsis.ortserver.dao.test.Fixtures
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.dao.utils.calculateResolutionMessageHash
 import org.eclipse.apoapsis.ortserver.model.Severity
 import org.eclipse.apoapsis.ortserver.model.SourceCodeOrigin
@@ -66,6 +68,7 @@ import org.eclipse.apoapsis.ortserver.model.runs.advisor.VulnerabilityReference
 import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolutionReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseFindingCuration
+import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseFindingCurationReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageConfiguration
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCuration
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCurationData
@@ -75,6 +78,7 @@ import org.eclipse.apoapsis.ortserver.model.runs.repository.RuleViolationResolut
 import org.eclipse.apoapsis.ortserver.model.runs.repository.RuleViolationResolutionReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.VulnerabilityResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.VulnerabilityResolutionReason
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.select
@@ -82,6 +86,8 @@ import org.jetbrains.exposed.v1.jdbc.selectAll
 
 @Suppress("LargeClass")
 class DaoResolvedConfigurationRepositoryTest : WordSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     lateinit var resolvedConfigurationRepository: DaoResolvedConfigurationRepository
@@ -100,7 +106,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
 
     "get" should {
         "return the resolved configuration" {
-            dbExtension.db.dbQuery {
+            dbExtension.db.transaction {
                 val resolvedConfiguration = ResolvedConfigurationDao.getOrPut(ortRunId)
 
                 resolvedConfigurationRepository.get(resolvedConfiguration.id.value) shouldBe
@@ -115,7 +121,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
 
     "getForOrtRun" should {
         "return the resolved configuration for the ORT run" {
-            val resolvedConfiguration = dbExtension.db.dbQuery {
+            val resolvedConfiguration = dbExtension.db.transaction {
                 ResolvedConfigurationDao.getOrPut(ortRunId).mapToModel()
             }
 
@@ -172,6 +178,40 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             val resolvedConfiguration = resolvedConfigurationRepository.getForOrtRun(ortRunId).shouldNotBeNull()
             resolvedConfiguration.packageCurations should containExactly(packageCurations1, packageCurations2)
         }
+
+        "deduplicate curation data by publication date at database precision" {
+            fun curation(publishedAt: String?) = PackageCuration(
+                id = identifier1,
+                data = PackageCurationData(comment = "dated", publishedAt = publishedAt?.let(Instant::parse))
+            )
+
+            resolvedConfigurationRepository.addPackageCurations(
+                ortRunId,
+                listOf(
+                    ResolvedPackageCurations(
+                        PackageCurationProviderConfig("provider"),
+                        listOf(
+                            curation("2024-05-06T07:08:09.123456789Z"),
+                            curation("2024-05-06T07:08:09.123456Z"),
+                            curation("2024-05-07T00:00:00Z"),
+                            curation(null)
+                        )
+                    )
+                )
+            )
+
+            val publicationDates = dbExtension.db.transaction {
+                PackageCurationDataTable.select(PackageCurationDataTable.publishedAt)
+                    .where { PackageCurationDataTable.comment eq "dated" }
+                    .map { it[PackageCurationDataTable.publishedAt] }
+            }
+
+            publicationDates should containExactlyInAnyOrder(
+                Instant.parse("2024-05-06T07:08:09.123456Z"),
+                Instant.parse("2024-05-07T00:00:00Z"),
+                null
+            )
+        }
     }
 
     "addPackageCurationAssociations" should {
@@ -197,7 +237,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
 
             resolvedConfigurationRepository.addPackageCurationAssociations(ortRunId, associations)
 
-            val packageIds = dbExtension.db.dbQuery {
+            val packageIds = dbExtension.db.transaction {
                 PackagesTable
                     .innerJoin(IdentifiersTable)
                     .innerJoin(PackagesAnalyzerRunsTable)
@@ -221,7 +261,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
                     }
             }
 
-            val curationIds = dbExtension.db.dbQuery {
+            val curationIds = dbExtension.db.transaction {
                 ResolvedPackageCurationsTable
                     .innerJoin(ResolvedPackageCurationProvidersTable)
                     .innerJoin(PackageCurationProviderConfigsTable)
@@ -238,7 +278,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
                     }
             }
 
-            val storedRows = dbExtension.db.dbQuery {
+            val storedRows = dbExtension.db.transaction {
                 CuratedPackagesTable.selectAll()
                     .where { CuratedPackagesTable.ortRunId eq ortRunId }
                     .toList()
@@ -272,7 +312,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
                 )
             )
 
-            val curationIds = dbExtension.db.dbQuery {
+            val curationIds = dbExtension.db.transaction {
                 ResolvedPackageCurationsTable
                     .innerJoin(ResolvedPackageCurationProvidersTable)
                     .innerJoin(PackageCurationProviderConfigsTable)
@@ -289,7 +329,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
                     }
             }
 
-            val storedRows = dbExtension.db.dbQuery {
+            val storedRows = dbExtension.db.transaction {
                 CuratedPackagesTable.selectAll()
                     .where { CuratedPackagesTable.ortRunId eq ortRunId }
                     .toList()
@@ -320,7 +360,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             resolvedConfigurationRepository.addPackageCurationAssociations(ortRunId, associations)
             resolvedConfigurationRepository.addPackageCurationAssociations(ortRunId, associations)
 
-            val storedRows = dbExtension.db.dbQuery {
+            val storedRows = dbExtension.db.transaction {
                 CuratedPackagesTable.selectAll()
                     .where { CuratedPackagesTable.ortRunId eq ortRunId }
                     .toList()
@@ -472,7 +512,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             resolvedConfigurationRepository.addResolutions(ortRunId, resolvedItems)
 
             // Verify the resolved issue mapping was stored
-            val storedResolvedIssues = dbExtension.db.dbQuery {
+            val storedResolvedIssues = dbExtension.db.transaction {
                 ResolvedIssuesTable.selectAll()
                     .where { ResolvedIssuesTable.ortRunId eq ortRunId }
                     .toList()
@@ -500,7 +540,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
                 issues = listOf(issueWithIdentifier1, issueWithIdentifier2)
             )
 
-            val ortRunIssueRows = dbExtension.db.dbQuery {
+            val ortRunIssueRows = dbExtension.db.transaction {
                 OrtRunsIssuesTable.select(
                     OrtRunsIssuesTable.id,
                     OrtRunsIssuesTable.issueId,
@@ -526,7 +566,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
                 )
             )
 
-            val storedResolvedIssues = dbExtension.db.dbQuery {
+            val storedResolvedIssues = dbExtension.db.transaction {
                 ResolvedIssuesTable.selectAll()
                     .where { ResolvedIssuesTable.ortRunId eq ortRunId }
                     .toList()
@@ -558,7 +598,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             resolvedConfigurationRepository.addResolutions(ortRunId, resolvedItems)
 
             // Verify the resolved rule violation mapping was stored
-            val storedResolvedViolations = dbExtension.db.dbQuery {
+            val storedResolvedViolations = dbExtension.db.transaction {
                 ResolvedRuleViolationsTable.selectAll()
                     .where { ResolvedRuleViolationsTable.ortRunId eq ortRunId }
                     .toList()
@@ -603,7 +643,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             val resolvedConfiguration = resolvedConfigurationRepository.getForOrtRun(ortRunId).shouldNotBeNull()
             resolvedConfiguration.resolutions.ruleViolations should containExactly(resolution)
 
-            val storedResolvedViolations = dbExtension.db.dbQuery {
+            val storedResolvedViolations = dbExtension.db.transaction {
                 ResolvedRuleViolationsTable.selectAll()
                     .where { ResolvedRuleViolationsTable.ortRunId eq ortRunId }
                     .toList()
@@ -657,7 +697,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             resolvedConfigurationRepository.addResolutions(ortRunId, resolvedItems)
 
             // Verify the resolved vulnerability mapping was stored
-            val storedResolvedVulnerabilities = dbExtension.db.dbQuery {
+            val storedResolvedVulnerabilities = dbExtension.db.transaction {
                 ResolvedVulnerabilitiesTable.selectAll()
                     .where { ResolvedVulnerabilitiesTable.ortRunId eq ortRunId }
                     .toList()
@@ -677,7 +717,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             resolvedConfigurationRepository.addResolutions(ortRunId, resolvedItems)
 
             // Verify nothing was stored
-            val storedResolvedIssues = dbExtension.db.dbQuery {
+            val storedResolvedIssues = dbExtension.db.transaction {
                 ResolvedIssuesTable.selectAll()
                     .where { ResolvedIssuesTable.ortRunId eq ortRunId }
                     .toList()
@@ -713,7 +753,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             resolvedConfigurationRepository.addResolutions(ortRunId, resolvedItems)
 
             // Verify only one mapping was stored (upsert, not duplicate)
-            val storedResolvedIssues = dbExtension.db.dbQuery {
+            val storedResolvedIssues = dbExtension.db.transaction {
                 ResolvedIssuesTable.selectAll()
                     .where { ResolvedIssuesTable.ortRunId eq ortRunId }
                     .toList()
@@ -765,7 +805,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             resolvedConfiguration.resolutions.issues should containExactly(sharedResolution)
 
             // Verify mappings were stored for both issues
-            val storedResolvedIssues = dbExtension.db.dbQuery {
+            val storedResolvedIssues = dbExtension.db.transaction {
                 ResolvedIssuesTable.selectAll()
                     .where { ResolvedIssuesTable.ortRunId eq ortRunId }
                     .toList()
@@ -813,7 +853,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             resolvedConfigurationRepository.addResolutions(ortRunId, resolvedItems)
 
             // Verify mappings were stored for both issues
-            val storedResolvedIssues = dbExtension.db.dbQuery {
+            val storedResolvedIssues = dbExtension.db.transaction {
                 ResolvedIssuesTable.selectAll()
                     .where { ResolvedIssuesTable.ortRunId eq ortRunId }
                     .toList()
@@ -869,7 +909,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
 
             resolvedConfigurationRepository.addResolutions(ortRunId, resolvedItems)
 
-            val storedResolvedIssues = dbExtension.db.dbQuery {
+            val storedResolvedIssues = dbExtension.db.transaction {
                 ResolvedIssuesTable.selectAll()
                     .where { ResolvedIssuesTable.ortRunId eq ortRunId }
                     .toList()
@@ -913,7 +953,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             val resolvedConfiguration = resolvedConfigurationRepository.getForOrtRun(ortRunId).shouldNotBeNull()
             resolvedConfiguration.resolutions.issues should containExactly(resolution)
 
-            val storedResolvedIssues = dbExtension.db.dbQuery {
+            val storedResolvedIssues = dbExtension.db.transaction {
                 ResolvedIssuesTable.selectAll()
                     .where { ResolvedIssuesTable.ortRunId eq ortRunId }
                     .toList()
@@ -954,7 +994,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             val resolvedConfiguration = resolvedConfigurationRepository.getForOrtRun(ortRunId).shouldNotBeNull()
             resolvedConfiguration.resolutions.issues should containExactly(resolution)
 
-            val storedResolvedIssues = dbExtension.db.dbQuery {
+            val storedResolvedIssues = dbExtension.db.transaction {
                 ResolvedIssuesTable.selectAll()
                     .where { ResolvedIssuesTable.ortRunId eq ortRunId }
                     .toList()
@@ -995,7 +1035,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             val resolvedConfiguration = resolvedConfigurationRepository.getForOrtRun(ortRunId).shouldNotBeNull()
             resolvedConfiguration.resolutions.issues should containExactly(resolution)
 
-            val storedResolvedIssues = dbExtension.db.dbQuery {
+            val storedResolvedIssues = dbExtension.db.transaction {
                 ResolvedIssuesTable.selectAll()
                     .where { ResolvedIssuesTable.ortRunId eq ortRunId }
                     .toList()
@@ -1043,7 +1083,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             resolvedConfiguration.resolutions.ruleViolations should containExactly(sharedResolution)
 
             // Verify mappings were stored for both violations
-            val storedResolvedViolations = dbExtension.db.dbQuery {
+            val storedResolvedViolations = dbExtension.db.transaction {
                 ResolvedRuleViolationsTable.selectAll()
                     .where { ResolvedRuleViolationsTable.ortRunId eq ortRunId }
                     .toList()
@@ -1104,7 +1144,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
             resolvedConfiguration.resolutions.vulnerabilities should containExactly(sharedResolution)
 
             // Verify mappings were stored for both vulnerabilities
-            val storedResolvedVulnerabilities = dbExtension.db.dbQuery {
+            val storedResolvedVulnerabilities = dbExtension.db.transaction {
                 ResolvedVulnerabilitiesTable.selectAll()
                     .where { ResolvedVulnerabilitiesTable.ortRunId eq ortRunId }
                     .toList()
@@ -1114,7 +1154,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
     }
 
     "getForOrtRunId" should {
-        "return curations grouped by package identifier" {
+        "return curations grouped by package identifier and sorted by priority" {
             val package1 = fixtures.generatePackage(identifier1)
             val package2 = fixtures.generatePackage(identifier2)
             fixtures.createAnalyzerRun(
@@ -1122,39 +1162,45 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
                 packages = setOf(package1, package2)
             )
 
-            resolvedConfigurationRepository.addPackageCurations(ortRunId, listOf(packageCurations1, packageCurations2))
+            val additionalCuration = PackageCuration(identifier1, PackageCurationData(comment = "additional"))
+            val provider1Curations = packageCurations1.copy(
+                curations = listOf(packageCurations1.curations[0], additionalCuration, packageCurations1.curations[1])
+            )
+            resolvedConfigurationRepository.addPackageCurations(ortRunId, listOf(provider1Curations, packageCurations2))
 
+            // Store the associations out of rank order to verify both provider and curation ordering.
             val associations = mapOf(
                 identifier1 to listOf(
-                    AppliedPackageCurationRef(providerName = "provider1", curationRank = 0),
-                    AppliedPackageCurationRef(providerName = "provider2", curationRank = 0)
+                    AppliedPackageCurationRef(providerName = "provider2", curationRank = 0),
+                    AppliedPackageCurationRef(providerName = "provider1", curationRank = 1),
+                    AppliedPackageCurationRef(providerName = "provider1", curationRank = 0)
                 ),
                 identifier2 to listOf(
-                    AppliedPackageCurationRef(providerName = "provider1", curationRank = 1)
+                    AppliedPackageCurationRef(providerName = "provider1", curationRank = 2)
                 )
             )
 
             resolvedConfigurationRepository.addPackageCurationAssociations(ortRunId, associations)
 
-            val result = dbExtension.db.dbQuery {
+            val result = dbExtension.db.transaction {
                 CuratedPackagesTable.getForOrtRunId(ortRunId)
             }
 
             result.keys should containExactlyInAnyOrder(identifier1, identifier2)
 
-            val id1Curations = result.getValue(identifier1)
-            id1Curations.map { it.first } should containExactlyInAnyOrder("provider1", "provider2")
-            id1Curations.first { it.first == "provider1" }.second shouldBe packageCurations1.curations[0]
-            id1Curations.first { it.first == "provider2" }.second shouldBe packageCurations2.curations[0]
+            result.getValue(identifier1) should containExactly(
+                "provider1" to provider1Curations.curations[0],
+                "provider1" to additionalCuration,
+                "provider2" to packageCurations2.curations[0]
+            )
 
-            val id2Curations = result.getValue(identifier2)
-            id2Curations.shouldBeSingleton { }
-            id2Curations[0].first shouldBe "provider1"
-            id2Curations[0].second shouldBe packageCurations1.curations[1]
+            result.getValue(identifier2).shouldBeSingleton {
+                it shouldBe ("provider1" to provider1Curations.curations[2])
+            }
         }
 
         "return empty map when no curations exist" {
-            dbExtension.db.dbQuery {
+            dbExtension.db.transaction {
                 CuratedPackagesTable.getForOrtRunId(ortRunId)
             } should beEmptyMap()
         }
@@ -1177,7 +1223,7 @@ class DaoResolvedConfigurationRepositoryTest : WordSpec({
 
             resolvedConfigurationRepository.addPackageCurationAssociations(ortRunId, associations)
 
-            val result = dbExtension.db.dbQuery {
+            val result = dbExtension.db.transaction {
                 CuratedPackagesTable.getForOrtRunId(ortRunId)
             }
 
@@ -1212,7 +1258,7 @@ private val packageConfiguration2 = PackageConfiguration(
             path = "README.md",
             startLines = listOf(1),
             concludedLicense = "Apache-2.0",
-            reason = "INCORRECT"
+            reason = LicenseFindingCurationReason.INCORRECT
         )
     )
 )
@@ -1225,7 +1271,8 @@ private val packageCurations1 = ResolvedPackageCurations(
             data = PackageCurationData(
                 comment = "comment1",
                 labels = mapOf("key1" to "value1", "key2" to "value2"),
-                sourceCodeOrigins = listOf(SourceCodeOrigin.ARTIFACT, SourceCodeOrigin.VCS)
+                sourceCodeOrigins = listOf(SourceCodeOrigin.ARTIFACT, SourceCodeOrigin.VCS),
+                publishedAt = Instant.parse("2024-05-06T07:08:09.123456Z")
             )
         ),
         PackageCuration(

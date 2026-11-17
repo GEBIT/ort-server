@@ -19,11 +19,13 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useSearch } from '@tanstack/react-router';
+import { useEffect, useRef } from 'react';
 
 import { LicenseFinding } from '@/api';
 import { getRunDetectedLicenseFindingsOptions } from '@/api/@tanstack/react-query.gen';
 import swhLogo from '@/assets/software-heritage-logo.svg';
 import { BreakableString } from '@/components/breakable-string';
+import { CopyToClipboard } from '@/components/copy-to-clipboard';
 import { DataTable } from '@/components/data-table/data-table';
 import { LoadingIndicator } from '@/components/loading-indicator';
 import {
@@ -36,12 +38,22 @@ import {
   selectNoTableState,
   useAppTable,
 } from '@/hooks/use-app-table';
+import { createLicenseFindingCurationTemplate } from '@/lib/license-finding-curation';
+import {
+  KEEP_SCROLL_POSITION,
+  panelKey,
+  scrollOpenedPanelIntoView,
+} from '@/lib/scroll';
 import { buildSwhBrowseUrl } from '@/lib/software-heritage';
 import { toastError } from '@/lib/toast';
-import { formatLineNumber } from '@/lib/utils';
+import { formatLineRange } from '@/lib/utils';
+import {
+  getLicenseFindingsTableState,
+  getLicenseTablePagination,
+  updateLicenseFindingsTable,
+} from './license-findings-state';
 
 const findingColumnHelper = createAppColumnHelper<LicenseFinding>();
-const defaultPageSize = 10;
 const licenseFindingsRoutePath =
   '/organizations/$orgId/products/$productId/repositories/$repoId/runs/$runIndex/license-findings/';
 
@@ -59,8 +71,11 @@ export const DetectedLicenseFindingsTable = ({
   purl,
 }: DetectedLicenseFindingsTableProps) => {
   const search = useSearch({ from: licenseFindingsRoutePath });
-  const findingsPageIndex = search.findingsPage ? search.findingsPage - 1 : 0;
-  const findingsPageSize = search.findingsPageSize || defaultPageSize;
+  const panel = useRef<HTMLElement>(null);
+  const { pageIndex: findingsPageIndex, pageSize: findingsPageSize } =
+    getLicenseTablePagination(
+      getLicenseFindingsTableState(search, license, identifier)
+    );
 
   const {
     data: findings,
@@ -95,9 +110,22 @@ export const DetectedLicenseFindingsTable = ({
             )
           : null;
 
+        const curationTemplate = createLicenseFindingCurationTemplate({
+          id: identifier,
+          path: row.original.path,
+          startLine: row.original.startLine,
+          endLine: row.original.endLine,
+          detectedLicense: license,
+        });
+
         return (
           <div className='flex items-start gap-2'>
             <BreakableString text={row.original.path} />
+            <CopyToClipboard
+              copyText={curationTemplate}
+              tooltipText='Copy license finding curation template to clipboard'
+              className='h-5 px-1 align-middle'
+            />
             {url && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -126,16 +154,9 @@ export const DetectedLicenseFindingsTable = ({
     }),
     findingColumnHelper.accessor('startLine', {
       id: 'startLine',
-      header: 'Start Line',
-      cell: ({ row }) => formatLineNumber(row.original.startLine),
-      meta: {
-        widthPercentage: 10,
-      },
-    }),
-    findingColumnHelper.accessor('endLine', {
-      id: 'endLine',
-      header: 'End Line',
-      cell: ({ row }) => formatLineNumber(row.original.endLine),
+      header: 'Line Range',
+      cell: ({ row }) =>
+        formatLineRange(row.original.startLine, row.original.endLine),
       meta: {
         widthPercentage: 10,
       },
@@ -175,6 +196,10 @@ export const DetectedLicenseFindingsTable = ({
     selectNoTableState
   );
 
+  useEffect(() => {
+    scrollOpenedPanelIntoView(panelKey(license, identifier), panel.current);
+  }, [license, identifier, findings]);
+
   if (isPending) {
     return <LoadingIndicator />;
   }
@@ -185,7 +210,11 @@ export const DetectedLicenseFindingsTable = ({
   }
 
   return (
-    <div className='space-y-2 p-2'>
+    <section
+      ref={panel}
+      aria-label={`License findings for ${identifier} under ${license}`}
+      className='space-y-2 p-2'
+    >
       <div className='text-muted-foreground text-sm'>
         License findings ({findings.pagination.totalCount} in total).
       </div>
@@ -195,23 +224,24 @@ export const DetectedLicenseFindingsTable = ({
         setCurrentPageOptions={(currentPage) => {
           return {
             to: '.',
-            search: {
-              ...search,
-              findingsPage: currentPage,
-            },
+            search: (previous) =>
+              updateLicenseFindingsTable(previous, license, identifier, {
+                page: currentPage,
+              }),
+            ...KEEP_SCROLL_POSITION,
           };
         }}
         setPageSizeOptions={(size) => {
           return {
             to: '.',
-            search: {
-              ...search,
-              findingsPage: 1,
-              findingsPageSize: size,
-            },
+            search: (previous) =>
+              updateLicenseFindingsTable(previous, license, identifier, {
+                pageSize: size,
+              }),
+            ...KEEP_SCROLL_POSITION,
           };
         }}
       />
-    </div>
+    </section>
   );
 };

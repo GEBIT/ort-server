@@ -31,6 +31,7 @@ import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.file.aDirectory
 import io.kotest.matchers.nulls.beNull
+import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
@@ -66,6 +67,7 @@ import org.eclipse.apoapsis.ortserver.components.adminconfig.ReportNameMapping
 import org.eclipse.apoapsis.ortserver.components.adminconfig.ReporterAsset
 import org.eclipse.apoapsis.ortserver.components.adminconfig.ReporterConfig
 import org.eclipse.apoapsis.ortserver.components.adminconfig.RuleSetTemplate
+import org.eclipse.apoapsis.ortserver.components.reportstorage.ReportStorageService
 import org.eclipse.apoapsis.ortserver.config.ConfigException
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
 import org.eclipse.apoapsis.ortserver.config.Path
@@ -82,6 +84,7 @@ import org.eclipse.apoapsis.ortserver.model.ResolvableProviderPluginConfig
 import org.eclipse.apoapsis.ortserver.model.ResolvableSecret
 import org.eclipse.apoapsis.ortserver.model.SecretSource
 import org.eclipse.apoapsis.ortserver.model.Severity
+import org.eclipse.apoapsis.ortserver.services.ortrun.mapToModel
 import org.eclipse.apoapsis.ortserver.services.ortrun.mapToOrt
 import org.eclipse.apoapsis.ortserver.shared.orttestdata.OrtTestData
 import org.eclipse.apoapsis.ortserver.workers.common.context.WorkerContext
@@ -153,10 +156,10 @@ class ReporterRunnerTest : WordSpec({
     }
 
     val configManager = mockk<ConfigManager> {
-        every { getFile(configurationContext, any()) } answers {
+        coEvery { getFile(configurationContext, any()) } answers {
             simulateGetConfigFile(secondArg())
         }
-        every { getFileAsString(any(), any()) } returns ""
+        coEvery { getFileAsString(any(), any()) } returns ""
     }
 
     val configDirectory = tempdir()
@@ -194,15 +197,15 @@ class ReporterRunnerTest : WordSpec({
      * Create a [ReporterRunner] for testing that is initialized with the given [storage] and uses the given [config].
      */
     fun createRunner(
-        storage: ReportStorage = mockk(relaxed = true),
+        storage: ReportStorageService = mockk(relaxed = true),
         config: ReporterConfig = createReporterConfig()
     ): ReporterRunner =
         ReporterRunner(storage, mockk(), createAdminConfigService(config))
 
     "run" should {
         "return a result with report format and report names" {
-            val storage = mockk<ReportStorage>()
-            coEvery { storage.storeReportFiles(any(), any()) } just runs
+            val storage = mockk<ReportStorageService>()
+            coEvery { storage.storeReports(any(), any()) } just runs
 
             val reportType = "WebApp"
             val mapping = ReportNameMapping("testReport")
@@ -222,7 +225,7 @@ class ReporterRunnerTest : WordSpec({
 
             val slotReports = slot<Map<String, File>>()
             coVerify {
-                storage.storeReportFiles(RUN_ID, capture(slotReports))
+                storage.storeReports(RUN_ID, capture(slotReports))
             }
 
             val storedReports = slotReports.captured
@@ -296,6 +299,29 @@ class ReporterRunnerTest : WordSpec({
             )
             slotPlainPluginConfiguration.captured.options shouldBe plainOptions
             slotTemplatePluginConfiguration.captured.options shouldBe expectedTemplateOptions
+        }
+
+        "look up plugin options case-insensitively for a format without a report definition" {
+            val format = "PlainFormat"
+            val reporter = reporterFactoryMock(format)
+
+            mockReporterFactoryAll(format to reporter)
+
+            val options = mapOf("pretty" to "true")
+            val jobConfig = ReporterJobConfiguration(
+                formats = listOf(format),
+                config = mapOf(format.lowercase() to ResolvablePluginConfig(options, emptyMap()))
+            )
+
+            val runner = createRunner(config = createReporterConfig())
+            runner.run(OrtResult.EMPTY, jobConfig, null, mockContext())
+
+            val slotPluginConfiguration = slot<OrtPluginConfig>()
+            verify {
+                reporter.create(capture(slotPluginConfiguration))
+            }
+
+            slotPluginConfiguration.captured.options shouldBe options
         }
 
         "handle template file references and other references" {
@@ -476,7 +502,7 @@ class ReporterRunnerTest : WordSpec({
 
             result.reports.keys should containExactly(generatedReport.name)
             with(result.issues.single()) {
-                message shouldContain "No reporter found"
+                message shouldContain "No reporter plugin found"
                 message shouldContain unsupportedReportFormat
                 source shouldBe "Reporter"
                 severity shouldBe Severity.ERROR
@@ -929,27 +955,42 @@ class ReporterRunnerTest : WordSpec({
 
         "use the configured how-to-fix text provider" {
             val format = "testHowToFixTextProvider"
+            val otherFormat = "otherTestHowToFixTextProvider"
             val howToFixTextProviderFile = "testHowToFixTextProvider.kts"
             val howToFixTextProviderScript = "How-To-Fix Kotlin Script"
             val jobConfig = ReporterJobConfiguration(
-                formats = listOf(format)
+                formats = listOf(format, otherFormat)
             )
 
             val reporterInputSlot = slot<ReporterInput>()
             val reporter = reporterFactoryMock(format) {
-                every { generateReport(capture(reporterInputSlot), any()) } returns emptyList()
+                every { generateReport(capture(reporterInputSlot), any()) } answers {
+                    firstArg<ReporterInput>().howToFixTextProvider.getHowToFixText(OrtTestData.issue)
+                    firstArg<ReporterInput>().howToFixTextProvider.getHowToFixText(OrtTestData.providerIssue)
+                    emptyList()
+                }
+            }
+            val otherReporter = reporterFactoryMock(otherFormat) {
+                every { generateReport(any(), any()) } answers {
+                    firstArg<ReporterInput>().howToFixTextProvider.getHowToFixText(OrtTestData.issue)
+                    firstArg<ReporterInput>().howToFixTextProvider.getHowToFixText(OrtTestData.providerIssue)
+                    emptyList()
+                }
             }
 
-            mockReporterFactoryAll(format to reporter)
+            mockReporterFactoryAll(format to reporter, otherFormat to otherReporter)
 
-            // Mock the HowToFixTextProvider.fromKotlinScript function to return the mocked object.
-            val mockHowToFixTextProvider = HowToFixTextProvider { "A test How-To-Fix text." }
+            var invocationCount = 0
+            val mockHowToFixTextProvider = HowToFixTextProvider { issue ->
+                invocationCount++
+                "A test How-To-Fix text.".takeUnless { issue == OrtTestData.providerIssue }
+            }
             mockkObject(HowToFixTextProvider)
             every {
                 HowToFixTextProvider.fromKotlinScript(howToFixTextProviderScript, any())
             } returns mockHowToFixTextProvider
 
-            every {
+            coEvery {
                 configManager.getFile(any(), Path(howToFixTextProviderFile))
             } returns howToFixTextProviderScript.byteInputStream()
 
@@ -957,16 +998,96 @@ class ReporterRunnerTest : WordSpec({
 
             val reporterConfig = createReporterConfig(
                 howToFixTextProviderFile = howToFixTextProviderFile,
-                reportDefinitions = arrayOf(createReportDefinition(format))
+                reportDefinitions = arrayOf(
+                    createReportDefinition(format),
+                    createReportDefinition(otherFormat)
+                )
             )
             val runner = createRunner(config = reporterConfig)
-            runner.run(OrtResult.EMPTY, jobConfig, null, context)
+            val result = runner.run(OrtTestData.result, jobConfig, null, context)
+
+            invocationCount shouldBe 2
+            result.issuesWithHowToFix.shouldBeSingleton {
+                it shouldBe OrtTestData.issue.mapToModel().copy(howToFix = "A test How-To-Fix text.")
+            }
 
             reporterInputSlot.isCaptured shouldBe true
-            reporterInputSlot.captured.howToFixTextProvider shouldBe mockHowToFixTextProvider
+            reporterInputSlot.captured.howToFixTextProvider.getHowToFixText(OrtTestData.issue) shouldBe
+                "A test How-To-Fix text."
+            reporterInputSlot.captured.howToFixTextProvider.getHowToFixText(OrtTestData.providerIssue) should beNull()
+            invocationCount shouldBe 2
+
             reporterInputSlot.captured.howToFixTextProvider.getHowToFixText(
-                issue = Issue(message = "Test issue message.", source = "Test")
+                Issue(message = "Test issue message.", source = "Test")
             ) shouldBe "A test How-To-Fix text."
+            invocationCount shouldBe 3
+        }
+
+        "continue report generation if the how-to-fix provider fails" {
+            val format = "testFailingHowToFixTextProvider"
+            val scriptFile = "failingHowToFixTextProvider.kts"
+            val script = "Failing How-To-Fix Kotlin Script"
+            val reporter = reporterFactoryMock(format) {
+                every { generateReport(any(), any()) } answers {
+                    firstArg<ReporterInput>().howToFixTextProvider.getHowToFixText(OrtTestData.providerIssue)
+                        .shouldBeNull()
+                    emptyList()
+                }
+            }
+            mockReporterFactoryAll(format to reporter)
+
+            var invocationCount = 0
+            val provider = HowToFixTextProvider { issue ->
+                invocationCount++
+                if (issue == OrtTestData.providerIssue) error("Provider failure")
+                "Fix the issue."
+            }
+            mockkObject(HowToFixTextProvider)
+            every { HowToFixTextProvider.fromKotlinScript(script, any()) } returns provider
+            coEvery { configManager.getFile(any(), Path(scriptFile)) } returns script.byteInputStream()
+
+            val reporterConfig = createReporterConfig(
+                howToFixTextProviderFile = scriptFile,
+                reportDefinitions = arrayOf(createReportDefinition(format))
+            )
+            val result = createRunner(config = reporterConfig).run(
+                OrtTestData.result,
+                ReporterJobConfiguration(formats = listOf(format)),
+                null,
+                mockContext()
+            )
+
+            invocationCount shouldBe 2
+            result.issues.shouldBeSingleton {
+                it.source shouldBe "Reporter"
+                it.severity shouldBe Severity.WARNING
+                it.message shouldContain "1 issue(s)"
+                it.message shouldContain "Provider failure"
+            }
+            result.issuesWithHowToFix.shouldBeSingleton {
+                it shouldBe OrtTestData.issue.mapToModel().copy(howToFix = "Fix the issue.")
+            }
+        }
+
+        "return no issues with how-to-fix texts if no provider is configured" {
+            val format = "testNoHowToFixTextProvider"
+            val reporter = reporterFactoryMock(format) {
+                every { generateReport(any(), any()) } returns emptyList()
+            }
+            mockReporterFactoryAll(format to reporter)
+
+            val reporterConfig = createReporterConfig(
+                reportDefinitions = arrayOf(createReportDefinition(format))
+            )
+            val result = createRunner(config = reporterConfig).run(
+                OrtTestData.result,
+                ReporterJobConfiguration(formats = listOf(format)),
+                null,
+                mockContext()
+            )
+
+            result.issues should beEmpty()
+            result.issuesWithHowToFix should beEmpty()
         }
 
         "use the configured copyright garbage" {
@@ -1199,9 +1320,7 @@ private fun createReportDefinition(
         nameMapping = nameMapping
     )
 
-/**
- * Create a [ReporterConfig] based on the given parameters.
- */
+/** Create a [ReporterConfig] based on the given parameters. */
 private fun createReporterConfig(
     howToFixTextProviderFile: String = ORT_HOW_TO_FIX_TEXT_PROVIDER_FILENAME,
     customLicenseTextDir: String? = null,
@@ -1219,7 +1338,7 @@ private fun createReporterConfig(
  */
 private fun createAdminConfigService(reporterConfig: ReporterConfig): AdminConfigService =
     mockk {
-        every {
+        coEvery {
             loadAdminConfig(configurationContext)
         } returns AdminConfig(
             reporterConfig = reporterConfig,
@@ -1227,9 +1346,7 @@ private fun createAdminConfigService(reporterConfig: ReporterConfig): AdminConfi
         )
     }
 
-/**
- * Simulate downloading of the configuration file with the given [name].
- */
+/** Simulate downloading of the configuration file with the given [name]. */
 private fun simulateGetConfigFile(name: String): InputStream =
     when (name) {
         ruleSet.copyrightGarbageFile -> copyrightGarbage.toStream()
@@ -1238,9 +1355,7 @@ private fun simulateGetConfigFile(name: String): InputStream =
         else -> throw ConfigException("Unsupported config file: $name")
     }
 
-/**
- * Return an [InputStream] with the serialized content of this object.
- */
+/** Return an [InputStream] with the serialized content of this object. */
 private fun <T> T.toStream(): InputStream {
     val serialized = yamlMapper.writeValueAsBytes(this)
     return ByteArrayInputStream(serialized)

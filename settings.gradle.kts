@@ -40,6 +40,8 @@ include(":components:license-findings:api-model")
 include(":components:license-findings:backend")
 include(":components:plugin-manager:api-model")
 include(":components:plugin-manager:backend")
+include(":components:projections:backend")
+include(":components:report-storage:backend")
 include(":components:resolutions:api-model")
 include(":components:resolutions:backend")
 include(":components:search:api-model")
@@ -74,9 +76,10 @@ include(":secrets:scaleway")
 include(":secrets:vault")
 include(":services:hierarchy")
 include(":services:ort-run")
-include(":services:report-storage")
 include(":shared:api-mappings")
 include(":shared:api-model")
+include(":shared:authenticator")
+include(":shared:coroutines")
 include(":shared:ktor-client-utils")
 include(":shared:ktor-utils")
 include(":shared:ort-test-data")
@@ -134,11 +137,11 @@ rootProject.children.single { it.name == "components" }.children.forEach { compo
 
 plugins {
     // Gradle cannot access the version catalog from here, so hard-code the dependency.
-    id("com.autonomousapps.build-health").version("3.19.1")
+    id("com.autonomousapps.build-health").version("3.20.2")
     id("org.gradle.toolchains.foojay-resolver-convention").version("1.0.0")
 
     // Required for the build-health plugin. Keep the version in sync with the one from the version catalog.
-    id("org.jetbrains.kotlin.jvm").version("2.4.20").apply(false)
+    id("org.jetbrains.kotlin.jvm").version("2.4.21").apply(false)
 }
 
 dependencyResolutionManagement {
@@ -156,11 +159,11 @@ dependencyResolutionManagement {
 
     versionCatalogs {
         create("ktorLibs") {
-            from("io.ktor:ktor-version-catalog:3.5.2")
+            from("io.ktor:ktor-version-catalog:3.6.1")
         }
 
         create("ortLibs") {
-            from("org.ossreviewtoolkit:version-catalog:92.6.0")
+            from("org.ossreviewtoolkit:version-catalog:99.0.0")
         }
     }
 }

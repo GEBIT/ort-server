@@ -30,31 +30,30 @@ import {
 
 type CopyToClipboardProps = {
   copyText: string;
+  tooltipText?: string;
   tooltipContentClassName?: string;
   className?: string;
 };
 
 export const CopyToClipboard = ({
   copyText,
+  tooltipText = 'Copy to clipboard',
   tooltipContentClassName,
   className,
 }: CopyToClipboardProps) => {
-  const [isCopied, setIsCopied] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>(
+    'idle'
+  );
 
-  async function copyTextToClipboard(text: string) {
-    return await navigator.clipboard.writeText(text);
-  }
+  const handleCopyClick = async () => {
+    try {
+      await navigator.clipboard.writeText(copyText);
+      setCopyStatus('copied');
+    } catch {
+      setCopyStatus('failed');
+    }
 
-  // onClick handler function for the copy button
-  const handleCopyClick = () => {
-    // Asynchronously call copyTextToClipboard
-    copyTextToClipboard(copyText).then(() => {
-      // If successful, update the isCopied state value
-      setIsCopied(true);
-      setTimeout(() => {
-        setIsCopied(false);
-      }, 1500);
-    });
+    setTimeout(() => setCopyStatus('idle'), 1500);
   };
   return (
     <TooltipProvider delayDuration={0}>
@@ -65,15 +64,24 @@ export const CopyToClipboard = ({
             type='button'
             size='sm'
             className={className}
+            aria-label={tooltipText}
             onClick={handleCopyClick}
           >
             <span className='fg-slate-300'>
-              {isCopied ? <Check color='gray' /> : <Copy color='gray' />}
+              {copyStatus === 'copied' ? (
+                <Check color='gray' />
+              ) : (
+                <Copy color='gray' />
+              )}
             </span>
           </Button>
         </TooltipTrigger>
         <TooltipContent className={tooltipContentClassName}>
-          {isCopied ? 'Copied!' : 'Copy to clipboard'}
+          {copyStatus === 'copied'
+            ? 'Copied!'
+            : copyStatus === 'failed'
+              ? 'Copy failed'
+              : tooltipText}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

@@ -31,10 +31,12 @@ group = "org.eclipse.apoapsis.ortserver.secrets"
 dependencies {
     api(projects.secrets.secretsSpi)
 
+    implementation(projects.shared.coroutines)
     implementation(projects.utils.config)
 
     implementation(ktorLibs.serialization.kotlinx.json)
 
     testImplementation(libs.kotest.assertions.core)
     testImplementation(libs.kotest.runner.junit5)
+    testImplementation(libs.mockk)
 }

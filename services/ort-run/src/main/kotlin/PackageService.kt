@@ -19,12 +19,12 @@
 
 package org.eclipse.apoapsis.ortserver.services.ortrun
 
+import kotlin.time.Instant
+
 import org.eclipse.apoapsis.ortserver.api.v1.mapping.mapToApi
 import org.eclipse.apoapsis.ortserver.api.v1.model.Package as ApiPackage
 import org.eclipse.apoapsis.ortserver.api.v1.model.PackageCuration as ApiPackageCuration
 import org.eclipse.apoapsis.ortserver.dao.QueryParametersException
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerjob.AnalyzerJobsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.AnalyzerRunsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.PackageDao
@@ -34,9 +34,15 @@ import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.ProcessedDecl
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.ProcessedDeclaredLicensesUnmappedDeclaredLicensesTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.ShortestDependencyPathsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.UnmappedDeclaredLicensesTable
+import org.eclipse.apoapsis.ortserver.dao.repositories.repositoryconfiguration.PackageCurationDataTable
+import org.eclipse.apoapsis.ortserver.dao.repositories.repositoryconfiguration.PackageCurationsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.resolvedconfiguration.CuratedPackagesTable
+import org.eclipse.apoapsis.ortserver.dao.repositories.resolvedconfiguration.ResolvedPackageCurationProvidersTable
+import org.eclipse.apoapsis.ortserver.dao.repositories.resolvedconfiguration.ResolvedPackageCurationsTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifierDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifiersTable
+import org.eclipse.apoapsis.ortserver.dao.transaction
+import org.eclipse.apoapsis.ortserver.dao.utils.applyFilter
 import org.eclipse.apoapsis.ortserver.dao.utils.applyILike
 import org.eclipse.apoapsis.ortserver.model.EcosystemStats
 import org.eclipse.apoapsis.ortserver.model.runs.Identifier
@@ -58,29 +64,29 @@ import org.jetbrains.exposed.v1.core.dao.id.EntityID
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.inSubQuery
+import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.not
 import org.jetbrains.exposed.v1.core.notInList
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.stringLiteral
+import org.jetbrains.exposed.v1.core.wrapAsExpression
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.andWhere
 import org.jetbrains.exposed.v1.jdbc.select
 
 import org.ossreviewtoolkit.model.CuratedPackage as OrtCuratedPackage
 
-/**
- * A service to interact with packages.
- */
+/** A service to interact with packages. */
 class PackageService(private val db: Database, private val ortRunService: OrtRunService) {
     @Suppress("LongMethod")
-    fun listForOrtRunId(
+    suspend fun listForOrtRunId(
         ortRunId: Long,
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
         filters: PackageFilters = PackageFilters()
     ): ListQueryResult<ApiPackage> {
         ortRunService.getOrtRun(ortRunId) ?: return ListQueryResult(emptyList(), parameters, 0)
 
-        return db.blockingQuery {
+        return db.transaction {
             val query = PackagesTable.joinAnalyzerTables()
                 .innerJoin(IdentifiersTable)
                 .innerJoin(ProcessedDeclaredLicensesTable)
@@ -90,7 +96,7 @@ class PackageService(private val db: Database, private val ortRunService: OrtRun
             val curationsMap by lazy { CuratedPackagesTable.getForOrtRunId(ortRunId) }
 
             filters.identifier?.let { filter ->
-                require(filter.operator == ComparisonOperator.ILIKE) {
+                require(filter.operator == ComparisonOperator.ILIKE || filter.operator == ComparisonOperator.EQUALS) {
                     "Unsupported operator for identifier filter: ${filter.operator}"
                 }
 
@@ -106,7 +112,7 @@ class PackageService(private val db: Database, private val ortRunService: OrtRun
                     IdentifiersTable.version
                 )
 
-                query.andWhere { identifierConcat.applyILike(filter.value) }
+                query.andWhere { identifierConcat.applyFilter(filter.operator, filter.value) }
             }
 
             filters.purl?.let { filter ->
@@ -210,8 +216,23 @@ class PackageService(private val db: Database, private val ortRunService: OrtRun
                     "processedDeclaredLicense" ->
                         query.orderBy(ProcessedDeclaredLicensesTable.spdxExpression to sortOrder)
 
+                    "publishedAt" -> {
+                        val nullsLastSortOrder = when (orderField.direction) {
+                            OrderDirection.ASCENDING -> SortOrder.ASC_NULLS_LAST
+                            OrderDirection.DESCENDING -> SortOrder.DESC_NULLS_LAST
+                        }
+
+                        query.orderBy(createEffectivePublishedAtExpression(ortRunId) to nullsLastSortOrder)
+                    }
+
                     else -> throw QueryParametersException("Unsupported field for sorting: '${orderField.name}'.")
                 }
+            }
+
+            // Many packages can have the same publication date or none at all, and the database may return those in
+            // any order. Sort them by the package ID as well, so that each package appears on exactly one page.
+            if (parameters.sortFields.any { it.name == "publishedAt" }) {
+                query.orderBy(PackagesTable.id to SortOrder.ASC)
             }
 
             val limit = parameters.limit ?: ListQueryParameters.DEFAULT_LIMIT
@@ -221,7 +242,7 @@ class PackageService(private val db: Database, private val ortRunService: OrtRun
             val packageIds = query.map { it[PackagesTable.id] }
 
             if (packageIds.isEmpty()) {
-                return@blockingQuery ListQueryResult(emptyList(), parameters, totalCount)
+                return@transaction ListQueryResult(emptyList(), parameters, totalCount)
             }
 
             val packagesById = PackageDao.find { PackagesTable.id inList packageIds }
@@ -253,7 +274,7 @@ class PackageService(private val db: Database, private val ortRunService: OrtRun
     }
 
     /** Count packages found in provided ORT runs. */
-    suspend fun countForOrtRunIds(vararg ortRunIds: Long): Long = db.dbQuery {
+    suspend fun countForOrtRunIds(vararg ortRunIds: Long): Long = db.transaction {
         PackagesTable.joinAnalyzerTables()
             .select(PackagesTable.id)
             .where { AnalyzerJobsTable.ortRunId inList ortRunIds.asList() }
@@ -263,7 +284,7 @@ class PackageService(private val db: Database, private val ortRunService: OrtRun
 
     /** Count packages by ecosystem found in provided ORT runs. */
     suspend fun countEcosystemsForOrtRunIds(vararg ortRunIds: Long): List<EcosystemStats> =
-        db.dbQuery {
+        db.transaction {
             val countAlias = Count(PackagesTable.id, true)
             PackagesTable.joinAnalyzerTables()
                 .innerJoin(IdentifiersTable)
@@ -280,7 +301,7 @@ class PackageService(private val db: Database, private val ortRunService: OrtRun
 
     /** Return distinct processed declared SPDX license expressions for the ORT run. */
     suspend fun getProcessedDeclaredLicenses(ortRunId: Long): List<String> =
-        db.dbQuery {
+        db.transaction {
             val curationsMap = CuratedPackagesTable.getForOrtRunId(ortRunId)
             val curatedDeclaredLicenses = getCuratedDeclaredLicenses(ortRunId, curationsMap)
             val packageIdsWithDeclaredLicenseCurations = curatedDeclaredLicenses.map { it.first }
@@ -306,7 +327,7 @@ class PackageService(private val db: Database, private val ortRunService: OrtRun
 
     /** Return distinct unmapped declared license strings for the ORT run. */
     suspend fun getUnmappedDeclaredLicenses(ortRunId: Long): List<String> =
-        db.dbQuery {
+        db.transaction {
             val curationsMap = CuratedPackagesTable.getForOrtRunId(ortRunId)
             val curatedDeclaredLicenses = getCuratedDeclaredLicenses(ortRunId, curationsMap)
             val packageIdsWithDeclaredLicenseCurations = curatedDeclaredLicenses.map { it.first }
@@ -365,12 +386,45 @@ private fun getCuratedDeclaredLicenses(
     }
 }
 
+/**
+ * Create an expression for the publication date of a package as shown after applying the curations of the ORT run
+ * with the given [ortRunId]: `COALESCE(curated_date, published_at)`. Like ORT, the curated date comes from the applied
+ * curation with the highest priority that has a date, i.e. the lowest provider rank and then the lowest curation rank.
+ */
+private fun createEffectivePublishedAtExpression(ortRunId: Long): CustomFunction<Instant?> {
+    val curatedPublishedAtSubquery = CuratedPackagesTable
+        .innerJoin(ResolvedPackageCurationsTable)
+        .innerJoin(ResolvedPackageCurationProvidersTable)
+        .innerJoin(PackageCurationsTable)
+        .innerJoin(PackageCurationDataTable)
+        .select(PackageCurationDataTable.publishedAt)
+        .where {
+            (CuratedPackagesTable.ortRunId eq ortRunId) and
+                    (CuratedPackagesTable.packageId eq PackagesTable.id) and
+                    PackageCurationDataTable.publishedAt.isNotNull()
+        }
+        .orderBy(ResolvedPackageCurationProvidersTable.rank)
+        .orderBy(ResolvedPackageCurationsTable.rank)
+        .limit(1)
+
+    return CustomFunction(
+        "COALESCE",
+        PackagesTable.publishedAt.columnType,
+        wrapAsExpression<Instant>(curatedPublishedAtSubquery),
+        PackagesTable.publishedAt
+    )
+}
+
 private fun ModelPackage.applyCurations(
     curationsByIdentifier: Map<Identifier, List<Pair<String, PackageCuration>>>
-): OrtCuratedPackage =
-    curationsByIdentifier[identifier].orEmpty().fold(OrtCuratedPackage(mapToOrt())) { curatedPackage, (_, curation) ->
+): OrtCuratedPackage {
+    // Like ORT, apply the curations with the lowest priority first, so that those with the highest priority win.
+    val curations = curationsByIdentifier[identifier].orEmpty().asReversed()
+
+    return curations.fold(OrtCuratedPackage(mapToOrt())) { curatedPackage, (_, curation) ->
         curation.mapToOrt().apply(curatedPackage)
     }
+}
 
 private fun PackagesTable.joinAnalyzerTables() =
     innerJoin(PackagesAnalyzerRunsTable)

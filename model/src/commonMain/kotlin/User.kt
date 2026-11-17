@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 The ORT Server Authors (See <https://github.com/eclipse-apoapsis/ort-server/blob/main/NOTICE>)
+ * Copyright (C) 2025 The ORT Server Authors (See <https://github.com/eclipse-apoapsis/ort-server/blob/main/NOTICE>)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,28 +19,34 @@
 
 package org.eclipse.apoapsis.ortserver.model
 
-/**
- * A data class representing a user.
- */
+import kotlin.time.Instant
+
+import kotlinx.serialization.Serializable
+
+/** A user of ORT Server, identified by the stable [userId] from Keycloak. */
+@Serializable
 data class User(
-    /** The username of the user. */
+    /**
+     * Identifier assigned to each user in Keycloak, used to distinguish users across sessions and services.
+     * This identifier is stable over time and is unique to each user.
+     */
+    val userId: String,
+
+    /**
+     * Unique, human-readable identifier chosen by the user or administrator, used for authentication and login.
+     * Unlike the immutable [userId], this identifier can change over time.
+     */
     val username: String,
 
-    /** The first name of the user. */
-    val firstName: String? = null,
+    /**
+     * Full name of the user: A derived attribute that typically combines a user's first name and last name,
+     * providing a readable display name but not serving as a unique identifier. This can change over time.
+     */
+    val fullName: String? = null,
 
-    /** The last name of the user. */
-    val lastName: String? = null,
+    /** The time when the user was found to be deleted in Keycloak, or `null` if the user exists. */
+    val deletedAt: Instant? = null,
 
-    /** The mail address of the user. */
-    val email: String? = null
+    /** The time when the user was last synchronized with Keycloak, or `null` if this never happened. */
+    val lastSyncedAt: Instant? = null
 )
-
-/**
- * Enum class representing user groups (privilege level).
- */
-enum class UserGroup {
-    READERS,
-    WRITERS,
-    ADMINS
-}

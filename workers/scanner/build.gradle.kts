@@ -59,7 +59,7 @@ dependencies {
     runtimeOnly(platform(projects.storage))
     runtimeOnly(platform(projects.transport))
 
-    runtimeOnly(libs.log4jToSlf4j)
+    runtimeOnly(libs.log4j.to.slf4j)
     runtimeOnly(libs.logback)
 
     testImplementation(projects.shared.ortTestData)
@@ -99,10 +99,8 @@ tinyJib {
         mainClass = "org.eclipse.apoapsis.ortserver.workers.scanner.EntrypointKt"
         creationTime = "USE_CURRENT_TIMESTAMP"
 
-        jvmFlags = mutableListOf("--add-opens=java.base/sun.net.www.protocol.http=ALL-UNNAMED").apply {
-            if (System.getProperty("idea.active")?.toBoolean() == true) {
-                add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5030")
-            }
+        if (System.getProperty("idea.active")?.toBoolean() == true) {
+            jvmFlags = listOf("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5030")
         }
     }
 }

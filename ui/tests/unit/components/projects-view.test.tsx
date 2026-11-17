@@ -1,0 +1,170 @@
+/*
+ * Copyright (C) 2026 The ORT Server Authors (See <https://github.com/eclipse-apoapsis/ort-server/blob/main/NOTICE>)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ * License-Filename: LICENSE
+ */
+
+// @vitest-environment jsdom
+
+import { act, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { GetRunProjectsData, Project } from '@/api';
+import { Route } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/runs/$runIndex/projects/index';
+import { renderRunPage } from '../fixtures/finding-tables';
+import { pageOf } from '../fixtures/table';
+
+type ProjectsQuery = NonNullable<GetRunProjectsData['query']>;
+
+const mocks = vi.hoisted(() => ({
+  run: vi.fn(),
+  licenses: vi.fn(),
+  projects: vi.fn(),
+}));
+
+vi.mock('@/api/sdk.gen', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
+  getRepositoryRun: mocks.run,
+  getRunProjectLicenses: mocks.licenses,
+  getRunProjects: mocks.projects,
+}));
+
+vi.mock('@/components/licenses', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/licenses')>()),
+  LicensesAccordion: () => null,
+}));
+
+const ProjectsComponent = Route.options.component!;
+
+const vcs = { type: 'GIT', url: '', revision: '', path: '' };
+
+const createProject = (name: string): Project => ({
+  authors: [],
+  declaredLicenses: [],
+  definitionFilePath: `${name}/pom.xml`,
+  description: `Description of ${name}`,
+  homepageUrl: '',
+  identifier: { type: 'Maven', namespace: 'com.example', name, version: '1.0' },
+  processedDeclaredLicense: { mappedLicenses: {}, unmappedLicenses: [] },
+  scopeNames: [],
+  vcs,
+  vcsProcessed: vcs,
+});
+
+// Serve two projects, named after the query they come from.
+const getProjectsPage = (query: ProjectsQuery = {}) => {
+  const tag = query.identifier ? 'filtered' : 'project';
+
+  return pageOf([createProject(`${tag}-1`), createProject(`${tag}-2`)], {
+    limit: query.limit,
+    offset: query.offset,
+    totalCount: query.identifier ? 2 : 7,
+  });
+};
+
+const renderProjects = (search = '') =>
+  renderRunPage(ProjectsComponent, 'projects', search);
+
+const findDefinitionFile = (name: string) =>
+  screen.findByText(`${name}/pom.xml`);
+
+describe('projects table', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.run.mockResolvedValue({ data: { id: 42, jobs: {} } });
+    mocks.licenses.mockResolvedValue({
+      data: { processedDeclaredLicenses: [], unmappedDeclaredLicenses: [] },
+    });
+    mocks.projects.mockImplementation(
+      async ({ query }: { query?: ProjectsQuery }) => getProjectsPage(query)
+    );
+  });
+
+  it('applies filters from the URL', async () => {
+    const { container, router } = renderProjects();
+
+    expect(await findDefinitionFile('project-1')).toBeVisible();
+
+    await act(() =>
+      router.navigate({
+        to: '.',
+        search: { projectId: 'core', declaredLicense: ['MIT', 'Apache-2.0'] },
+      })
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText('filtered-1/pom.xml')).toBeVisible()
+    );
+    expect(screen.queryByText('project-1/pom.xml')).not.toBeInTheDocument();
+    expect(mocks.projects.mock.calls.at(-1)?.[0].query).toMatchObject({
+      identifier: 'core',
+      declaredLicense: 'MIT,Apache-2.0',
+    });
+    expect(container).toHaveTextContent('7 in total, 2 matching filters');
+  });
+
+  it('expands a row', async () => {
+    const { user } = renderProjects();
+
+    const definitionFile = await findDefinitionFile('project-1');
+    expect(
+      screen.queryByText('Description of project-1')
+    ).not.toBeInTheDocument();
+
+    await user.click(definitionFile.closest('tr')!.querySelector('button')!);
+
+    expect(await screen.findByText('Description of project-1')).toBeVisible();
+    expect(
+      screen.queryByText('Description of project-2')
+    ).not.toBeInTheDocument();
+  });
+
+  it('finds a linked project by an exact match and opens it', async () => {
+    const projectId = 'Maven:com.example:filtered-2:1.0';
+
+    renderProjects(
+      `?${new URLSearchParams({ projectId, projectIdMatchType: 'exact', marked: projectId })}`
+    );
+
+    expect(await screen.findByText('Description of filtered-2')).toBeVisible();
+    expect(
+      screen.queryByText('Description of filtered-1')
+    ).not.toBeInTheDocument();
+    expect(mocks.projects.mock.calls.at(-1)?.[0].query).toMatchObject({
+      identifier: projectId,
+      identifierMatchType: 'exact',
+    });
+  });
+
+  it('keeps the exact match of a link when the unchanged filter loses focus', async () => {
+    const projectId = 'Maven:com.example:filtered-2:1.0';
+
+    const { router, user } = renderProjects(
+      `?${new URLSearchParams({ projectId, projectIdMatchType: 'exact', marked: projectId })}`
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Project ID' }));
+    await user.click(screen.getByRole('textbox'));
+    await user.tab();
+
+    expect(router.state.location.search).toMatchObject({
+      projectId,
+      projectIdMatchType: 'exact',
+      marked: projectId,
+    });
+    expect(screen.getByText('Description of filtered-2')).toBeVisible();
+  });
+});

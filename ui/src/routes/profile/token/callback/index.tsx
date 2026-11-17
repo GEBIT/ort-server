@@ -20,7 +20,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { OidcClient } from 'oidc-client-ts';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { getCliOidcConfigOptions } from '@/api/@tanstack/react-query.gen';
 import { CopyToClipboard } from '@/components/copy-to-clipboard';
@@ -37,6 +37,7 @@ import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { config } from '@/config';
 import { TOKEN_FLOW_MARKER_KEY } from '@/helpers/token-flow';
+import { exchangeOfflineToken } from './-components/exchange-offline-token';
 
 const CLI_SCOPE = 'openid offline_access';
 
@@ -68,18 +69,6 @@ const TokenCallbackPage = () => {
   const { data: cliOidcConfig } = useQuery(getCliOidcConfigOptions());
   const cliClientId = cliOidcConfig?.clientId;
 
-  const createOidcClient = useCallback(() => {
-    if (!cliClientId) return undefined;
-    return new OidcClient({
-      authority: `${config.authBaseUrl}/realms/${config.realm}`,
-      client_id: cliClientId,
-      redirect_uri: getTokenCallbackRedirectUri(),
-      response_type: 'code',
-      scope: CLI_SCOPE,
-      loadUserInfo: false,
-    });
-  }, [cliClientId]);
-
   useEffect(() => {
     if (!cliClientId || offlineToken) return;
 
@@ -94,9 +83,27 @@ const TokenCallbackPage = () => {
       return;
     }
 
+    const createOidcClient = () => {
+      if (!cliClientId) return undefined;
+      return new OidcClient({
+        authority: `${config.authBaseUrl}/realms/${config.realm}`,
+        client_id: cliClientId,
+        redirect_uri: getTokenCallbackRedirectUri(),
+        response_type: 'code',
+        scope: CLI_SCOPE,
+        loadUserInfo: false,
+      });
+    };
+
     let canceled = false;
 
-    const processCallback = async () => {
+    const finishCallback = () => {
+      setIsProcessingCallback(false);
+      window.sessionStorage.removeItem(TOKEN_FLOW_MARKER_KEY);
+      clearAuthQueryParams();
+    };
+
+    const processCallback = () => {
       setErrorMessage(undefined);
       setIsProcessingCallback(true);
 
@@ -107,44 +114,32 @@ const TokenCallbackPage = () => {
         return;
       }
 
-      try {
-        const response = await oidcClient.processSigninResponse(
-          window.location.href
-        );
-        const refreshToken = response.refresh_token;
+      void exchangeOfflineToken(oidcClient, window.location.href).then(
+        (refreshToken) => {
+          if (canceled) return;
 
-        if (!refreshToken) {
-          throw new Error(
-            'No offline token was returned. Ensure the client allows offline access.'
+          setOfflineToken(refreshToken);
+          finishCallback();
+        },
+        (error: unknown) => {
+          if (canceled) return;
+
+          setErrorMessage(
+            error instanceof Error
+              ? error.message
+              : 'Failed to exchange the authorization code for an offline token.'
           );
+          finishCallback();
         }
-
-        if (canceled) return;
-
-        setOfflineToken(refreshToken);
-      } catch (error) {
-        if (canceled) return;
-
-        setErrorMessage(
-          error instanceof Error
-            ? error.message
-            : 'Failed to exchange the authorization code for an offline token.'
-        );
-      } finally {
-        if (!canceled) {
-          setIsProcessingCallback(false);
-          window.sessionStorage.removeItem(TOKEN_FLOW_MARKER_KEY);
-          clearAuthQueryParams();
-        }
-      }
+      );
     };
 
-    void processCallback();
+    processCallback();
 
     return () => {
       canceled = true;
     };
-  }, [cliClientId, createOidcClient, navigate, offlineToken]);
+  }, [cliClientId, navigate, offlineToken]);
 
   return (
     <div className='mx-auto flex w-full max-w-4xl flex-col gap-6'>

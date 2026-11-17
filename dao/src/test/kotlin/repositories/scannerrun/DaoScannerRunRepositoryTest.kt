@@ -62,10 +62,13 @@ import org.eclipse.apoapsis.ortserver.model.runs.scanner.ProvenanceResolutionRes
 import org.eclipse.apoapsis.ortserver.model.runs.scanner.RepositoryProvenance
 import org.eclipse.apoapsis.ortserver.model.runs.scanner.ScannerConfiguration
 import org.eclipse.apoapsis.ortserver.model.runs.scanner.ScannerRun
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 
 class DaoScannerRunRepositoryTest : WordSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     lateinit var scannerRunRepository: DaoScannerRunRepository
@@ -467,7 +470,7 @@ class DaoScannerRunRepositoryTest : WordSpec({
 
 private const val SCANNER_NAME = "TestScanner"
 
-private fun DaoScannerRunRepository.create(scannerJobId: Long, scannerRun: ScannerRun): ScannerRun {
+private suspend fun DaoScannerRunRepository.create(scannerJobId: Long, scannerRun: ScannerRun): ScannerRun {
     val createdScannerRun = create(scannerJobId = scannerJobId)
     return update(
         id = createdScannerRun.id,
@@ -702,7 +705,7 @@ private val analyzerRun = AnalyzerRun(
     dependencyGraphs = emptyMap()
 )
 
-private fun DaoAnalyzerRunRepository.create(analyzerJobId: Long, analyzerRun: AnalyzerRun) = create(
+private suspend fun DaoAnalyzerRunRepository.create(analyzerJobId: Long, analyzerRun: AnalyzerRun) = create(
     analyzerJobId = analyzerJobId,
     startTime = analyzerRun.startTime,
     endTime = analyzerRun.endTime,

@@ -22,6 +22,7 @@ package org.eclipse.apoapsis.ortserver.services.ortrun
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withContext
 
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerjob.AnalyzerJobsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.AnalyzerRunsTable
@@ -32,12 +33,11 @@ import org.eclipse.apoapsis.ortserver.dao.repositories.repositoryconfiguration.P
 import org.eclipse.apoapsis.ortserver.dao.repositories.resolvedconfiguration.ResolvedConfigurationsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.resolvedconfiguration.ResolvedPackageCurationProvidersTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.resolvedconfiguration.ResolvedPackageCurationsTable
-import org.eclipse.apoapsis.ortserver.utils.logging.runBlocking
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
-import org.jetbrains.exposed.v1.core.innerJoin
 import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.jdbc.select
 
@@ -49,8 +49,8 @@ import org.ossreviewtoolkit.scanner.utils.FileListResolver
  * Use the [fileListResolver] to get the [FileList]s for the provided [provenances]. If a [FileList] is not
  * available for a provenance, it is ignored and not included in the result.
  */
-internal fun getFileLists(fileListResolver: FileListResolver, provenances: Set<KnownProvenance>) =
-    runBlocking(Dispatchers.IO.limitedParallelism(20)) {
+internal suspend fun getFileLists(fileListResolver: FileListResolver, provenances: Set<KnownProvenance>) =
+    withContext(Dispatchers.Virtual.limitedParallelism(20)) {
         provenances.map { provenance ->
             async {
                 fileListResolver.get(provenance)?.let { fileList ->
@@ -63,9 +63,7 @@ internal fun getFileLists(fileListResolver: FileListResolver, provenances: Set<K
         }.awaitAll().filterNotNull()
     }
 
-/**
- * Return package purls by identifier ID for the given [ortRunId]. Curated purls override base purls.
- */
+/** Return package purls by identifier ID for the given [ortRunId]. Curated purls override base purls. */
 internal fun getPurlByIdentifierIdForOrtRun(ortRunId: Long, identifierIds: Collection<Long>): Map<Long, String> {
     if (identifierIds.isEmpty()) return emptyMap()
 
@@ -96,7 +94,7 @@ internal fun getPurlByIdentifierIdForOrtRun(ortRunId: Long, identifierIds: Colle
         .orderBy(ResolvedPackageCurationsTable.rank)
         .groupBy { it[PackageCurationsTable.identifierId].value }
         .mapValues { (_, rows) ->
-            requireNotNull(rows.first()[PackageCurationDataTable.purl]) {
+            checkNotNull(rows.first()[PackageCurationDataTable.purl]) {
                 "Curated purl was unexpectedly null after filtering."
             }
         }

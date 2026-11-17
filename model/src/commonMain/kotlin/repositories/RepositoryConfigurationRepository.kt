@@ -29,15 +29,11 @@ import org.eclipse.apoapsis.ortserver.model.runs.repository.RepositoryAnalyzerCo
 import org.eclipse.apoapsis.ortserver.model.runs.repository.RepositoryConfiguration
 import org.eclipse.apoapsis.ortserver.model.runs.repository.Resolutions
 
-/**
- * A repository of [repository configurations][RepositoryConfiguration].
- */
+/** A repository of [repository configurations][RepositoryConfiguration]. */
 interface RepositoryConfigurationRepository {
-    /**
-     * Create a repository configuration.
-     */
+    /** Create a repository configuration. */
     @Suppress("LongParameterList")
-    fun create(
+    suspend fun create(
         ortRunId: Long,
         analyzerConfig: RepositoryAnalyzerConfiguration?,
         excludes: Excludes,
@@ -49,8 +45,6 @@ interface RepositoryConfigurationRepository {
         provenanceSnippetChoices: List<ProvenanceSnippetChoices>
     ): RepositoryConfiguration
 
-    /**
-     * Get an analyzer run by [id]. Returns null if the repository configuration is not found.
-     */
-    fun get(id: Long): RepositoryConfiguration?
+    /** Get an analyzer run by [id]. Returns null if the repository configuration is not found. */
+    suspend fun get(id: Long): RepositoryConfiguration?
 }

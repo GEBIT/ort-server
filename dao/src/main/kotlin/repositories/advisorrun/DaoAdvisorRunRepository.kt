@@ -21,13 +21,14 @@ package org.eclipse.apoapsis.ortserver.dao.repositories.advisorrun
 
 import kotlin.time.Instant
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
-import org.eclipse.apoapsis.ortserver.dao.entityQuery
+import org.eclipse.apoapsis.ortserver.dao.getEntityOrNull
 import org.eclipse.apoapsis.ortserver.dao.mapAndDeduplicate
 import org.eclipse.apoapsis.ortserver.dao.repositories.advisorjob.AdvisorJobDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.EnvironmentDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifierDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.OrtRunIssueDao
+import org.eclipse.apoapsis.ortserver.dao.transaction
+import org.eclipse.apoapsis.ortserver.dao.transactionCatching
 import org.eclipse.apoapsis.ortserver.model.repositories.AdvisorRunRepository
 import org.eclipse.apoapsis.ortserver.model.runs.Environment
 import org.eclipse.apoapsis.ortserver.model.runs.Identifier
@@ -40,11 +41,9 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
 
-/**
- * An implementation of [AdvisorRunRepository] that stores the advisor runs in [AdvisorRunsTable].
- */
+/** An implementation of [AdvisorRunRepository] that stores the advisor runs in [AdvisorRunsTable]. */
 class DaoAdvisorRunRepository(private val db: Database) : AdvisorRunRepository {
-    override fun create(
+    override suspend fun create(
         advisorJobId: Long,
         startTime: Instant,
         endTime: Instant,
@@ -52,7 +51,7 @@ class DaoAdvisorRunRepository(private val db: Database) : AdvisorRunRepository {
         config: AdvisorConfiguration,
         providerIssues: Set<Issue>,
         results: Map<Identifier, List<AdvisorResult>>
-    ): AdvisorRun = db.blockingQuery {
+    ): AdvisorRun = db.transaction {
         val environmentDao = EnvironmentDao.getOrPut(environment)
         val advisorJobDao = AdvisorJobDao[advisorJobId]
 
@@ -102,11 +101,12 @@ class DaoAdvisorRunRepository(private val db: Database) : AdvisorRunRepository {
         advisorRunDao.mapToModel()
     }
 
-    override fun get(id: Long): AdvisorRun? = db.entityQuery { AdvisorRunDao[id].mapToModel() }
+    override suspend fun get(id: Long): AdvisorRun? =
+        db.transactionCatching { AdvisorRunDao[id].mapToModel() }.getEntityOrNull()
 
-    override fun getByJobId(advisorJobId: Long): AdvisorRun? = db.entityQuery {
+    override suspend fun getByJobId(advisorJobId: Long): AdvisorRun? = db.transactionCatching {
         AdvisorRunDao.find { AdvisorRunsTable.advisorJobId eq advisorJobId }.firstOrNull()?.mapToModel()
-    }
+    }.getEntityOrNull()
 }
 
 private fun createAdvisorConfiguration(

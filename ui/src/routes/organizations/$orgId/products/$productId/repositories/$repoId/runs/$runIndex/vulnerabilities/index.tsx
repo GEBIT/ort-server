@@ -17,24 +17,29 @@
  * License-Filename: LICENSE
  */
 
-import { useSuspenseQuery } from '@tanstack/react-query';
+import { queryOptions, useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { ExpandedState } from '@tanstack/react-table';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { PackageURL } from 'packageurl-js';
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import z from 'zod';
 
-import { VulnerabilityRating, VulnerabilityWithDetails } from '@/api';
+import {
+  getRunVulnerabilities,
+  GetRunVulnerabilitiesData,
+  Options,
+  PagedResponseVulnerabilityWithDetails,
+  VulnerabilityRating,
+  VulnerabilityWithDetails,
+} from '@/api';
 import {
   getRepositoryRunOptions,
-  getRunVulnerabilitiesOptions,
+  getRunVulnerabilitiesQueryKey,
   getRunVulnerabilityAdvisorsOptions,
 } from '@/api/@tanstack/react-query.gen';
 import { zVulnerabilityRating } from '@/api/zod.gen';
-import { BreakableString } from '@/components/breakable-string';
 import { VulnerabilityMetrics } from '@/components/charts/vulnerability-metrics';
-import { CopyToClipboard } from '@/components/copy-to-clipboard';
 import { DataTableCards } from '@/components/data-table-cards/data-table-cards';
 import { MarkItems } from '@/components/data-table/mark-items';
 import { LoadingIndicator } from '@/components/loading-indicator';
@@ -64,11 +69,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
-import {
   getResolvedBackgroundColor,
   getVulnerabilityRatingBackgroundColor,
 } from '@/helpers/get-status-class';
@@ -95,7 +95,12 @@ import {
   useAppTable,
 } from '@/hooks/use-app-table';
 import type { AppRow } from '@/hooks/use-app-table';
+import { useRepositoryPermission } from '@/hooks/use-authorization';
 import { ACTION_COLUMN_SIZE } from '@/lib/constants';
+import {
+  preparedDataRetryOptions,
+  requestPreparedData,
+} from '@/lib/prepared-data';
 import { toastError } from '@/lib/toast';
 import {
   advisorSearchParameterSchema,
@@ -106,13 +111,42 @@ import {
   itemStatusSearchParameterSchema,
   markedSearchParameterSchema,
   packageIdentifierSearchParameterSchema,
+  packageIdTypeSchema,
   paginationSearchParameterSchema,
   sortingSearchParameterSchema,
   vulnerabilityRatingSearchParameterSchema,
 } from '@/schemas';
 import { useUserSettingsStore } from '@/store/user-settings.store';
+import { RunPackageLink } from '../-components/run-package-link';
 
 const defaultPageSize = 10;
+
+/**
+ * Query options for the vulnerabilities of a run. The server prepares the vulnerabilities when they are requested for
+ * the first time. With the `Prefer: respond-async` header, it answers with `202 Accepted` until they are ready instead
+ * of keeping the request open for a long time, so the request is repeated until then.
+ */
+const getPreparedRunVulnerabilitiesOptions = (
+  options: Options<GetRunVulnerabilitiesData>
+) =>
+  queryOptions({
+    queryKey: getRunVulnerabilitiesQueryKey(options),
+    queryFn: async ({ queryKey, signal }) => {
+      const response = await requestPreparedData(
+        () =>
+          getRunVulnerabilities({
+            ...options,
+            ...queryKey[0],
+            headers: { Prefer: 'respond-async' },
+            signal,
+            throwOnError: true,
+          }),
+        signal
+      );
+      return response.data as PagedResponseVulnerabilityWithDetails;
+    },
+    ...preparedDataRetryOptions,
+  });
 const supportedSortColumns = new Set([
   'identifier',
   'purl',
@@ -130,36 +164,17 @@ const VulnerabilityCard = ({
 }) => {
   const params = Route.useParams();
   const packageIdType = useUserSettingsStore((state) => state.packageIdType);
-  const id =
-    packageIdType === 'PURL' && vulnerability.purl
-      ? vulnerability.purl
-      : identifierToString(vulnerability.identifier);
-
   return (
     <div className='flex flex-col gap-1'>
       <div className='flex items-center justify-between'>
         <div className='min-w-0 flex-1'>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Link
-                className='text-left font-semibold text-blue-400 hover:underline'
-                to='/organizations/$orgId/products/$productId/repositories/$repoId/runs/$runIndex/packages'
-                params={{
-                  orgId: params.orgId,
-                  productId: params.productId,
-                  repoId: params.repoId,
-                  runIndex: params.runIndex,
-                }}
-                search={{ pkgId: id, marked: '0' }}
-              >
-                <BreakableString text={id} />
-              </Link>
-            </TooltipTrigger>
-            <TooltipContent>
-              Inspect the package details in packages table
-            </TooltipContent>
-          </Tooltip>
-          <CopyToClipboard copyText={id} className='h-5 px-2 align-middle' />
+          <RunPackageLink
+            identifier={vulnerability.identifier}
+            purl={vulnerability.purl}
+            packageIdType={packageIdType}
+            params={params}
+            copyClassName='h-5 px-2 align-middle'
+          />
         </div>
         <Badge
           className='bg-blue-300 whitespace-nowrap text-black'
@@ -206,6 +221,10 @@ const VulnerabilityCard = ({
 
 const VulnerabilitiesComponent = () => {
   const params = Route.useParams();
+  const { isAllowed: canManageResolutions } = useRepositoryPermission(
+    Number.parseInt(params.repoId),
+    'MANAGE_RESOLUTIONS'
+  );
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const pageIndex = search.page ? search.page - 1 : 0;
@@ -293,14 +312,14 @@ const VulnerabilitiesComponent = () => {
     }),
     columnHelper.accessor(
       (vuln) => {
-        if (packageIdType === 'PURL') {
+        if (packageIdType === packageIdTypeSchema.enum.PURL) {
           return vuln.purl;
         } else {
           return identifierToString(vuln.identifier);
         }
       },
       {
-        id: `${packageIdType === 'ORT_ID' ? 'identifier' : 'purl'}`,
+        id: `${packageIdType === packageIdTypeSchema.enum.ORT_ID ? 'identifier' : 'purl'}`,
         header: 'Package ID',
         meta: {
           filter: {
@@ -415,14 +434,15 @@ const VulnerabilitiesComponent = () => {
     ),
   ]);
 
-  const columnId = packageIdType === 'ORT_ID' ? 'identifier' : 'purl';
+  const columnId =
+    packageIdType === packageIdTypeSchema.enum.ORT_ID ? 'identifier' : 'purl';
 
   const {
     data: totalVulnerabilities,
     isError: totalIsError,
     error: totalError,
   } = useSuspenseQuery({
-    ...getRunVulnerabilitiesOptions({
+    ...getPreparedRunVulnerabilitiesOptions({
       path: { runId: ortRun.id },
       query: { limit: 1 },
     }),
@@ -433,7 +453,7 @@ const VulnerabilitiesComponent = () => {
     isError,
     error,
   } = useSuspenseQuery({
-    ...getRunVulnerabilitiesOptions({
+    ...getPreparedRunVulnerabilitiesOptions({
       path: { runId: ortRun.id },
       query: {
         limit: pageSize,
@@ -443,7 +463,7 @@ const VulnerabilitiesComponent = () => {
         fixAvailable,
         rating: rating?.join(','),
         advisors: advisor?.join(','),
-        ...(packageIdType === 'ORT_ID'
+        ...(packageIdType === packageIdTypeSchema.enum.ORT_ID
           ? { identifier: packageIdentifier }
           : { purl: packageIdentifier }),
         externalId,
@@ -451,131 +471,129 @@ const VulnerabilitiesComponent = () => {
     }),
   });
 
-  const renderSubComponent = useCallback(
-    ({ row }: { row: AppRow<VulnerabilityWithDetails> }) => {
-      const vulnerability = row.original.vulnerability;
-      let pkgVersion;
-      try {
-        pkgVersion = PackageURL.fromString(row.original.purl).version;
-      } catch {
-        pkgVersion = undefined;
-      }
+  const renderSubComponent = ({
+    row,
+  }: {
+    row: AppRow<VulnerabilityWithDetails>;
+  }) => {
+    const vulnerability = row.original.vulnerability;
+    let pkgVersion;
+    try {
+      pkgVersion = PackageURL.fromString(row.original.purl).version;
+    } catch {
+      pkgVersion = undefined;
+    }
 
-      const relativeVersions = getVersionsRelativeToReference(
-        row.original.firstFixedVersions || [],
-        pkgVersion || ''
-      );
+    const relativeVersions = getVersionsRelativeToReference(
+      row.original.firstFixedVersions || [],
+      pkgVersion || ''
+    );
 
-      return (
-        <Accordion
-          type='multiple'
-          className='w-full'
-          defaultValue={getResolutionAccordionDefaultValue(row.original)}
-        >
-          <AccordionItem value='fixed-versions'>
-            <AccordionTrigger className='font-semibold'>
-              First fixed versions
-            </AccordionTrigger>
-            <AccordionContent>
-              {(row.original.firstFixedVersions?.length ?? 0) > 0 ? (
-                <>
-                  {relativeVersions.earlierVersions.length > 0 && (
-                    <span className='text-muted-foreground'>
-                      {relativeVersions.earlierVersions.join(', ')}
-                      {relativeVersions.nextVersion && ', '}
-                    </span>
-                  )}
-                  {relativeVersions.nextVersion && (
-                    <span className='font-semibold'>
-                      {relativeVersions.nextVersion}
-                    </span>
-                  )}
-                  {relativeVersions.laterVersions.length > 0 && (
-                    <span>
-                      {', '}
-                      {relativeVersions.laterVersions.join(', ')}
-                    </span>
-                  )}
-                </>
-              ) : (
-                <div className='text-muted-foreground text-sm'>
-                  No fixed versions available.
-                </div>
-              )}
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value='resolutions'>
-            <AccordionTrigger className='font-semibold'>
-              {getResolutionAccordionLabel(row.original)}
-            </AccordionTrigger>
-            <AccordionContent>
-              <Resolutions
-                item={row.original}
-                repositoryId={params.repoId}
-                runId={ortRun.id}
-              />
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value='details'>
-            <AccordionTrigger className='font-semibold'>
-              Details
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className='flex flex-col gap-4'>
-                <VulnerabilityMetrics vulnerability={vulnerability} />
-                <div className='font-semibold'>Description</div>
-                <MarkdownRenderer
-                  markdown={
-                    vulnerability.description || '_No description available._'
-                  }
-                />
-                <div className='mt-2 text-lg font-semibold'>
-                  Links to vulnerability references
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Severity</TableHead>
-                      <TableHead>Scoring system</TableHead>
-                      <TableHead>Score</TableHead>
-                      <TableHead>Vector</TableHead>
-                      <TableHead>Link</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {vulnerability.references
-                      .sort(
-                        (refA, refB) => (refB.score ?? 0) - (refA.score ?? 0)
-                      )
-                      .map((reference, index) => (
-                        <TableRow key={index}>
-                          <TableCell>{reference.severity || '-'}</TableCell>
-                          <TableCell>
-                            {reference.scoringSystem || '-'}
-                          </TableCell>
-                          <TableCell>{reference.score || '-'}</TableCell>
-                          <TableCell>{reference.vector || '-'}</TableCell>
-                          <TableCell>
-                            <Link
-                              className='font-semibold break-all text-blue-400 hover:underline'
-                              to={reference.url}
-                              target='_blank'
-                            >
-                              {reference.url}
-                            </Link>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                  </TableBody>
-                </Table>
+    return (
+      <Accordion
+        type='multiple'
+        className='w-full'
+        defaultValue={getResolutionAccordionDefaultValue(row.original)}
+      >
+        <AccordionItem value='fixed-versions'>
+          <AccordionTrigger className='font-semibold'>
+            First fixed versions
+          </AccordionTrigger>
+          <AccordionContent>
+            {(row.original.firstFixedVersions?.length ?? 0) > 0 ? (
+              <>
+                {relativeVersions.earlierVersions.length > 0 && (
+                  <span className='text-muted-foreground'>
+                    {relativeVersions.earlierVersions.join(', ')}
+                    {relativeVersions.nextVersion && ', '}
+                  </span>
+                )}
+                {relativeVersions.nextVersion && (
+                  <span className='font-semibold'>
+                    {relativeVersions.nextVersion}
+                  </span>
+                )}
+                {relativeVersions.laterVersions.length > 0 && (
+                  <span>
+                    {', '}
+                    {relativeVersions.laterVersions.join(', ')}
+                  </span>
+                )}
+              </>
+            ) : (
+              <div className='text-muted-foreground text-sm'>
+                No fixed versions available.
               </div>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      );
-    },
-    [params.repoId, ortRun.id]
-  );
+            )}
+          </AccordionContent>
+        </AccordionItem>
+        <AccordionItem value='resolutions'>
+          <AccordionTrigger className='font-semibold'>
+            {getResolutionAccordionLabel(
+              row.original,
+              canManageResolutions !== false
+            )}
+          </AccordionTrigger>
+          <AccordionContent>
+            <Resolutions
+              item={row.original}
+              repositoryId={params.repoId}
+              runId={ortRun.id}
+            />
+          </AccordionContent>
+        </AccordionItem>
+        <AccordionItem value='details'>
+          <AccordionTrigger className='font-semibold'>Details</AccordionTrigger>
+          <AccordionContent>
+            <div className='flex flex-col gap-4'>
+              <VulnerabilityMetrics vulnerability={vulnerability} />
+              <div className='font-semibold'>Description</div>
+              <MarkdownRenderer
+                markdown={
+                  vulnerability.description || '_No description available._'
+                }
+              />
+              <div className='mt-2 text-lg font-semibold'>
+                Links to vulnerability references
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Severity</TableHead>
+                    <TableHead>Scoring system</TableHead>
+                    <TableHead>Score</TableHead>
+                    <TableHead>Vector</TableHead>
+                    <TableHead>Link</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {vulnerability.references
+                    .sort((refA, refB) => (refB.score ?? 0) - (refA.score ?? 0))
+                    .map((reference, index) => (
+                      <TableRow key={index}>
+                        <TableCell>{reference.severity || '-'}</TableCell>
+                        <TableCell>{reference.scoringSystem || '-'}</TableCell>
+                        <TableCell>{reference.score || '-'}</TableCell>
+                        <TableCell>{reference.vector || '-'}</TableCell>
+                        <TableCell>
+                          <Link
+                            className='font-semibold break-all text-blue-400 hover:underline'
+                            to={reference.url}
+                            target='_blank'
+                          >
+                            {reference.url}
+                          </Link>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
+    );
+  };
 
   const [expanded, setExpanded] = useState<ExpandedState>(
     search.marked ? { [search.marked]: true } : {}

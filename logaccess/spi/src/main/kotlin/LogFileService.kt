@@ -34,6 +34,7 @@ import org.eclipse.apoapsis.ortserver.config.ConfigManager
 import org.eclipse.apoapsis.ortserver.config.Path as ConfigPath
 import org.eclipse.apoapsis.ortserver.model.LogLevel
 import org.eclipse.apoapsis.ortserver.model.LogSource
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 import org.eclipse.apoapsis.ortserver.utils.config.getStringOrNull
 
 import org.ossreviewtoolkit.utils.common.packZip
@@ -98,9 +99,7 @@ class LogFileService private constructor(
             return LogFileService(provider, tempDir)
         }
 
-        /**
-         * Generate the name of a log file based on the given [source].
-         */
+        /** Generate the name of a log file based on the given [source]. */
         private fun logFileName(source: LogSource): String = "${source.name.lowercase()}.log"
     }
 
@@ -141,7 +140,7 @@ class LogFileService private constructor(
     ) {
         val levels = LogLevel.levelOrHigher(level)
 
-        withContext(Dispatchers.IO) {
+        withContext(Dispatchers.Virtual) {
             sources.forEach { source ->
                 launch { downloadLogFile(ortRunId, source, levels, startTime, endTime, targetDir) }
             }

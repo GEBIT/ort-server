@@ -28,14 +28,10 @@ import org.eclipse.apoapsis.ortserver.model.runs.advisor.AdvisorConfiguration
 import org.eclipse.apoapsis.ortserver.model.runs.advisor.AdvisorResult
 import org.eclipse.apoapsis.ortserver.model.runs.advisor.AdvisorRun
 
-/**
- * A repository of [advisor runs][AdvisorRun].
- */
+/** A repository of [advisor runs][AdvisorRun]. */
 interface AdvisorRunRepository {
-    /**
-     * Create an advisor run.
-     */
-    fun create(
+    /** Create an advisor run. */
+    suspend fun create(
         advisorJobId: Long,
         startTime: Instant,
         endTime: Instant,
@@ -45,13 +41,9 @@ interface AdvisorRunRepository {
         results: Map<Identifier, List<AdvisorResult>>
     ): AdvisorRun
 
-    /**
-     * Get an advisor run by [id]. Returns null if the advisor run is not found.
-     */
-    fun get(id: Long): AdvisorRun?
+    /** Get an advisor run by [id]. Returns null if the advisor run is not found. */
+    suspend fun get(id: Long): AdvisorRun?
 
-    /**
-     * Get an advisor run by [advisorJobId]. Returns null if the advisor run is not found.
-     */
-    fun getByJobId(advisorJobId: Long): AdvisorRun?
+    /** Get an advisor run by [advisorJobId]. Returns null if the advisor run is not found. */
+    suspend fun getByJobId(advisorJobId: Long): AdvisorRun?
 }

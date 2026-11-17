@@ -19,7 +19,7 @@
 
 package org.eclipse.apoapsis.ortserver.workers.evaluator
 
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrtRunService
 import org.eclipse.apoapsis.ortserver.services.ortrun.mapToModel
 import org.eclipse.apoapsis.ortserver.transport.EndpointComponent
@@ -65,7 +65,7 @@ internal class EvaluatorWorker(
 
             val evaluatorRunnerResult = runner.run(ortResult, job.configuration, context)
 
-            db.dbQuery {
+            db.transaction {
                 getValidEvaluatorJob(job.id)
                 ortRunService.storeEvaluatorRun(evaluatorRunnerResult.evaluatorRun.mapToModel(job.id))
                 ortRunService.storeResolvedPackageConfigurations(ortRun.id, evaluatorRunnerResult.packageConfigurations)
@@ -92,17 +92,17 @@ internal class EvaluatorWorker(
     }.getOrElse {
         when (it) {
             is JobIgnoredException -> {
-                logger.warn("Message with traceId '$traceId' ignored: ${it.message}")
+                logger.warn("Not running the evaluator because message '$traceId' got ignored: ${it.message}")
                 RunResult.Ignored
             }
 
             else -> {
-                logger.error("Error while processing message with traceId '$traceId': ${it.message}")
+                logger.error("Error while running the evaluator as instructed by message '$traceId': ${it.message}")
                 RunResult.Failed(it)
             }
         }
     }
 
-    private fun getValidEvaluatorJob(jobId: Long) =
+    private suspend fun getValidEvaluatorJob(jobId: Long) =
         ortRunService.getEvaluatorJob(jobId).validateForProcessing(jobId)
 }

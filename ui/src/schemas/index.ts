@@ -113,7 +113,7 @@ export const regexSchema = z
   .optional();
 
 // Enum schema for roles assigned to users at all hierarchy levels.
-export const roleSchema = z.enum(['ADMIN', 'WRITER', 'READER']);
+export const roleSchema = z.enum(['READER', 'WRITER', 'ADMIN']);
 
 // Enum schema and type for the resolved statuses of issues, vulnerabilites, and rule violations
 export const itemResolvedSchema = z.enum(['Resolved', 'Unresolved']);
@@ -176,6 +176,30 @@ export const sortingSearchParameterSchema = z.object({
     .optional(),
 });
 
+export const adminUserSortFieldSchema = z.enum([
+  'username',
+  'firstName',
+  'lastName',
+  'email',
+]);
+
+export const adminUsersSearchParameterSchema = z.object({
+  ...paginationSearchParameterSchema.shape,
+  search: z.string().trim().optional(),
+  sortBy: z
+    .array(
+      z.object({
+        id: adminUserSortFieldSchema,
+        desc: z.boolean(),
+      })
+    )
+    .optional(),
+});
+
+export type AdminUsersSearchParameters = z.infer<
+  typeof adminUsersSearchParameterSchema
+>;
+
 export const packageSortingSearchParameterSchema = z.object({
   packageSortBy: z
     .array(
@@ -205,14 +229,25 @@ export const itemFixSearchParameterSchema = z.object({
 
 export const packageIdentifierSearchParameterSchema = z.object({
   pkgId: z.string().optional(),
+  pkgIdType: packageIdTypeSchema.optional(),
 });
 
 export const packageIdSearchParameterSchema = z.object({
   packageId: z.string().optional(),
 });
 
+// Links that name one package set this to find it by an exact match of its identifier.
+export const packageIdMatchTypeSearchParameterSchema = z.object({
+  pkgIdMatchType: z.literal('exact').optional(),
+});
+
 export const projectIdentifierSearchParameterSchema = z.object({
   projectId: z.string().optional(),
+});
+
+// Links that name one project set this to find it by an exact match of its identifier.
+export const projectIdMatchTypeSearchParameterSchema = z.object({
+  projectIdMatchType: z.literal('exact').optional(),
 });
 
 export const definitionFilePathSearchParameterSchema = z.object({
@@ -271,6 +306,82 @@ export const markedSearchParameterSchema = z.object({
 export const packageMarkedSearchParameterSchema = z.object({
   packageMarked: z.string().optional(),
 });
+
+const licenseTablePageSchema = z
+  .number()
+  .int()
+  .positive()
+  .optional()
+  .catch(undefined);
+
+export const licenseFindingsTableStateSchema = z.object({
+  page: licenseTablePageSchema,
+  pageSize: licenseTablePageSchema,
+});
+
+// Validate entries separately so a malformed table does not discard its siblings.
+// Object.fromEntries also preserves arbitrary own keys such as "__proto__" safely.
+const licenseTableRecordSchema = <T extends z.ZodType>(entrySchema: T) =>
+  z.unknown().transform((value): Record<string, z.output<T>> | undefined => {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      return undefined;
+
+    const entries = Object.entries(value).flatMap(([key, entry]) => {
+      const result = entrySchema.safeParse(entry);
+      return result.success ? [[key, result.data] as const] : [];
+    });
+    return entries.length ? Object.fromEntries(entries) : undefined;
+  });
+
+export const licensePackagesTableStateSchema =
+  licenseFindingsTableStateSchema.extend({
+    packageId: z.string().optional().catch(undefined),
+    packageIdType: packageIdTypeSchema.optional().catch(undefined),
+    packageMarked: z.string().optional().catch(undefined),
+    sortBy: z
+      .array(
+        z.object({
+          id: z.enum(['identifier', 'purl']),
+          desc: z.boolean(),
+        })
+      )
+      .optional()
+      .catch(undefined),
+    packages: licenseTableRecordSchema(
+      licenseFindingsTableStateSchema
+    ).optional(),
+    // Compatibility-only defaults, consumed by the first package opened in this license.
+    legacyFindings: licenseFindingsTableStateSchema.optional().catch(undefined),
+  });
+
+export const licenseTablesSearchParameterSchema = z.object({
+  licenseTables: licenseTableRecordSchema(
+    licensePackagesTableStateSchema
+  ).optional(),
+});
+
+export const licenseFindingsSearchParameterSchema = z.object({
+  ...paginationSearchParameterSchema.shape,
+  ...sortingSearchParameterSchema.shape,
+  ...detectedLicenseSearchParameterSchema.shape,
+  ...packagePaginationSearchParameterSchema.shape,
+  ...findingsPaginationSearchParameterSchema.shape,
+  ...packageSortingSearchParameterSchema.shape,
+  ...packageIdSearchParameterSchema.shape,
+  ...markedSearchParameterSchema.shape,
+  ...packageMarkedSearchParameterSchema.shape,
+  ...licenseTablesSearchParameterSchema.shape,
+});
+
+export type LicenseFindingsTableState = z.infer<
+  typeof licenseFindingsTableStateSchema
+>;
+export type LicensePackagesTableState = z.infer<
+  typeof licensePackagesTableStateSchema
+>;
+export type LicenseFindingsSearchParameters = z.infer<
+  typeof licenseFindingsSearchParameterSchema
+>;
 
 // This schema is used to validate the filter parameter when filtering
 // organizations, products, or repositories with regexp.

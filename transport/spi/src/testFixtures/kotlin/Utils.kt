@@ -36,6 +36,7 @@ import kotlinx.coroutines.launch
 
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
 import org.eclipse.apoapsis.ortserver.model.orchestrator.OrchestratorMessage
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 import org.eclipse.apoapsis.ortserver.transport.EndpointHandlerResult
 import org.eclipse.apoapsis.ortserver.transport.Message
 import org.eclipse.apoapsis.ortserver.transport.MessageReceiverFactory
@@ -104,16 +105,14 @@ fun startReceiver(
         return result
     }
 
-    val job = CoroutineScope(Dispatchers.IO).launch {
+    val job = CoroutineScope(Dispatchers.Virtual).launch {
         MessageReceiverFactory.createReceiver(OrchestratorEndpoint, configManager, ::handler)
     }
 
     return ReceiverHandle(job, queue)
 }
 
-/**
- * Check that the next message in this queue has the given [traceId], [runId], and [payload].
- */
+/** Check that the next message in this queue has the given [traceId], [runId], and [payload]. */
 fun <T> BlockingQueue<Message<T>>.checkMessage(traceId: String, runId: Long, payload: T) {
     poll(TEST_QUEUE_TIMEOUT, TimeUnit.SECONDS) shouldNotBeNull {
         header.traceId shouldBe traceId

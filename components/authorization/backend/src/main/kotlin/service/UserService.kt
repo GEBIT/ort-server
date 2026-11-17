@@ -19,15 +19,12 @@
 
 package org.eclipse.apoapsis.ortserver.components.authorization.service
 
-import org.eclipse.apoapsis.ortserver.model.User
+import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
+import org.eclipse.apoapsis.ortserver.model.util.ListQueryResult
 
-/**
- * A service interface to manage users for this server instance. The service
- */
+/** A service interface to manage users for this server instance. The service */
 interface UserService {
-    /**
-     * Create a user. If "password" is null, then "temporary" is ignored.
-     */
+    /** Create a user. If "password" is null, then "temporary" is ignored. */
     @Suppress("LongParameterList")
     suspend fun createUser(
         username: String,
@@ -39,27 +36,35 @@ interface UserService {
     )
 
     /**
-     * Delete the user with the given [username] from the server.
+     * Delete the user with the given [username] and all their role assignments from the server. Remove assignments
+     * before deleting the user. If role removal fails, the user is not deleted. If user deletion subsequently fails,
+     * the assignments remain removed. After the user is deleted, keep them in the users table and mark them deleted
+     * there, so that runs still show who started them. Throw an exception if the user does not exist or any of these
+     * operations fails.
      */
     suspend fun deleteUser(username: String)
 
     /**
-     * Get all current users of the server.
+     * List current users according to the given [parameters]. If [search] is not blank, return only users whose
+     * username, first name, last name, or email address contains it, ignoring case.
      */
-    suspend fun getUsers(): Set<User>
+    suspend fun listUsers(
+        parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
+        search: String? = null
+    ): ListQueryResult<User>
 
-    /**
-     * Return the user with the given internal [id]. Throw an exception if the user does not exist.
-     */
+    /** Return the user with the given internal [id]. Throw an exception if the user does not exist. */
     suspend fun getUserById(id: String): User
 
-    /**
-     * Resolve a number of users by their internal [ids]. Ignore unknown ids.
-     */
+    /** Resolve a number of users by their internal [ids]. Ignore unknown ids. */
     suspend fun getUsersById(ids: Set<String>): Set<User>
 
-    /**
-     * Return a flag whether a user with the given [id] exists.
-     */
+    /** Return a flag whether a user with the given [id] exists. */
     suspend fun userExists(id: String): Boolean
+
+    /**
+     * Return the ID in Keycloak of the user with the given [username], or *null* if there is no such user. Throw an
+     * exception if Keycloak cannot be asked.
+     */
+    suspend fun findUserId(username: String): String?
 }

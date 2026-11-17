@@ -19,6 +19,7 @@
 
 package org.eclipse.apoapsis.ortserver.components.pluginmanager.routes
 
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -30,20 +31,21 @@ import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginTemplateSer
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginType
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.handleTemplateResult
 import org.eclipse.apoapsis.ortserver.model.OrganizationId
+import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireEnumParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 
 internal fun Route.removeTemplateFromOrganization(
     pluginTemplateService: PluginTemplateService
-) = post("/admin/plugins/{pluginType}/{pluginId}/templates/{templateName}/removeFromOrganization", {
-    operationId = "RemoveTemplateFromOrganization"
+) = post("admin/plugins/{pluginType}/{pluginId}/templates/{templateName}/removeFromOrganization", {
+    operationId = "removeTemplateFromOrganization"
     summary = "Remove a plugin template from an organization"
     description = "Remove a plugin template from an organization. If any global templates are enabled for the " +
             "plugin, they will now apply to the organization."
     tags = listOf("Plugins")
 
     request {
-        pathParameter<String>("pluginType") {
+        pathParameter<PluginType>("pluginType") {
             description = "The type of the plugin this template is for."
             required = true
         }
@@ -58,7 +60,7 @@ internal fun Route.removeTemplateFromOrganization(
             required = true
         }
 
-        queryParameter<String>("organizationId") {
+        queryParameter<Long>("organizationId") {
             description = "The ID of the organization from which the template should be removed."
             required = true
         }
@@ -67,19 +69,26 @@ internal fun Route.removeTemplateFromOrganization(
     response {
         HttpStatusCode.OK to {
             description = "The template was successfully removed from the organization."
+            body<String> {
+                mediaTypes = setOf(ContentType.Text.Plain)
+                example("Success message") {
+                    value = "Template removed from organization successfully."
+                }
+            }
         }
 
         HttpStatusCode.NotFound to {
-            description = "The specified plugin, plugin template, or organization does not exist."
+            description = "The template does not exist."
         }
 
         HttpStatusCode.BadRequest to {
-            description = "The template is not assigned to the organization."
+            description = "The specified plugin is not installed, the template was deleted, or the template is not " +
+                    "assigned to the organization. An invalid plugin type also results in this status."
         }
     }
 }, requireSuperuser()) {
     val userId = requirePrincipal().userId
-    val pluginType = enumValueOf<PluginType>(call.requireParameter("pluginType"))
+    val pluginType = call.requireEnumParameter<PluginType>("pluginType")
     val pluginId = call.requireParameter("pluginId")
     val templateName = call.requireParameter("templateName")
     val organizationId = OrganizationId(call.requireIdParameter("organizationId"))

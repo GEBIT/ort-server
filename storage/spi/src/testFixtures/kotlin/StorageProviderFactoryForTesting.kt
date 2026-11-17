@@ -25,6 +25,8 @@ import java.io.InputStream
 
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
 
+import org.jetbrains.exposed.v1.jdbc.Database
+
 /**
  * A simple implementation of the [StorageProviderFactory] interface for testing purposes that stores data in memory.
  */
@@ -72,9 +74,7 @@ class StorageProviderFactoryForTesting : StorageProviderFactory {
          */
         fun keys(): Set<Key> = latestData.keys
 
-        /**
-         * An internal class used to manage the data stored in this test storage.
-         */
+        /** An internal class used to manage the data stored in this test storage. */
         class Entry(
             val data: ByteArray,
             val contentType: String?,
@@ -84,7 +84,7 @@ class StorageProviderFactoryForTesting : StorageProviderFactory {
 
     override val name: String = NAME
 
-    override fun createProvider(config: ConfigManager): StorageProvider {
+    override fun createProvider(config: ConfigManager, db: Database): StorageProvider {
         val storage = mutableMapOf<Key, Entry>()
         val errorKey = if (config.hasPath(ERROR_KEY_PROPERTY)) config.getString(ERROR_KEY_PROPERTY) else "<undefined>"
 
@@ -116,9 +116,7 @@ class StorageProviderFactoryForTesting : StorageProviderFactory {
                 return entry != null
             }
 
-            /**
-             * Check whether [key] should trigger an exception. Otherwise, return the associated [Entry].
-             */
+            /** Check whether [key] should trigger an exception. Otherwise, return the associated [Entry]. */
             private fun getEntry(key: Key): Entry? {
                 if (errorKey in key.key) throw IOException("Test exception from StorageProviderFactoryForTesting.")
 

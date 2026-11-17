@@ -21,11 +21,18 @@ package org.eclipse.apoapsis.ortserver.dao.tables.shared
 
 import org.eclipse.apoapsis.ortserver.dao.repositories.ortrun.OrtRunDao
 import org.eclipse.apoapsis.ortserver.dao.repositories.ortrun.OrtRunsTable
+import org.eclipse.apoapsis.ortserver.dao.utils.DigestFunction
+import org.eclipse.apoapsis.ortserver.dao.utils.toDatabasePrecision
 import org.eclipse.apoapsis.ortserver.dao.utils.transformToDatabasePrecision
 import org.eclipse.apoapsis.ortserver.model.runs.Issue
 
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.QueryParameter
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.dao.id.EntityID
 import org.jetbrains.exposed.v1.core.dao.id.LongIdTable
+import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.dao.LongEntity
 import org.jetbrains.exposed.v1.dao.LongEntityClass
 import org.jetbrains.exposed.v1.datetime.timestamp
@@ -40,13 +47,27 @@ object OrtRunsIssuesTable : LongIdTable("ort_runs_issues") {
     val identifierId = reference("identifier_id", IdentifiersTable).nullable()
     val worker = text("worker").nullable()
     val timestamp = timestamp("timestamp")
+    val howToFix = text("how_to_fix").nullable()
 }
+
+/**
+ * Return a condition matching [OrtRunsIssuesTable] rows of [ortRunId] joined with [IssuesTable] that have the
+ * content and database-precision timestamp of [issue]. The identifier is not part of the condition.
+ */
+internal fun ortRunIssueContentMatches(ortRunId: Long, issue: Issue): Op<Boolean> =
+    (OrtRunsIssuesTable.ortRunId eq ortRunId) and
+        (IssuesTable.issueSource eq issue.source) and
+        (
+            DigestFunction(IssuesTable.message) eq
+                DigestFunction(QueryParameter(issue.message, TextColumnType()))
+            ) and
+        (IssuesTable.severity eq issue.severity) and
+        (IssuesTable.affectedPath eq issue.affectedPath) and
+        (OrtRunsIssuesTable.timestamp eq issue.timestamp.toDatabasePrecision())
 
 class OrtRunIssueDao(id: EntityID<Long>) : LongEntity(id) {
     companion object : LongEntityClass<OrtRunIssueDao>(OrtRunsIssuesTable) {
-        /**
-         * Create a new entity based on the given [issue] and associate it with the given [ortRunId].
-         */
+        /** Create a new entity based on the given [issue] and associate it with the given [ortRunId]. */
         fun createByIssue(ortRunId: Long, issue: Issue): OrtRunIssueDao =
             new {
                 this.ortRunId = OrtRunDao[ortRunId].id
@@ -54,6 +75,7 @@ class OrtRunIssueDao(id: EntityID<Long>) : LongEntity(id) {
                 this.identifierId = issue.identifier?.let { IdentifierDao.getOrPut(it) }?.id
                 this.worker = issue.worker
                 this.timestamp = issue.timestamp
+                this.howToFix = issue.howToFix
             }
     }
 
@@ -62,6 +84,12 @@ class OrtRunIssueDao(id: EntityID<Long>) : LongEntity(id) {
     var identifierId by OrtRunsIssuesTable.identifierId
     var worker by OrtRunsIssuesTable.worker
     var timestamp by OrtRunsIssuesTable.timestamp.transformToDatabasePrecision()
+    var howToFix by OrtRunsIssuesTable.howToFix
 
-    fun mapToModel() = issue.mapToModel(timestamp, identifierId?.let { IdentifierDao[it].mapToModel() }, worker)
+    fun mapToModel() = issue.mapToModel(
+        timestamp,
+        identifierId?.let { IdentifierDao[it].mapToModel() },
+        worker,
+        howToFix
+    )
 }

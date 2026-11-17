@@ -1,0 +1,209 @@
+/*
+ * Copyright (C) 2026 The ORT Server Authors (See <https://github.com/eclipse-apoapsis/ort-server/blob/main/NOTICE>)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ * License-Filename: LICENSE
+ */
+
+import type { CheckedState } from '@radix-ui/react-checkbox';
+import { useState } from 'react';
+import type {
+  ControllerRenderProps,
+  FieldPathByValue,
+  FieldPathValue,
+  FieldValues,
+  Path,
+  SetValueConfig,
+  UseFormReturn,
+} from 'react-hook-form';
+
+import type { PreconfiguredPluginDescriptor } from '@/api';
+import type { ScannerScope } from '@/components/form/plugin-multi-select-field';
+import {
+  fieldPath,
+  getPluginsInDisplayOrder,
+  moveItem,
+} from '@/components/form/plugin-multi-select-field/utils';
+
+type UsePluginSelectionArgs<
+  TFieldValues extends FieldValues,
+  TName extends FieldPathByValue<TFieldValues, Array<string>>,
+> = {
+  form: UseFormReturn<TFieldValues, TName>;
+  /** The field holding the ids of the selected plugins. */
+  field: ControllerRenderProps<TFieldValues, TName>;
+  plugins: readonly PreconfiguredPluginDescriptor[];
+  /** The field holding the scanner scope of each plugin, if the plugins have scopes. */
+  scannerScopeName?: TName;
+  /**
+   * Store the selection in display order instead of the order in which it was made. Selected
+   * plugins are shown first, in selection order, when the list appears. The order is then kept
+   * when plugins are checked or unchecked, until the user drags a row or resets the list.
+   */
+  enableReordering: boolean;
+};
+
+/**
+ * Manage the selection of a plugin multi-select field. This is the only place that changes
+ * the selection and the values that depend on it: enabling a plugin defaults its scanner
+ * scope to "both". Disabling a plugin keeps its settings, which can be edited while it is
+ * disabled.
+ */
+export function usePluginSelection<
+  TFieldValues extends FieldValues,
+  TName extends FieldPathByValue<TFieldValues, Array<string>>,
+>({
+  form,
+  field,
+  plugins,
+  scannerScopeName,
+  enableReordering,
+}: UsePluginSelectionArgs<TFieldValues, TName>) {
+  const [pluginOrder, setPluginOrder] = useState<string[]>();
+
+  const selectedPluginIds = (field.value ?? []) as string[];
+  const selectedPluginIdSet = new Set(selectedPluginIds);
+  // Only a sortable list has a display order of its own; a static list keeps the original order.
+  const pluginsInDisplayOrder = enableReordering
+    ? getPluginsInDisplayOrder(plugins, selectedPluginIds, pluginOrder)
+    : plugins;
+
+  // Order the given plugin ids by their position in the list.
+  const inDisplayOrder = (selectedIds: ReadonlySet<string>) =>
+    pluginsInDisplayOrder
+      .map((plugin) => plugin.id)
+      .filter((pluginId) => selectedIds.has(pluginId));
+
+  // Keep the current display order, so that checking a plugin does not move its row.
+  const keepDisplayOrder = () => {
+    if (enableReordering) {
+      setPluginOrder(pluginsInDisplayOrder.map((plugin) => plugin.id));
+    }
+  };
+
+  // Set a plugin's entry in a field that holds one value per plugin.
+  const setPluginValue = (
+    base: string,
+    pluginId: string,
+    value: unknown,
+    options?: SetValueConfig
+  ) =>
+    form.setValue(
+      fieldPath<TFieldValues>(base, pluginId),
+      value as FieldPathValue<TFieldValues, Path<TFieldValues>>,
+      options
+    );
+
+  // Give a newly enabled plugin the default scanner scope, unless it already has one.
+  const applyEnabled = (pluginId: string) => {
+    if (
+      scannerScopeName &&
+      !form.getValues(fieldPath<TFieldValues>(scannerScopeName, pluginId))
+    ) {
+      setPluginValue(scannerScopeName, pluginId, 'both');
+    }
+  };
+
+  // Enable or disable one plugin, keeping the selection in list order when reordering.
+  const setSelected = (pluginId: string, selected: boolean) => {
+    const nextSelectedPluginIds = selected
+      ? [...selectedPluginIds, pluginId]
+      : selectedPluginIds.filter((id) => id !== pluginId);
+
+    keepDisplayOrder();
+    field.onChange(
+      enableReordering
+        ? inDisplayOrder(new Set(nextSelectedPluginIds))
+        : nextSelectedPluginIds
+    );
+
+    if (selected) applyEnabled(pluginId);
+  };
+
+  // Enable or disable all plugins at once.
+  const setAllSelected = (selected: boolean) => {
+    const nextSelectedPluginIds = selected
+      ? pluginsInDisplayOrder.map((plugin) => plugin.id)
+      : [];
+
+    keepDisplayOrder();
+
+    // TName only points at `string[]` fields, so the cast is safe. Unlike `setSelected`,
+    // this uses `form.setValue`, which does not mark the field as dirty or touched.
+    form.setValue(
+      field.name,
+      nextSelectedPluginIds as FieldPathValue<TFieldValues, TName>
+    );
+
+    if (selected) plugins.forEach((plugin) => applyEnabled(plugin.id));
+  };
+
+  // Select the given default plugins instead of the current selection, with their default scanner
+  // scopes. The display order is reset, so that the order of the defaults is shown. Unlike
+  // `setAllSelected`, this marks the selection and the scopes as dirty, so that they are kept
+  // together if the available plugins change. As when a plugin is checked, the selection is
+  // validated again after the form was submitted.
+  const resetToDefaults = (
+    defaultPluginIds: readonly string[],
+    defaultScannerScopes?: Readonly<Record<string, ScannerScope>>
+  ) => {
+    setPluginOrder(undefined);
+    field.onChange([...defaultPluginIds]);
+
+    defaultPluginIds.forEach((pluginId) => {
+      const scope = defaultScannerScopes?.[pluginId];
+
+      if (scannerScopeName && scope) {
+        setPluginValue(scannerScopeName, pluginId, scope, {
+          shouldDirty: true,
+        });
+      } else {
+        applyEnabled(pluginId);
+      }
+    });
+  };
+
+  // Move a plugin within the sortable list and store the selection in the new order.
+  const reorder = (fromIndex: number, toIndex: number) => {
+    const nextPluginOrder = moveItem(
+      pluginsInDisplayOrder.map((plugin) => plugin.id),
+      fromIndex,
+      toIndex
+    );
+
+    setPluginOrder(nextPluginOrder);
+    field.onChange(
+      nextPluginOrder.filter((pluginId) => selectedPluginIdSet.has(pluginId))
+    );
+  };
+
+  const allState: CheckedState = plugins.every((plugin) =>
+    selectedPluginIdSet.has(plugin.id)
+  )
+    ? true
+    : plugins.some((plugin) => selectedPluginIdSet.has(plugin.id))
+      ? 'indeterminate'
+      : false;
+
+  return {
+    pluginsInDisplayOrder,
+    isSelected: (pluginId: string) => selectedPluginIdSet.has(pluginId),
+    setSelected,
+    setAllSelected,
+    resetToDefaults,
+    reorder,
+    allState,
+  };
+}

@@ -19,7 +19,7 @@
 
 import { PlusIcon, TrashIcon } from 'lucide-react';
 import { ReactNode } from 'react';
-import { FieldPath, UseFormReturn } from 'react-hook-form';
+import { FieldPath, UseFormReturn, useWatch } from 'react-hook-form';
 
 import { InfrastructureServiceSelect } from '@/components/infrastructure-service-select';
 import { Button } from '@/components/ui/button';
@@ -47,11 +47,19 @@ import {
   EnvironmentDefinitionSchema,
   FieldEntry,
 } from '@/lib/environment-definition-fields';
+import { jobConfigFields } from '@/lib/job-config-fields';
 import {
   EnvironmentDefinitionEntry,
   EnvironmentDefinitions,
 } from '@/lib/types';
 import { CreateRunFormValues } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
+
+const environmentDefinitionsField =
+  jobConfigFields['analyzer.environmentConfig.environmentDefinitions'];
+const serviceField =
+  jobConfigFields[
+    'analyzer.environmentConfig.environmentDefinitions.*.*.service'
+  ];
 
 type PackageManagerFieldProps = {
   pmKey: string;
@@ -77,7 +85,7 @@ function PackageManagerField({
         name={name}
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Service</FormLabel>
+            <FormLabel>{serviceField.label}</FormLabel>
             <InfrastructureServiceSelect
               value={typeof field.value === 'string' ? field.value : undefined}
               onChange={(service) => {
@@ -90,9 +98,7 @@ function PackageManagerField({
               placeholder='Select an infrastructure service'
               className='w-full'
             />
-            <FormDescription>
-              Select the infrastructure service from a chosen hierarchy level.
-            </FormDescription>
+            <FormDescription>{serviceField.description}</FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -224,7 +230,10 @@ export const EnvironmentDefinitionsFields = ({
   form,
 }: EnvironmentDefinitionsFieldsProps) => {
   const environmentDefinitions = definitionsAsRecord(
-    form.watch('jobConfigs.analyzer.environmentDefinitions')
+    useWatch({
+      control: form.control,
+      name: 'jobConfigs.analyzer.environmentDefinitions',
+    })
   );
 
   const cards = ENVIRONMENT_DEFINITION_SCHEMAS.flatMap((schema) =>
@@ -309,10 +318,9 @@ export const EnvironmentDefinitionsFields = ({
   return (
     <div className='flex flex-col gap-2'>
       <div>
-        <h3>Environment configuration</h3>
+        <h3>{environmentDefinitionsField.label}</h3>
         <p className='mt-1 text-sm text-gray-500'>
-          Configure the credentials for different package managers to access
-          private artifact repositories.
+          {environmentDefinitionsField.description}
         </p>
       </div>
       <div className='mt-2 flex flex-col gap-4'>
@@ -330,7 +338,7 @@ export const EnvironmentDefinitionsFields = ({
                   removeEnvironmentDefinition(card.schema.key, card.index);
                 }}
               >
-                <TrashIcon className='h-4 w-4' />
+                <TrashIcon className='h-4 w-4 text-red-500' />
               </Button>
             </CardHeader>
             <CardContent className='flex flex-col gap-4'>

@@ -32,7 +32,7 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.beInstanceOf
 
-import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.spyk
 
@@ -206,7 +206,7 @@ class ConfigManagerTest : WordSpec({
 
         "handle exceptions while reading the stream" {
             val manager = spyk(createConfigManager())
-            every { manager.getFile(any(), any()) } returns mockk()
+            coEvery { manager.getFile(any(), any()) } returns mockk()
 
             // Since an uninitialized mock is returned as stream, it will throw on each method call.
             shouldThrow<ConfigException> {
@@ -493,9 +493,7 @@ class ConfigManagerTest : WordSpec({
 private const val TEST_SECRET_NAME = "top-secret"
 private const val TEST_SECRET_VALUE = "licenseToTest"
 
-/**
- * Create a [ConfigManager] instance with the given [configuration][configMap].
- */
+/** Create a [ConfigManager] instance with the given [configuration][configMap]. */
 private fun createConfigManager(
     configMap: Map<String, Any> = createConfigManagerProperties()
 ): ConfigManager {
@@ -504,9 +502,7 @@ private fun createConfigManager(
     return ConfigManager.create(config)
 }
 
-/**
- * Return a [Map] with properties that are required to create a [ConfigManager] instance.
- */
+/** Return a [Map] with properties that are required to create a [ConfigManager] instance. */
 private fun createConfigManagerProperties(): Map<String, Map<String, Any>> {
     val configManagerMap = createConfigProviderProperties()
 

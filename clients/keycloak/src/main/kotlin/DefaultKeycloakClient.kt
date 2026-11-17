@@ -21,6 +21,7 @@ package org.eclipse.apoapsis.ortserver.clients.keycloak
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.plugins.auth.Auth
 import io.ktor.client.plugins.auth.providers.BearerTokens
 import io.ktor.client.plugins.auth.providers.bearer
@@ -33,6 +34,7 @@ import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 
 import kotlinx.serialization.json.Json
 
@@ -112,13 +114,28 @@ class DefaultKeycloakClient(
             }
     }
 
-    override suspend fun getUsers(): Set<User> =
+    override suspend fun getUsers(pageSize: Int): Set<User> {
+        // A user renamed while the pages are loaded can show up on two pages with different usernames, so keep only
+        // the user from the later page.
+        val usersById = mutableMapOf<UserId, User>()
+        var first = 0
+
+        do {
+            val page = getUserPage(first, pageSize)
+            page.associateByTo(usersById) { it.id }
+            first += pageSize
+        } while (page.size == pageSize)
+
+        return usersById.values.toSet()
+    }
+
+    /** Return the page of at most [pageSize] users that starts at the given [first] position. */
+    private suspend fun getUserPage(first: Int, pageSize: Int): List<User> =
         runCatching {
             httpClient.get("$apiUrl/users") {
                 url {
-                    // The Keycloak API returns by default only 100 users. By using the query parameter max with the
-                    // value -1, the API returns directly all users.
-                    parameters.append("max", "-1")
+                    parameters.append("first", first.toString())
+                    parameters.append("max", pageSize.toString())
                 }
             }
         }.getOrElse {
@@ -126,19 +143,30 @@ class DefaultKeycloakClient(
         }.body()
 
     override suspend fun getUser(username: UserName): User =
+        findUser(username) ?: throw KeycloakClientException("Could not find user with name '${username.value}'.")
+
+    override suspend fun findUser(id: UserId): User? =
+        runCatching {
+            httpClient.get("$apiUrl/users/${id.value}").body<User>()
+        }.getOrElse {
+            if (it is ClientRequestException && it.response.status == HttpStatusCode.NotFound) return null
+            throw KeycloakClientException("Failed to load user with ID '${id.value}'.", it)
+        }
+
+    override suspend fun findUser(username: UserName): User? =
         runCatching {
             // Keycloak does not provide an API to get a single user by name, so use a search query and filter the
-            // result.
+            // result. A search that finds no user answers with an empty list. Keycloak answers "not found" only if the
+            // realm or the URL does not exist, so this is an error and must not be taken as a missing user.
             httpClient.get("$apiUrl/users") {
                 url {
                     parameters.append("username", username.value)
                     parameters.append("exact", "true")
                 }
-            }
+            }.body<List<User>>()
         }.getOrElse {
-            throw KeycloakClientException("Could not find user with name '${username.value}'.", it)
-        }.body<List<User>>().find { it.username == username }
-            ?: throw KeycloakClientException("Could not find user with name '${username.value}'.")
+            throw KeycloakClientException("Failed to search for user with name '${username.value}'.", it)
+        }.find { it.username == username }
 
     override suspend fun createUser(
         username: UserName,

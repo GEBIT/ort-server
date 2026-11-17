@@ -23,7 +23,6 @@ import java.io.InputStream
 
 import org.eclipse.apoapsis.ortserver.storage.Key
 import org.eclipse.apoapsis.ortserver.storage.Storage
-import org.eclipse.apoapsis.ortserver.utils.logging.runBlocking
 
 import org.ossreviewtoolkit.model.ArtifactProvenance
 import org.ossreviewtoolkit.model.KnownProvenance
@@ -46,9 +45,7 @@ class OrtServerFileListStorage(
         /** The content type used when writing data to the [storage]. */
         private const val CONTENT_TYPE = "application/octet-stream"
 
-        /**
-         * Generate the storage [Key] for the given [provenance].
-         */
+        /** Generate the storage [Key] for the given [provenance]. */
         private fun generateKey(provenance: KnownProvenance): Key =
             with(provenance) {
                 when (this) {
@@ -58,16 +55,15 @@ class OrtServerFileListStorage(
             }
     }
 
-    override fun getData(provenance: KnownProvenance): InputStream? = runBlocking {
+    override suspend fun getData(provenance: KnownProvenance): InputStream? {
         val key = generateKey(provenance)
-        if (storage.containsKey(key)) storage.read(key).data else null
+        return if (storage.containsKey(key)) storage.read(key).data else null
     }
 
-    override fun hasData(provenance: KnownProvenance): Boolean = runBlocking {
+    override suspend fun hasData(provenance: KnownProvenance): Boolean =
         storage.containsKey(generateKey(provenance))
-    }
 
-    override fun putData(provenance: KnownProvenance, data: InputStream, size: Long) = runBlocking {
+    override suspend fun putData(provenance: KnownProvenance, data: InputStream, size: Long) {
         storage.write(generateKey(provenance), data, size, CONTENT_TYPE)
     }
 }

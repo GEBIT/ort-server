@@ -22,8 +22,9 @@ package org.eclipse.apoapsis.ortserver.dao.repositories.analyzerjob
 import kotlin.time.Clock
 import kotlin.time.Instant
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
-import org.eclipse.apoapsis.ortserver.dao.entityQuery
+import org.eclipse.apoapsis.ortserver.dao.getEntityOrNull
+import org.eclipse.apoapsis.ortserver.dao.transaction
+import org.eclipse.apoapsis.ortserver.dao.transactionCatching
 import org.eclipse.apoapsis.ortserver.model.AnalyzerJob
 import org.eclipse.apoapsis.ortserver.model.AnalyzerJobConfiguration
 import org.eclipse.apoapsis.ortserver.model.JobStatus
@@ -36,7 +37,7 @@ import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.jdbc.Database
 
 class DaoAnalyzerJobRepository(private val db: Database) : AnalyzerJobRepository {
-    override fun create(ortRunId: Long, configuration: AnalyzerJobConfiguration): AnalyzerJob = db.blockingQuery {
+    override suspend fun create(ortRunId: Long, configuration: AnalyzerJobConfiguration): AnalyzerJob = db.transaction {
         AnalyzerJobDao.new {
             this.ortRunId = ortRunId
             createdAt = Clock.System.now()
@@ -45,19 +46,19 @@ class DaoAnalyzerJobRepository(private val db: Database) : AnalyzerJobRepository
         }.mapToModel()
     }
 
-    override fun get(id: Long) = db.entityQuery { AnalyzerJobDao[id].mapToModel() }
+    override suspend fun get(id: Long) = db.transactionCatching { AnalyzerJobDao[id].mapToModel() }.getEntityOrNull()
 
-    override fun getForOrtRun(ortRunId: Long): AnalyzerJob? = db.blockingQuery {
+    override suspend fun getForOrtRun(ortRunId: Long): AnalyzerJob? = db.transaction {
         AnalyzerJobDao.find { AnalyzerJobsTable.ortRunId eq ortRunId }.limit(1).firstOrNull()?.mapToModel()
     }
 
-    override fun update(
+    override suspend fun update(
         id: Long,
         startedAt: OptionalValue<Instant?>,
         finishedAt: OptionalValue<Instant?>,
         status: OptionalValue<JobStatus>,
         errorMessage: OptionalValue<String>
-    ): AnalyzerJob = db.blockingQuery {
+    ): AnalyzerJob = db.transaction {
         val analyzerJob = AnalyzerJobDao[id]
 
         startedAt.ifPresent { analyzerJob.startedAt = it }
@@ -68,12 +69,12 @@ class DaoAnalyzerJobRepository(private val db: Database) : AnalyzerJobRepository
         AnalyzerJobDao[id].mapToModel()
     }
 
-    override fun listActive(before: Instant?): List<AnalyzerJob> = db.blockingQuery {
+    override suspend fun listActive(before: Instant?): List<AnalyzerJob> = db.transaction {
         AnalyzerJobDao.find {
             val opFinished = AnalyzerJobsTable.finishedAt eq null
             before?.let { opFinished and (AnalyzerJobsTable.createdAt lessEq it) } ?: opFinished
         }.map { it.mapToModel() }
     }
 
-    override fun delete(id: Long) = db.blockingQuery { AnalyzerJobDao[id].delete() }
+    override suspend fun delete(id: Long) = db.transaction { AnalyzerJobDao[id].delete() }
 }

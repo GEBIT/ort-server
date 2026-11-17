@@ -28,11 +28,9 @@ package org.eclipse.apoapsis.ortserver.model.util
  * ones that are [present][OptionalValue.Present]. Otherwise, for nullable properties, there would be no way to
  * distinguish if the property should be ignored or updated.
  */
-sealed interface OptionalValue<out T> {
-    /**
-     * Value is present, the property will be updated with [value].
-     */
-    class Present<T>(val value: T) : OptionalValue<T> {
+sealed class OptionalValue<out T> {
+    /** Value is present, the property will be updated with [value]. */
+    class Present<T>(val value: T) : OptionalValue<T>() {
         override fun toString() = value.toString()
 
         override fun equals(other: Any?): Boolean {
@@ -48,10 +46,8 @@ sealed interface OptionalValue<out T> {
         override fun hashCode(): Int = value?.hashCode() ?: 0
     }
 
-    /**
-     * Value is not present, the property will be ignored.
-     */
-    data object Absent : OptionalValue<Nothing>
+    /** Value is not present, the property will be ignored. */
+    data object Absent : OptionalValue<Nothing>()
 
     /**
      * Return the [value][Present.value] if this [OptionalValue] is [Present], otherwise throw an
@@ -62,34 +58,26 @@ sealed interface OptionalValue<out T> {
         return value
     }
 
-    /**
-     * Execute [function] if this value is [Present].
-     */
-    fun ifPresent(function: (T) -> Unit) {
+    /** Execute [function] if this value is [Present]. */
+    inline fun ifPresent(function: (T) -> Unit) {
         if (this is Present) function(value)
     }
 
-    /**
-     * Execute [function] if this value is [Absent].
-     */
-    fun ifAbsent(function: () -> Unit) {
+    /** Execute [function] if this value is [Absent]. */
+    inline fun ifAbsent(function: () -> Unit) {
         when (this) {
             is Absent -> function()
             else -> return
         }
     }
 
-    /**
-     * If this [OptionalValue] is [Present], [transform] the [value][Present.value], otherwise return [Absent].
-     */
-    fun <M> map(transform: (T) -> M) =
+    /** If this [OptionalValue] is [Present], [transform] the [value][Present.value], otherwise return [Absent]. */
+    inline fun <M> map(transform: (T) -> M) =
         when (this) {
             is Present -> Present(transform(value))
             else -> Absent
         }
 }
 
-/**
- * Wrap [this] object in [OptionalValue.Present].
- */
+/** Wrap [this] object in [OptionalValue.Present]. */
 fun <T : Any?> T.asPresent() = OptionalValue.Present(this)

@@ -23,6 +23,7 @@ import kotlin.time.Duration.Companion.days
 
 import org.eclipse.apoapsis.ortserver.components.authorization.service.AuthorizationService
 import org.eclipse.apoapsis.ortserver.components.authorization.service.DbAuthorizationService
+import org.eclipse.apoapsis.ortserver.components.reportstorage.reportStorageModule
 import org.eclipse.apoapsis.ortserver.components.resolutions.issues.IssueResolutionEventStore
 import org.eclipse.apoapsis.ortserver.components.resolutions.issues.IssueResolutionService
 import org.eclipse.apoapsis.ortserver.config.Path
@@ -72,9 +73,7 @@ class ReporterComponent : EndpointComponent<ReporterRequest>(ReporterEndpoint) {
          */
         const val WORK_DIR_PLACEHOLDER = "\${workdir}"
 
-        /**
-         * The path in the configuration containing the properties for the reporter worker.
-         */
+        /** The path in the configuration containing the properties for the reporter worker. */
         private const val PATH_REPORTER = "reporter"
 
         /**
@@ -142,14 +141,11 @@ class ReporterComponent : EndpointComponent<ReporterRequest>(ReporterEndpoint) {
         )
 
     private fun reporterModule(): Module = module {
-        single {
-            val storage = Storage.create(OrtServerFileArchiveStorage.STORAGE_TYPE, get())
-            FileArchiver(LicenseFilePatterns.DEFAULT.allLicenseFilenames, OrtServerFileArchiveStorage(storage))
-        }
+        includes(reportStorageModule)
 
         single {
-            val storage = Storage.create(ReportStorage.STORAGE_TYPE, get())
-            ReportStorage(storage)
+            val storage = Storage.create(OrtServerFileArchiveStorage.STORAGE_TYPE, get(), get())
+            FileArchiver(LicenseFilePatterns.DEFAULT.allLicenseFilenames, OrtServerFileArchiveStorage(storage))
         }
 
         single {

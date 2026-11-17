@@ -61,13 +61,6 @@ The [Eclipse Apoapsis](https://projects.eclipse.org/projects/technology.apoapsis
 standalone application to deploy the [OSS Review Toolkit](https://github.com/oss-review-toolkit/ort) as a service in the
 cloud.
 
-> [!NOTE]
-> This project is currently in the [incubation phase](https://www.eclipse.org/projects/handbook/#incubation) at the
-> Eclipse Foundation and working towards making the first release.
-> Once released, the project will use semantic versioning, until then breaking changes can occur at any time.
-> 
-> <img alt="Eclipse Incubation" src="https://projects.eclipse.org/modules/custom/eclipsefdn/eclipsefdn_projects/images/project_state/incubating.png" width="10%">
-
 ## Community
 
 To communicate with the developers, you can:
@@ -82,7 +75,7 @@ Contributions are welcome, please see the [contributing guide](CONTRIBUTING.md) 
 ## Running ORT Server
 
 The easiest way to run the ORT Server for testing is to use [Docker Compose](https://docs.docker.com/compose/).
-For a proper deployment to Kubernetes, the project will later provide a Helm chart.
+For a proper deployment to Kubernetes, a [Helm chart](https://github.com/eclipse-apoapsis/helm-charts) is provided.
 
 ### Docker Compose
 

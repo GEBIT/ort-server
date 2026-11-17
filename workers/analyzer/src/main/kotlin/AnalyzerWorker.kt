@@ -23,7 +23,7 @@ import java.io.File
 
 import org.eclipse.apoapsis.ortserver.components.adminconfig.AdminConfigService
 import org.eclipse.apoapsis.ortserver.components.resolutions.issues.IssueResolutionService
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.AnalyzerJob
 import org.eclipse.apoapsis.ortserver.model.AnalyzerJobConfiguration
 import org.eclipse.apoapsis.ortserver.model.InfrastructureService
@@ -32,6 +32,7 @@ import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.resolvedconfiguration.AppliedPackageCurationRef
 import org.eclipse.apoapsis.ortserver.model.runs.Identifier
 import org.eclipse.apoapsis.ortserver.model.runs.ShortestDependencyPath
+import org.eclipse.apoapsis.ortserver.model.runs.repository.RunIncludesExcludes
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrtRunService
 import org.eclipse.apoapsis.ortserver.services.ortrun.mapToModel
 import org.eclipse.apoapsis.ortserver.workers.common.JobIgnoredException
@@ -78,12 +79,12 @@ internal class AnalyzerWorker(
     }.getOrElse {
         when (it) {
             is JobIgnoredException -> {
-                logger.warn("Message with traceId '$traceId' ignored: ${it.message}")
+                logger.warn("Not running the analyzer because message '$traceId' got ignored: ${it.message}")
                 RunResult.Ignored
             }
 
             else -> {
-                logger.error("Error while processing message with traceId '$traceId': ${it.message}")
+                logger.error("Error while running the analyzer as instructed by message '$traceId': ${it.message}")
                 RunResult.Failed(it)
             }
         }
@@ -158,7 +159,7 @@ internal class AnalyzerWorker(
         return PrepareResult(
             downloadResult.directory,
             environment,
-            job.configuration.toRunnerConfig(context)
+            job.configuration.toRunnerConfig(context, ortRun.includesExcludes)
         )
     }
 
@@ -243,7 +244,7 @@ internal class AnalyzerWorker(
             }
         }
 
-        db.dbQuery {
+        db.transaction {
             ortRunService.getValidAnalyzerJob(job.id)
             ortRunService.storeAnalyzerRun(
                 analyzerRun.mapToModel(job.id),
@@ -303,21 +304,23 @@ private class AnalyzerException(message: String) : Exception(message)
  * Obtain the [AnalyzerJob] for the given [jobId] and make sure that it is valid. Throw an exception if no valid
  * job can be obtained.
  */
-internal fun OrtRunService.getValidAnalyzerJob(jobId: Long) =
+internal suspend fun OrtRunService.getValidAnalyzerJob(jobId: Long) =
     getAnalyzerJob(jobId).validateForProcessing(jobId)
 
-/**
- * Return the [OrtRun] referenced by the given [job] or throw an [IllegalArgumentException] if it does not exist.
- */
-internal fun OrtRunService.getValidOrtRun(job: AnalyzerJob): OrtRun =
+/** Return the [OrtRun] referenced by the given [job] or throw an [IllegalArgumentException] if it does not exist. */
+internal suspend fun OrtRunService.getValidOrtRun(job: AnalyzerJob): OrtRun =
     getOrtRun(job.ortRunId)
         ?: throw IllegalArgumentException("The ORT run '${job.ortRunId}' does not exist.")
 
 /**
  * Create an [AnalyzerRunnerConfig] from this [AnalyzerJobConfiguration] to be used to analyze the current project.
- * Use the given [context] to resolve the secrets in the plugin configuration.
+ * Use the given [context] to resolve the secrets in the plugin configuration, and add the [includesExcludes] requested
+ * for the run.
  */
-private suspend fun AnalyzerJobConfiguration.toRunnerConfig(context: WorkerContext): AnalyzerRunnerConfig =
+private suspend fun AnalyzerJobConfiguration.toRunnerConfig(
+    context: WorkerContext,
+    includesExcludes: RunIncludesExcludes?
+): AnalyzerRunnerConfig =
     AnalyzerRunnerConfig(
         skipExcluded = skipExcluded,
         allowDynamicVersions = allowDynamicVersions,
@@ -325,9 +328,10 @@ private suspend fun AnalyzerJobConfiguration.toRunnerConfig(context: WorkerConte
         disabledPackageManagers = disabledPackageManagers,
         packageManagerOptions = packageManagerOptions,
         repositoryConfigPath = repositoryConfigPath,
-        packageCurationProviders = context.resolveProviderPluginConfigSecrets(packageCurationProviders),
+        packageCurationProviders = context.resolveProviderPluginConfigSecrets(packageCurationProviders.orEmpty()),
         keepAliveWorker = keepAliveWorker,
-        keepAlivePhases = keepAlivePhases
+        keepAlivePhases = keepAlivePhases,
+        includesExcludes = includesExcludes
     )
 
 /**

@@ -17,52 +17,31 @@
  * License-Filename: LICENSE
  */
 
-import { useSuspenseQuery } from '@tanstack/react-query';
+import { useQuery, useSuspenseQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
 import { ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import { useState } from 'react';
 
-import { OrtRun } from '@/api';
 import { getRepositoryRunOptions } from '@/api/@tanstack/react-query.gen';
 import { LoadingIndicator } from '@/components/loading-indicator';
-import { Sha1Component } from '@/components/sha1-component';
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from '@/components/ui/accordion';
+import { PayloadView } from '@/components/payload-view';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { isJobExpandable } from '@/helpers/job-helpers';
+import { createRunPluginsOptions } from '@/hooks/use-create-run-plugins';
 import { jobSearchParameterSchema } from '@/schemas';
-import { AdvisorJobDetails } from './-components/advisor-job-details';
-import { AnalyzerJobDetails } from './-components/analyzer-job-details';
-import { EvaluatorJobDetails } from './-components/evaluator-job-details';
-import { JobTitle } from './-components/job-title';
-import { NotifierJobDetails } from './-components/notifier-job-details';
-import { ReporterJobDetails } from './-components/reporter-job-details';
-import { ScannerJobDetails } from './-components/scanner-job-details';
-
-const jobSections = [
-  { value: 'analyzer', title: 'Analyzer', Component: AnalyzerJobDetails },
-  { value: 'advisor', title: 'Advisor', Component: AdvisorJobDetails },
-  { value: 'scanner', title: 'Scanner', Component: ScannerJobDetails },
-  { value: 'evaluator', title: 'Evaluator', Component: EvaluatorJobDetails },
-  { value: 'reporter', title: 'Reporter', Component: ReporterJobDetails },
-  { value: 'notifier', title: 'Notifier', Component: NotifierJobDetails },
-] as const;
-
-type JobKey = (typeof jobSections)[number]['value'];
-
-const getJob = (run: OrtRun, key: JobKey) => run.jobs[key];
-
-const allJobValues = jobSections.map(({ value }) => value);
+import { jobSections } from './-components/config-utils';
+import { JobConfigurations } from './-components/job-configurations';
+import { runToPayload } from './-components/run-payload';
+import { RunSettings } from './-components/run-settings';
 
 const ConfigComponent = () => {
   const params = Route.useParams();
   const { job } = Route.useSearch();
   const [openSections, setOpenSections] = useState<string[]>(job ? [job] : []);
+  const [showPayload, setShowPayload] = useState(false);
 
   const { data: ortRun } = useSuspenseQuery({
     ...getRepositoryRunOptions({
@@ -73,6 +52,20 @@ const ConfigComponent = () => {
     }),
   });
 
+  const { data: plugins } = useQuery(
+    createRunPluginsOptions(
+      ortRun.repositoryId,
+      ortRun.resolvedJobConfigContext ?? ortRun.jobConfigContext ?? undefined
+    )
+  );
+
+  const expandableJobs = jobSections
+    .map(({ value }) => value)
+    .filter((value) => isJobExpandable(ortRun, value));
+  const allOpen =
+    expandableJobs.length > 0 &&
+    expandableJobs.every((value) => openSections.includes(value));
+
   return (
     <div className='flex flex-col gap-4'>
       <Card>
@@ -80,85 +73,7 @@ const ConfigComponent = () => {
           <CardTitle>Run Configuration</CardTitle>
         </CardHeader>
         <CardContent>
-          {ortRun.path && (
-            <div className='text-sm'>
-              <Label className='font-semibold'>Path:</Label> {ortRun.path}
-            </div>
-          )}
-          {(ortRun.jobConfigContext || ortRun.resolvedJobConfigContext) && (
-            <div className='flex items-center gap-1 text-sm'>
-              <Label className='font-semibold'>Configuration context:</Label>
-              {ortRun.jobConfigContext && <div>{ortRun.jobConfigContext}</div>}
-              {ortRun.resolvedJobConfigContext &&
-                ortRun.jobConfigContext !== ortRun.resolvedJobConfigContext && (
-                  <div>
-                    <Sha1Component sha1={ortRun.resolvedJobConfigContext} />
-                  </div>
-                )}
-            </div>
-          )}
-          {ortRun.environmentConfigPath && (
-            <div className='flex items-center gap-1 text-sm'>
-              <Label className='font-semibold'>
-                Environment configuration path:
-              </Label>
-              {ortRun.environmentConfigPath && (
-                <div>{ortRun.environmentConfigPath}</div>
-              )}
-            </div>
-          )}
-          {(() => {
-            const labels = ortRun.labels;
-            const hasLabels = Object.keys(labels).length > 0;
-            return (
-              <div className='text-sm'>
-                <Label className='font-semibold'>Labels:</Label>{' '}
-                {hasLabels ? (
-                  Object.entries(labels).map(([key, value]) => (
-                    <div key={key} className='ml-4 grid grid-cols-12 text-xs'>
-                      <div className='col-span-3 text-left break-all'>
-                        {key}
-                      </div>
-                      <div className='col-span-1 text-center'>=</div>
-                      <div className='col-span-8 text-left break-all'>
-                        {value}
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <span className='text-muted-foreground ml-4 text-xs italic'>
-                    undefined
-                  </span>
-                )}
-              </div>
-            );
-          })()}
-          {(() => {
-            const parameters = ortRun.jobConfigs.parameters ?? {};
-            const hasParameters = Object.keys(parameters).length > 0;
-            return (
-              <div className='text-sm'>
-                <Label className='font-semibold'>Parameters:</Label>{' '}
-                {hasParameters ? (
-                  Object.entries(parameters).map(([key, value]) => (
-                    <div key={key} className='ml-4 grid grid-cols-12 text-xs'>
-                      <div className='col-span-3 text-left break-all'>
-                        {key}
-                      </div>
-                      <div className='col-span-1 text-center'>=</div>
-                      <div className='col-span-8 text-left break-all'>
-                        {value}
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <span className='text-muted-foreground ml-4 text-xs italic'>
-                    undefined
-                  </span>
-                )}
-              </div>
-            );
-          })()}
+          <RunSettings run={ortRun} />
         </CardContent>
       </Card>
       <Card>
@@ -169,13 +84,9 @@ const ConfigComponent = () => {
               variant='ghost'
               size='xs'
               className='-mr-1.5'
-              onClick={() =>
-                setOpenSections((prev) =>
-                  prev.length === allJobValues.length ? [] : [...allJobValues]
-                )
-              }
+              onClick={() => setOpenSections(allOpen ? [] : expandableJobs)}
             >
-              {openSections.length === allJobValues.length ? (
+              {allOpen ? (
                 <>
                   Collapse all
                   <ChevronsDownUp className='size-4' />
@@ -190,22 +101,34 @@ const ConfigComponent = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <Accordion
-            type='multiple'
-            value={openSections}
-            onValueChange={setOpenSections}
-          >
-            {jobSections.map(({ value, title, Component }) => (
-              <AccordionItem key={value} value={value}>
-                <AccordionTrigger>
-                  <JobTitle title={title} job={getJob(ortRun, value)} />
-                </AccordionTrigger>
-                <AccordionContent>
-                  <Component run={ortRun} />
-                </AccordionContent>
-              </AccordionItem>
-            ))}
-          </Accordion>
+          <JobConfigurations
+            run={ortRun}
+            plugins={plugins ?? []}
+            openSections={openSections}
+            onOpenSectionsChange={setOpenSections}
+          />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent>
+          <div className='flex items-center space-x-2'>
+            <Switch
+              id='show-payload'
+              checked={showPayload}
+              onCheckedChange={setShowPayload}
+            />
+            <Label className='text-muted-foreground' htmlFor='show-payload'>
+              Show payload
+            </Label>
+          </div>
+          {showPayload && (
+            <PayloadView
+              id='run-request'
+              title='Run request'
+              description='The request that created this run. You can copy it to trigger the same run via the API or CLI.'
+              payload={runToPayload(ortRun)}
+            />
+          )}
         </CardContent>
       </Card>
     </div>

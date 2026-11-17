@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.27
+# syntax=docker/dockerfile:1.29
 
 # This Dockerfile is the base image for the Scanner Docker image. It contains all the tooling required to run the
 # Scanner.
@@ -56,24 +56,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     zlib1g \
     zlib1g-dev
 
-# renovate: datasource=github-releases depName=jpeddicord/askalono
-ARG ASKALONO_VERSION=0.5.0
 # renovate: datasource=rubygems depName=licensee
 ARG LICENSEE_VERSION=10.1.0
 # renovate: datasource=github-releases depName=getprovenant/provenant extractVersion=^v(?<version>.*)$
-ARG PROVENANT_VERSION=1.0.9
+ARG PROVENANT_VERSION=1.0.17
 # renovate: datasource=ruby-version depName=ruby
-ARG RUBY_VERSION=4.0.6
+ARG RUBY_VERSION=4.0.9
 # renovate: datasource=pypi depName=scancode-toolkit
 ARG SCANCODE_VERSION=32.5.0
-
-# Install Askalono.
-RUN curl -LOs https://github.com/jpeddicord/askalono/releases/download/$ASKALONO_VERSION/askalono-Linux.zip && \
-    mkdir /opt/askalono && \
-    unzip askalono-Linux.zip -d /opt/askalono && \
-    rm askalono-Linux.zip
-
-ENV PATH=/opt/askalono:$PATH
 
 # Use rbenv to install Licensee.
 ENV RBENV_ROOT=/opt/rbenv

@@ -30,6 +30,7 @@ import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.maps.shouldContainExactly
 import io.kotest.matchers.nulls.beNull
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
@@ -75,8 +76,7 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.RepositoryType as ApiReposito
 import org.eclipse.apoapsis.ortserver.api.v1.model.ScannerJobConfiguration
 import org.eclipse.apoapsis.ortserver.api.v1.model.Severity as ApiSeverity
 import org.eclipse.apoapsis.ortserver.api.v1.model.User as ApiUser
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserGroup as ApiUserGroup
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithGroups as ApiUserWithGroups
+import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithProductRole as ApiUserWithProductRole
 import org.eclipse.apoapsis.ortserver.api.v1.model.Username
 import org.eclipse.apoapsis.ortserver.api.v1.model.VulnerabilityForRunsFilters
 import org.eclipse.apoapsis.ortserver.api.v1.model.VulnerabilityRating
@@ -90,6 +90,7 @@ import org.eclipse.apoapsis.ortserver.components.authorization.service.DbAuthori
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginOptionTemplate
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginService
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginType
+import org.eclipse.apoapsis.ortserver.config.ConfigFileProviderFactoryForTesting
 import org.eclipse.apoapsis.ortserver.core.SUPERUSER
 import org.eclipse.apoapsis.ortserver.core.TEST_USER
 import org.eclipse.apoapsis.ortserver.model.AdvisorJobConfiguration as ModelAdvisorJobConfiguration
@@ -182,6 +183,101 @@ class ProductsRouteIntegrationTest : AbstractIntegrationTest({
 
     fun org.eclipse.apoapsis.ortserver.model.Product.hierarchyId(organizationId: Long = orgId): CompoundHierarchyId =
         CompoundHierarchyId.forProduct(OrganizationId(organizationId), ProductId(id))
+
+    "GET /products" should {
+        "return the products of all organizations sorted by name" {
+            integrationTestApplication {
+                val orgId2 = organizationService.createOrganization(name = "name2", description = "description").id
+                val product1 = createProduct(name = "product b")
+                val product2 = createProduct(name = "product a", organizationId = orgId2)
+                val product3 = createProduct(name = "product c", organizationId = orgId2)
+
+                val response = superuserClient.get("/api/v1/products")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                response shouldHaveBody PagedResponse(
+                    listOf(
+                        Product(product2.id, orgId2, "product a", productDescription),
+                        Product(product1.id, orgId, "product b", productDescription),
+                        Product(product3.id, orgId2, "product c", productDescription)
+                    ),
+                    PagingData(
+                        limit = DEFAULT_LIMIT,
+                        offset = 0,
+                        totalCount = 3,
+                        sortProperties = listOf(SortProperty("name", SortDirection.ASCENDING))
+                    )
+                )
+            }
+        }
+
+        "apply the limit and offset and return the number of all products" {
+            integrationTestApplication {
+                val orgId2 = organizationService.createOrganization(name = "name2", description = "description").id
+                createProduct(name = "product a")
+                val product2 = createProduct(name = "product b", organizationId = orgId2)
+                createProduct(name = "product c")
+
+                val response = superuserClient.get("/api/v1/products?limit=1&offset=1")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                response shouldHaveBody PagedResponse(
+                    listOf(Product(product2.id, orgId2, "product b", productDescription)),
+                    PagingData(
+                        limit = 1,
+                        offset = 1,
+                        totalCount = 3,
+                        sortProperties = listOf(SortProperty("name", SortDirection.ASCENDING))
+                    )
+                )
+            }
+        }
+
+        "return only the products whose name matches the filter" {
+            integrationTestApplication {
+                val orgId2 = organizationService.createOrganization(name = "name2", description = "description").id
+                val product1 = createProduct(name = "Web shop")
+                createProduct(name = "Payments")
+                val product3 = createProduct(name = "Shop admin", organizationId = orgId2)
+
+                val response = superuserClient.get("/api/v1/products?filter=shop")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                response shouldHaveBody PagedResponse(
+                    listOf(
+                        Product(product3.id, orgId2, "Shop admin", productDescription),
+                        Product(product1.id, orgId, "Web shop", productDescription)
+                    ),
+                    PagingData(
+                        limit = DEFAULT_LIMIT,
+                        offset = 0,
+                        totalCount = 2,
+                        sortProperties = listOf(SortProperty("name", SortDirection.ASCENDING))
+                    )
+                )
+            }
+        }
+
+        "respond with 'Bad Request' if the filter is not a valid regular expression" {
+            integrationTestApplication {
+                createProduct(name = "Web shop")
+
+                val response = superuserClient.get("/api/v1/products?filter=shop(")
+
+                response shouldHaveStatus HttpStatusCode.BadRequest
+
+                val body = response.body<ErrorResponse>()
+                body.message shouldBe "Invalid query parameters."
+                body.cause shouldContain "regular expression"
+            }
+        }
+
+        "require superuser rights" {
+            requestShouldRequireSuperuser {
+                get("/api/v1/products")
+            }
+        }
+    }
 
     "GET /products/{productId}" should {
         "return a single product" {
@@ -642,7 +738,7 @@ class ProductsRouteIntegrationTest : AbstractIntegrationTest({
             row(HttpMethod.Put),
             row(HttpMethod.Delete)
         ) { method ->
-            "require ProductPermission.MANAGE_GROUPS for method '${method.value}'" {
+            "require ProductPermission.MANAGE_ROLES for method '${method.value}'" {
                 val createdProd = createProduct()
                 val user = Username(TEST_USER.username.value)
                 requestShouldRequireRole(
@@ -1986,13 +2082,13 @@ class ProductsRouteIntegrationTest : AbstractIntegrationTest({
                 response shouldHaveStatus HttpStatusCode.OK
                 response shouldHaveBody PagedResponse(
                     listOf(
-                        ApiUserWithGroups(
+                        ApiUserWithProductRole(
                             ApiUser(SUPERUSER.username.value, SUPERUSER.firstName, SUPERUSER.lastName, SUPERUSER.email),
-                            listOf(ApiUserGroup.ADMINS)
+                            ApiProductRole.ADMIN
                         ),
-                        ApiUserWithGroups(
+                        ApiUserWithProductRole(
                             ApiUser(TEST_USER.username.value, TEST_USER.firstName, TEST_USER.lastName, TEST_USER.email),
-                            listOf(ApiUserGroup.READERS)
+                            ApiProductRole.READER
                         )
                     ),
                     PagingData(
@@ -2011,7 +2107,7 @@ class ProductsRouteIntegrationTest : AbstractIntegrationTest({
                 val response = superuserClient.get("/api/v1/products/$productId/users")
 
                 response shouldHaveStatus HttpStatusCode.OK
-                response shouldHaveBody PagedResponse<ApiUserWithGroups>(
+                response shouldHaveBody PagedResponse<ApiUserWithProductRole>(
                     emptyList(),
                     PagingData(
                         limit = DEFAULT_LIMIT,
@@ -2046,9 +2142,9 @@ class ProductsRouteIntegrationTest : AbstractIntegrationTest({
                 response shouldHaveStatus HttpStatusCode.OK
                 response shouldHaveBody PagedResponse(
                     listOf(
-                        ApiUserWithGroups(
+                        ApiUserWithProductRole(
                             ApiUser(TEST_USER.username.value, TEST_USER.firstName, TEST_USER.lastName, TEST_USER.email),
-                            listOf(ApiUserGroup.READERS)
+                            ApiProductRole.READER
                         )
                     ),
                     PagingData(
@@ -2167,6 +2263,73 @@ class ProductsRouteIntegrationTest : AbstractIntegrationTest({
                     dbExtension.fixtures.ortRunRepository.get(run.id)?.repositoryId
                 }
                 repositoryIdsSpecific should containExactlyInAnyOrder(repository1Id)
+            }
+        }
+
+        "store the resolved config context for all created runs" {
+            integrationTestApplication {
+                val productId = createProduct().id
+                val repositoryIds = listOf("repo1", "repo2").map { name ->
+                    productService.createRepository(
+                        type = RepositoryType.GIT,
+                        url = "https://example.com/$name.git",
+                        productId = productId,
+                        name = name,
+                        description = null
+                    ).id
+                }
+                val jobConfigContext = "testContext"
+
+                val createOrtRun = PostRepositoryRun(
+                    revision = "main",
+                    jobConfigs = JobConfigurations(),
+                    jobConfigContext = jobConfigContext
+                )
+
+                val response = superuserClient.post("/api/v1/products/$productId/runs") {
+                    setBody(createOrtRun)
+                }
+
+                response shouldHaveStatus HttpStatusCode.Created
+
+                val runs = response.body<List<OrtRun>>().map { run ->
+                    dbExtension.fixtures.ortRunRepository.get(run.id).shouldNotBeNull()
+                }
+
+                runs.map { it.repositoryId } should containExactlyInAnyOrder(repositoryIds)
+                runs.forAll {
+                    it.jobConfigContext shouldBe jobConfigContext
+                    it.resolvedJobConfigContext shouldBe ConfigFileProviderFactoryForTesting.RESOLVED_PREFIX +
+                            jobConfigContext
+                }
+            }
+        }
+
+        "respond with BadRequest if the config context cannot be resolved" {
+            integrationTestApplication {
+                val productId = createProduct().id
+                val repositoryId = productService.createRepository(
+                    type = RepositoryType.GIT,
+                    url = "https://example.com/repo.git",
+                    productId = productId,
+                    name = "repo",
+                    description = null
+                ).id
+
+                val createOrtRun = PostRepositoryRun(
+                    revision = "main",
+                    jobConfigs = JobConfigurations(),
+                    jobConfigContext = ConfigFileProviderFactoryForTesting.ERROR_VALUE
+                )
+
+                val response = superuserClient.post("/api/v1/products/$productId/runs") {
+                    setBody(createOrtRun)
+                }
+
+                response shouldHaveStatus HttpStatusCode.BadRequest
+                response.body<ErrorResponse>().message shouldBe "Could not resolve the config context."
+
+                dbExtension.fixtures.ortRunRepository.listForRepository(repositoryId).data should beEmpty()
             }
         }
 
@@ -2338,6 +2501,64 @@ class ProductsRouteIntegrationTest : AbstractIntegrationTest({
             }
         }
 
+        "respond with 'BadRequest' if plugin configs differ only in the case of the plugin ID" {
+            integrationTestApplication {
+                val productId = createProduct().id
+
+                val installedPlugins = pluginService.getPlugins()
+
+                val pluginType = PluginType.ADVISOR
+                val plugin = installedPlugins.first { it.type == pluginType && it.id == "VulnerableCode" }
+                val pluginId = plugin.id
+                val pluginOption = plugin.options.first { it.name == "serverUrl" }
+
+                // Create a plugin template with a final option.
+                superuserClient.post("/api/v1/admin/plugins/$pluginType/$pluginId/templates/test") {
+                    setBody(
+                        listOf(
+                            PluginOptionTemplate(
+                                option = pluginOption.name,
+                                type = pluginOption.type,
+                                value = "https://example.org",
+                                isFinal = true
+                            )
+                        )
+                    )
+                }
+
+                // Make the plugin template globally active.
+                superuserClient.post("/api/v1/admin/plugins/$pluginType/$pluginId/templates/test/enableGlobal")
+
+                // Create a run trying to overwrite the final option with a differently spelled config key.
+                val createRun = PostRepositoryRun(
+                    "main",
+                    null,
+                    JobConfigurations(
+                        advisor = AdvisorJobConfiguration(
+                            advisors = listOf(pluginId),
+                            config = mapOf(
+                                pluginId to PluginConfig(
+                                    options = mapOf(pluginOption.name to "https://example.org"),
+                                    secrets = emptyMap()
+                                ),
+                                pluginId.lowercase() to PluginConfig(
+                                    options = mapOf(pluginOption.name to "https://new.example.org"),
+                                    secrets = emptyMap()
+                                )
+                            )
+                        )
+                    )
+                )
+
+                val response = superuserClient.post("/api/v1/products/$productId/runs") {
+                    setBody(createRun)
+                }
+
+                response shouldHaveStatus HttpStatusCode.BadRequest
+                response.bodyAsText() shouldContain "multiple times with different spellings"
+            }
+        }
+
         val keepAliveJobConfigs = JobConfigurations().let {
             listOf(
                 it.copy(analyzer = AnalyzerJobConfiguration(keepAliveWorker = true)),
@@ -2452,6 +2673,48 @@ class ProductsRouteIntegrationTest : AbstractIntegrationTest({
                 val repositoryIdsSpecific = createdRunsSpecific.map { it.repositoryId }
 
                 repositoryIdsSpecific should containExactlyInAnyOrder(repository1Id, repository3Id)
+            }
+        }
+
+        "respond with 'BadRequest' if repository IDs do not belong to the product" {
+            integrationTestApplication {
+                val productId = createProduct().id
+                val otherProductId = createProduct(name = "other-product").id
+                val repositoryId = productService.createRepository(
+                    type = RepositoryType.GIT,
+                    url = "https://example.com/repo1.git",
+                    productId = productId,
+                    name = "repo1",
+                    description = "description"
+                ).id
+                val otherRepositoryId = productService.createRepository(
+                    type = RepositoryType.GIT,
+                    url = "https://example.com/repo2.git",
+                    productId = otherProductId,
+                    name = "repo2",
+                    description = "description"
+                ).id
+
+                val createOrtRun = PostRepositoryRun(
+                    revision = "main",
+                    path = "",
+                    jobConfigs = JobConfigurations(),
+                    jobConfigContext = null,
+                    labels = emptyMap(),
+                    environmentConfigPath = null,
+                    repositoryIds = listOf(repositoryId, otherRepositoryId)
+                )
+
+                val response = superuserClient.post("/api/v1/products/$productId/runs") {
+                    setBody(createOrtRun)
+                }
+
+                response shouldHaveStatus HttpStatusCode.BadRequest
+
+                val body = response.body<ErrorResponse>()
+
+                body.message shouldBe "The repositories do not belong to product $productId."
+                body.cause shouldBe "Invalid repository IDs: $otherRepositoryId"
             }
         }
 

@@ -19,11 +19,12 @@
 
 package org.eclipse.apoapsis.ortserver.dao.repositories.repositoryconfiguration
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
-import org.eclipse.apoapsis.ortserver.dao.entityQuery
+import org.eclipse.apoapsis.ortserver.dao.getEntityOrNull
 import org.eclipse.apoapsis.ortserver.dao.mapAndDeduplicate
 import org.eclipse.apoapsis.ortserver.dao.repositories.ortrun.OrtRunDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifierDao
+import org.eclipse.apoapsis.ortserver.dao.transaction
+import org.eclipse.apoapsis.ortserver.dao.transactionCatching
 import org.eclipse.apoapsis.ortserver.model.repositories.RepositoryConfigurationRepository
 import org.eclipse.apoapsis.ortserver.model.runs.repository.Curations
 import org.eclipse.apoapsis.ortserver.model.runs.repository.Excludes
@@ -44,7 +45,7 @@ import org.jetbrains.exposed.v1.jdbc.Database
  * [RepositoryConfigurationsTable].
  */
 class DaoRepositoryConfigurationRepository(private val db: Database) : RepositoryConfigurationRepository {
-    override fun create(
+    override suspend fun create(
         ortRunId: Long,
         analyzerConfig: RepositoryAnalyzerConfiguration?,
         excludes: Excludes,
@@ -54,7 +55,7 @@ class DaoRepositoryConfigurationRepository(private val db: Database) : Repositor
         packageConfigurations: List<PackageConfiguration>,
         licenseChoices: LicenseChoices,
         provenanceSnippetChoices: List<ProvenanceSnippetChoices>
-    ): RepositoryConfiguration = db.blockingQuery {
+    ): RepositoryConfiguration = db.transaction {
         RepositoryConfigurationDao.new {
             this.ortRun = OrtRunDao[ortRunId]
             this.repositoryAnalyzerConfiguration = analyzerConfig?.let {
@@ -63,6 +64,7 @@ class DaoRepositoryConfigurationRepository(private val db: Database) : Repositor
             this.pathExcludes = mapAndDeduplicate(excludes.paths, PathExcludeDao::getOrPut)
             this.scopeExcludes = mapAndDeduplicate(excludes.scopes, ScopeExcludeDao::getOrPut)
             this.pathIncludes = mapAndDeduplicate(includes.paths, PathIncludeDao::getOrPut)
+            this.scopeIncludes = mapAndDeduplicate(includes.scopes, ScopeIncludeDao::getOrPut)
             this.issueResolutions = mapAndDeduplicate(resolutions.issues, IssueResolutionDao::getOrPut)
             this.ruleViolationResolutions =
                 mapAndDeduplicate(resolutions.ruleViolations, RuleViolationResolutionDao::getOrPut)
@@ -80,9 +82,8 @@ class DaoRepositoryConfigurationRepository(private val db: Database) : Repositor
         }.mapToModel()
     }
 
-    override fun get(id: Long): RepositoryConfiguration? = db.entityQuery {
-        RepositoryConfigurationDao[id].mapToModel()
-    }
+    override suspend fun get(id: Long): RepositoryConfiguration? =
+        db.transactionCatching { RepositoryConfigurationDao[id].mapToModel() }.getEntityOrNull()
 }
 
 private fun createPackageCuration(packageCuration: PackageCuration): PackageCurationDao =

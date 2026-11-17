@@ -39,12 +39,14 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNot
 import io.kotest.matchers.shouldNotBe
 
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.runs
 import io.mockk.slot
+import io.mockk.spyk
 import io.mockk.unmockkAll
 import io.mockk.verify
 
@@ -56,14 +58,11 @@ import org.eclipse.apoapsis.ortserver.config.Path
 import org.eclipse.apoapsis.ortserver.dao.test.mockkTransaction
 import org.eclipse.apoapsis.ortserver.model.Hierarchy
 import org.eclipse.apoapsis.ortserver.model.Organization
-import org.eclipse.apoapsis.ortserver.model.OrganizationId
 import org.eclipse.apoapsis.ortserver.model.OrtRun
 import org.eclipse.apoapsis.ortserver.model.PluginConfig
 import org.eclipse.apoapsis.ortserver.model.Product
-import org.eclipse.apoapsis.ortserver.model.ProductId
 import org.eclipse.apoapsis.ortserver.model.ProviderPluginConfiguration
 import org.eclipse.apoapsis.ortserver.model.Repository
-import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.RepositoryType
 import org.eclipse.apoapsis.ortserver.model.ResolvablePluginConfig
 import org.eclipse.apoapsis.ortserver.model.ResolvableProviderPluginConfig
@@ -72,18 +71,15 @@ import org.eclipse.apoapsis.ortserver.model.Secret
 import org.eclipse.apoapsis.ortserver.model.SecretSource
 import org.eclipse.apoapsis.ortserver.model.repositories.OrtRunRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.RepositoryRepository
-import org.eclipse.apoapsis.ortserver.model.repositories.SecretRepository
-import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
-import org.eclipse.apoapsis.ortserver.model.util.ListQueryResult
 import org.eclipse.apoapsis.ortserver.secrets.Path as SecretPath
 import org.eclipse.apoapsis.ortserver.secrets.SecretStorage
 import org.eclipse.apoapsis.ortserver.secrets.SecretValue
 import org.eclipse.apoapsis.ortserver.secrets.SecretsProviderFactoryForTesting
-import org.eclipse.apoapsis.ortserver.workers.common.ResolvedInfrastructureService
-import org.eclipse.apoapsis.ortserver.workers.common.auth.AuthenticationInfo
-import org.eclipse.apoapsis.ortserver.workers.common.auth.AuthenticationListener
-import org.eclipse.apoapsis.ortserver.workers.common.auth.InfraSecretResolverFun
-import org.eclipse.apoapsis.ortserver.workers.common.auth.OrtServerAuthenticator
+import org.eclipse.apoapsis.ortserver.shared.authenticator.AuthenticationInfo
+import org.eclipse.apoapsis.ortserver.shared.authenticator.AuthenticationListener
+import org.eclipse.apoapsis.ortserver.shared.authenticator.InfraSecretResolverFun
+import org.eclipse.apoapsis.ortserver.shared.authenticator.OrtServerAuthenticator
+import org.eclipse.apoapsis.ortserver.shared.authenticator.ResolvedInfrastructureService
 
 import org.ossreviewtoolkit.utils.authentication.OrtAuthenticator
 
@@ -112,11 +108,11 @@ class WorkerContextTest : WordSpec({
         }
 
         "throw an exception if the run ID cannot be resolved" {
-            every { helper.ortRunRepository.get(any()) } returns null
+            coEvery { helper.ortRunRepository.get(any()) } returns null
 
             val context = helper.context()
 
-            shouldThrow<IllegalArgumentException> {
+            shouldThrow<IllegalStateException> {
                 context.ortRun
             }
         }
@@ -130,7 +126,7 @@ class WorkerContextTest : WordSpec({
             every { run.repositoryId } returns repositoryId
 
             val hierarchy = mockk<Hierarchy>()
-            every { helper.repositoryRepository.getHierarchy(repositoryId) } returns hierarchy
+            coEvery { helper.repositoryRepository.getHierarchy(repositoryId) } returns hierarchy
 
             val context = helper.context()
 
@@ -353,41 +349,28 @@ class WorkerContextTest : WordSpec({
             val run = helper.expectRunRequest()
             every { run.repositoryId } returns hierarchy.repository.id
 
-            every { helper.repositoryRepository.getHierarchy(hierarchy.repository.id) } returns hierarchy
+            coEvery { helper.repositoryRepository.getHierarchy(hierarchy.repository.id) } returns hierarchy
 
-            every { helper.secretRepository.listForId(OrganizationId(hierarchy.organization.id)) } returns
-                    ListQueryResult(
-                        data = listOf(
-                            Secret(
-                                id = 1L,
-                                path = "serviceUser",
-                                name = "serviceUser",
-                                description = null,
-                                organizationId = hierarchy.organization.id,
-                                productId = null,
-                                repositoryId = null
-                            )
+            coEvery { helper.secretService.listForHierarchy(hierarchy) } returns
+                    listOf(
+                        Secret(
+                            id = 1L,
+                            path = "serviceUser",
+                            name = "serviceUser",
+                            description = null,
+                            organizationId = hierarchy.organization.id,
+                            productId = null,
+                            repositoryId = null
                         ),
-                        params = ListQueryParameters.DEFAULT,
-                        totalCount = 1
-                    )
-            every { helper.secretRepository.listForId(ProductId(hierarchy.product.id)) } returns
-                    ListQueryResult(emptyList(), ListQueryParameters.DEFAULT, 0)
-            every { helper.secretRepository.listForId(RepositoryId(hierarchy.repository.id)) } returns
-                    ListQueryResult(
-                        data = listOf(
-                            Secret(
-                                id = 1L,
-                                path = "servicePassword",
-                                name = "servicePassword",
-                                description = null,
-                                organizationId = null,
-                                productId = null,
-                                repositoryId = hierarchy.repository.id
-                            )
-                        ),
-                        params = ListQueryParameters.DEFAULT,
-                        totalCount = 1
+                        Secret(
+                            id = 1L,
+                            path = "servicePassword",
+                            name = "servicePassword",
+                            description = null,
+                            organizationId = null,
+                            productId = null,
+                            repositoryId = hierarchy.repository.id
+                        )
                     )
 
             SecretsProviderFactoryForTesting.instance().run {
@@ -457,41 +440,28 @@ class WorkerContextTest : WordSpec({
             val run = helper.expectRunRequest()
             every { run.repositoryId } returns hierarchy.repository.id
 
-            every { helper.repositoryRepository.getHierarchy(hierarchy.repository.id) } returns hierarchy
+            coEvery { helper.repositoryRepository.getHierarchy(hierarchy.repository.id) } returns hierarchy
 
-            every { helper.secretRepository.listForId(OrganizationId(hierarchy.organization.id)) } returns
-                    ListQueryResult(
-                        data = listOf(
-                            Secret(
-                                id = 1L,
-                                path = "serviceUser",
-                                name = "serviceUser",
-                                description = null,
-                                organizationId = hierarchy.organization.id,
-                                productId = null,
-                                repositoryId = null
-                            )
+            coEvery { helper.secretService.listForHierarchy(hierarchy) } returns
+                    listOf(
+                        Secret(
+                            id = 1L,
+                            path = "serviceUser",
+                            name = "serviceUser",
+                            description = null,
+                            organizationId = hierarchy.organization.id,
+                            productId = null,
+                            repositoryId = null
                         ),
-                        params = ListQueryParameters.DEFAULT,
-                        totalCount = 1
-                    )
-            every { helper.secretRepository.listForId(ProductId(hierarchy.product.id)) } returns
-                    ListQueryResult(emptyList(), ListQueryParameters.DEFAULT, 0)
-            every { helper.secretRepository.listForId(RepositoryId(hierarchy.repository.id)) } returns
-                    ListQueryResult(
-                        data = listOf(
-                            Secret(
-                                id = 1L,
-                                path = "servicePassword",
-                                name = "servicePassword",
-                                description = null,
-                                organizationId = null,
-                                productId = null,
-                                repositoryId = hierarchy.repository.id
-                            )
-                        ),
-                        params = ListQueryParameters.DEFAULT,
-                        totalCount = 1
+                        Secret(
+                            id = 1L,
+                            path = "servicePassword",
+                            name = "servicePassword",
+                            description = null,
+                            organizationId = null,
+                            productId = null,
+                            repositoryId = hierarchy.repository.id
+                        )
                     )
 
             SecretsProviderFactoryForTesting.instance().run {
@@ -741,9 +711,7 @@ private val configSecrets = mapOf(
 /** The configuration used by the test factory. */
 private val config = createConfigManager()
 
-/**
- * Return an initialized [Config] object that configures the test secret provider factory.
- */
+/** Return an initialized [Config] object that configures the test secret provider factory. */
 private fun createConfigManager(): ConfigManager {
     val configManagerProperties = mapOf(
         ConfigManager.SECRET_PROVIDER_NAME_PROPERTY to ConfigSecretProviderFactoryForTesting.NAME,
@@ -757,15 +725,11 @@ private fun createConfigManager(): ConfigManager {
     return ConfigManager.create(ConfigFactory.parseMap(properties))
 }
 
-/**
- * Create a [Secret] with the given [path]. All other properties are irrelevant.
- */
+/** Create a [Secret] with the given [path]. All other properties are irrelevant. */
 private fun createSecret(path: String): Secret =
     Secret(0L, path, "irrelevant", null, null, null, null)
 
-/**
- * A test helper class managing a [WorkerContextFactory] instance and its dependencies.
- */
+/** A test helper class managing a [WorkerContextFactory] instance and its dependencies. */
 private class ContextFactoryTestHelper {
     /** Mock for the [OrtRunRepository]. */
     val ortRunRepository: OrtRunRepository = mockk()
@@ -773,14 +737,12 @@ private class ContextFactoryTestHelper {
     /** Mock for the [RepositoryRepository]. */
     val repositoryRepository: RepositoryRepository = mockk()
 
-    /** Mock for the [SecretRepository]. */
-    val secretRepository: SecretRepository = mockk()
-
     /** The [SecretService] used by the test factory. */
-    val secretService = SecretService(
-        mockk(),
-        secretRepository,
-        SecretStorage(SecretsProviderFactoryForTesting().createProvider())
+    val secretService = spyk(
+        SecretService(
+            mockk(),
+            SecretStorage(SecretsProviderFactoryForTesting().createProvider())
+        )
     )
 
     /** The factory to be tested. */
@@ -799,13 +761,11 @@ private class ContextFactoryTestHelper {
         val run = mockk<OrtRun> {
             every { resolvedJobConfigContext } returns CONFIG_FILE_DIRECTORY
         }
-        every { ortRunRepository.get(RUN_ID) } returns run
+        coEvery { ortRunRepository.get(RUN_ID) } returns run
 
         return run
     }
 
-    /**
-     * Invoke the test factory to create a context for the test run ID.
-     */
+    /** Invoke the test factory to create a context for the test run ID. */
     fun context(): WorkerContext = factory.createContext(RUN_ID)
 }

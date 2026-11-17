@@ -27,6 +27,8 @@ import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
+import io.mockk.mockk
+
 import java.io.ByteArrayInputStream
 
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
@@ -117,18 +119,16 @@ class OrtServerFileListStorageTest : WordSpec({
     }
 })
 
-private fun OrtServerFileListStorage.putFileList(provenance: KnownProvenance, fileList: FileList) {
+private suspend fun OrtServerFileListStorage.putFileList(provenance: KnownProvenance, fileList: FileList) {
     val byteArray = fileList.toYaml().toByteArray()
     putData(provenance, ByteArrayInputStream(byteArray), byteArray.size.toLong())
 }
 
-/**
- * Create the [Storage] to be used for tests. This is a test storage, so the stored data can be inspected.
- */
+/** Create the [Storage] to be used for tests. This is a test storage, so the stored data can be inspected. */
 private fun createStorage(): Storage {
     val storageType = "test"
     val configMap = mapOf(storageType to mapOf("name" to StorageProviderFactoryForTesting.NAME))
     val config = ConfigFactory.parseMap(configMap)
 
-    return Storage.create(storageType, ConfigManager.create(config))
+    return Storage.create(storageType, ConfigManager.create(config), mockk())
 }

@@ -23,6 +23,7 @@ import io.kotest.core.spec.style.WordSpec
 
 import io.mockk.EqMatcher
 import io.mockk.OfTypeMatcher
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkConstructor
@@ -192,7 +193,7 @@ private fun createWorkerContext(): WorkerContext {
 }
 
 private fun createConfigManager() = mockk<ConfigManager> {
-    every { getFileAsString(resolvedConfigContext, Path(NOTIFICATION_SET)) } returns
+    coEvery { getFileAsString(resolvedConfigContext, Path(NOTIFICATION_SET)) } returns
             File("src/test/resources/example.notifications.kts").readText()
 
     every { getSecret(Path("secret-username")) } returns "no-reply@oss-review-toolkit.org"
@@ -200,14 +201,12 @@ private fun createConfigManager() = mockk<ConfigManager> {
     every { getSecret(Path("jira-secret-username")) } returns "jiraUser"
     every { getSecret(Path("jira-secret-password")) } returns "jiraPass"
 
-    every { getFile(resolvedConfigContext, Path(RESOLUTION_FILE)) } returns
+    coEvery { getFile(resolvedConfigContext, Path(RESOLUTION_FILE)) } returns
             File("src/test/resources/resolutions.yml").inputStream()
 }
 
-/**
- * Create a mock [AdminConfigService] and prepare it to return the given [config].
- */
+/** Create a mock [AdminConfigService] and prepare it to return the given [config]. */
 private fun createAdminConfigService(config: AdminConfig = adminConfig): AdminConfigService =
     mockk {
-        every { loadAdminConfig(resolvedConfigContext) } returns config
+        coEvery { loadAdminConfig(resolvedConfigContext) } returns config
     }

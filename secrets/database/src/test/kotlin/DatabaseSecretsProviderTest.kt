@@ -29,22 +29,26 @@ import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldNotContain
 
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.secrets.Path
 import org.eclipse.apoapsis.ortserver.secrets.SecretStorage
 import org.eclipse.apoapsis.ortserver.secrets.SecretValue
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 
 class DatabaseSecretsProviderTest : WordSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     "readSecret" should {
         "read an existing secret via SecretStorage" {
-            val storage = createStorage()
+            val storage = createStorage(dbExtension.db)
             val path = Path("organization_1_apiToken")
             val secret = SecretValue("top-secret")
 
@@ -54,7 +58,7 @@ class DatabaseSecretsProviderTest : WordSpec({
         }
 
         "return null for a missing secret" {
-            val storage = createStorage()
+            val storage = createStorage(dbExtension.db)
 
             storage.readSecret(Path("organization_1_apiToken")) should beNull()
         }
@@ -62,7 +66,7 @@ class DatabaseSecretsProviderTest : WordSpec({
 
     "writeSecret" should {
         "overwrite an existing secret" {
-            val storage = createStorage()
+            val storage = createStorage(dbExtension.db)
             val path = Path("organization_1_apiToken")
 
             storage.writeSecret(path, SecretValue("first"))
@@ -72,13 +76,13 @@ class DatabaseSecretsProviderTest : WordSpec({
         }
 
         "persist encrypted values instead of plaintext" {
-            val storage = createStorage()
+            val storage = createStorage(dbExtension.db)
             val path = Path("organization_1_apiToken")
             val plaintext = "top-secret"
 
             storage.writeSecret(path, SecretValue(plaintext))
 
-            val row = dbExtension.db.blockingQuery {
+            val row = dbExtension.db.transaction {
                 DatabaseSecretsTable.selectAll().where { DatabaseSecretsTable.path eq path.path }.single()
             }
 
@@ -88,12 +92,12 @@ class DatabaseSecretsProviderTest : WordSpec({
         }
 
         "preserve createdAt when overwriting an existing secret" {
-            val storage = createStorage()
+            val storage = createStorage(dbExtension.db)
             val path = Path("organization_1_apiToken")
 
             storage.writeSecret(path, SecretValue("first"))
 
-            val firstRow = dbExtension.db.blockingQuery {
+            val firstRow = dbExtension.db.transaction {
                 DatabaseSecretsTable.select(
                     DatabaseSecretsTable.createdAt,
                     DatabaseSecretsTable.updatedAt
@@ -102,7 +106,7 @@ class DatabaseSecretsProviderTest : WordSpec({
 
             storage.writeSecret(path, SecretValue("second"))
 
-            val secondRow = dbExtension.db.blockingQuery {
+            val secondRow = dbExtension.db.transaction {
                 DatabaseSecretsTable.select(
                     DatabaseSecretsTable.createdAt,
                     DatabaseSecretsTable.updatedAt
@@ -114,19 +118,19 @@ class DatabaseSecretsProviderTest : WordSpec({
         }
 
         "re-encrypt the value if the same secret is saved twice" {
-            val storage = createStorage()
+            val storage = createStorage(dbExtension.db)
             val path = Path("organization_1_apiToken")
             val plaintext = "top-secret"
 
             storage.writeSecret(path, SecretValue(plaintext))
 
-            val firstRow = dbExtension.db.blockingQuery {
+            val firstRow = dbExtension.db.transaction {
                 DatabaseSecretsTable.selectAll().where { DatabaseSecretsTable.path eq path.path }.single()
             }
 
             storage.writeSecret(path, SecretValue(plaintext))
 
-            val secondRow = dbExtension.db.blockingQuery {
+            val secondRow = dbExtension.db.transaction {
                 DatabaseSecretsTable.selectAll().where { DatabaseSecretsTable.path eq path.path }.single()
             }
 
@@ -136,7 +140,7 @@ class DatabaseSecretsProviderTest : WordSpec({
 
     "removeSecret" should {
         "remove an existing secret" {
-            val storage = createStorage()
+            val storage = createStorage(dbExtension.db)
             val path = Path("organization_1_apiToken")
 
             storage.writeSecret(path, SecretValue("temp"))
@@ -147,10 +151,10 @@ class DatabaseSecretsProviderTest : WordSpec({
     }
 })
 
-internal fun createStorage(configMap: Map<String, String> = secretsProviderConfig()): SecretStorage {
+internal fun createStorage(db: Database, configMap: Map<String, String> = secretsProviderConfig()): SecretStorage {
         val config = ConfigFactory.parseMap(configMap)
 
-        return SecretStorage.createStorage(ConfigManager.create(config))
+        return SecretStorage.createStorage(ConfigManager.create(config), db)
 }
 
 internal fun secretsProviderConfig(

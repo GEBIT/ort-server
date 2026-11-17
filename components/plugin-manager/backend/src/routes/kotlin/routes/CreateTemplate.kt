@@ -19,6 +19,7 @@
 
 package org.eclipse.apoapsis.ortserver.components.pluginmanager.routes
 
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
@@ -33,18 +34,19 @@ import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginTemplateSer
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginType
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.handleTemplateResult
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.jsonBody
+import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireEnumParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 
 internal fun Route.createTemplate(
     pluginTemplateService: PluginTemplateService
 ) = post("admin/plugins/{pluginType}/{pluginId}/templates/{templateName}", {
-    operationId = "CreatePluginTemplate"
+    operationId = "createPluginTemplate"
     summary = "Create a new plugin template"
     description = "Create a new plugin template."
     tags = listOf("Plugins")
 
     request {
-        pathParameter<String>("pluginType") {
+        pathParameter<PluginType>("pluginType") {
             description = "The type of the plugin this template is for."
             required = true
         }
@@ -75,15 +77,22 @@ internal fun Route.createTemplate(
     response {
         HttpStatusCode.OK to {
             description = "The template was successfully created."
+            body<String> {
+                mediaTypes = setOf(ContentType.Text.Plain)
+                example("Success message") {
+                    value = "Template created successfully."
+                }
+            }
         }
 
         HttpStatusCode.BadRequest to {
-            description = "The specified plugin is not installed or the template could not be created."
+            description = "The specified plugin is not installed or the template could not be created. An invalid " +
+                    "plugin type also results in this status."
         }
     }
 }, requireSuperuser()) {
     val userId = requirePrincipal().userId
-    val pluginType = enumValueOf<PluginType>(call.requireParameter("pluginType"))
+    val pluginType = call.requireEnumParameter<PluginType>("pluginType")
     val pluginId = call.requireParameter("pluginId")
     val templateName = call.requireParameter("templateName")
 

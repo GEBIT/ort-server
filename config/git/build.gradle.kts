@@ -29,11 +29,14 @@ dependencies {
     api(projects.config.configSpi)
 
     api(libs.typesafeConfig)
+    api(ortLibs.downloader)
 
-    implementation(libs.slf4j)
-    implementation(ortLibs.downloader)
-    implementation(ortLibs.ortPlugins.versionControlSystems.git)
+    implementation(projects.shared.coroutines)
     implementation(projects.utils.config)
+
+    implementation(libs.jgit)
+    implementation(libs.slf4j)
+    implementation(ortLibs.ortPlugins.versionControlSystems.git)
 
     testImplementation(testFixtures(projects.config.configSpi))
 

@@ -69,12 +69,12 @@ object AdminConfigValidator {
         reporterConfig: ReporterConfig,
         jobConfig: ReporterJobConfiguration
     ) = buildList {
-        jobConfig.formats
-            .filter { reporterConfig.getReportDefinition(it) == null }
+        jobConfig.formats.orEmpty()
+            .filterNot { it.lowercase() in reporterConfig.validFormats }
             .forEach { format ->
                 add(
                     "Invalid reporter format '$format' in reporter job configuration. " +
-                            "Available formats are: ${reporterConfig.reportDefinitionNames.joinToString()}."
+                            "Available formats are: ${reporterConfig.validFormats.joinToString()}."
                 )
             }
 

@@ -43,7 +43,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.standardListQueryParamete
 
 internal fun Route.getRepositoryInfrastructureServices(
     infrastructureServiceService: InfrastructureServiceService
-) = get("/repositories/{repositoryId}/infrastructure-services", {
+) = get("repositories/{repositoryId}/infrastructure-services", {
     operationId = "getRepositoryInfrastructureServices"
     summary = "List all infrastructure services of a repository"
     tags = listOf("Repositories")
@@ -86,6 +86,10 @@ internal fun Route.getRepositoryInfrastructureServices(
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The repository does not exist."
         }
     }
 }, requirePermission(RepositoryPermission.READ)) {

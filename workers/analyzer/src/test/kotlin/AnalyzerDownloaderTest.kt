@@ -54,7 +54,7 @@ class AnalyzerDownloaderTest : WordSpec({
     fun createMockVcs(mockWorkingTree: WorkingTree): VersionControlSystem =
         mockk<VersionControlSystem> {
             every { type } returns VcsType.GIT
-            every { initWorkingTree(any(), any()) } returns mockWorkingTree
+            every { initWorkingTree(any(), any()) } returns Result.success(mockWorkingTree)
             every { updateWorkingTree(any(), any(), any(), any()) } returns Result.success(resolvedRevision)
             every { getWorkingTree(any()) } returns mockWorkingTree
         }
@@ -69,7 +69,7 @@ class AnalyzerDownloaderTest : WordSpec({
             val defaultBranch = "main"
             val mockWorkingTree = createMockWorkingTree()
             val mockVcs = createMockVcs(mockWorkingTree)
-            every { mockVcs.getDefaultBranchName(repositoryUrl) } returns defaultBranch
+            every { mockVcs.getDefaultBranchName(repositoryUrl) } returns Result.success(defaultBranch)
             every {
                 mockVcs.updateWorkingTree(any(), defaultBranch, any(), any())
             } returns Result.success(resolvedRevision)
@@ -187,7 +187,16 @@ class AnalyzerDownloaderTest : WordSpec({
 
                 shouldThrow<IllegalArgumentException> {
                     downloader.downloadRepository("https://example.com", "revision")
-                }
+                }.message shouldBe "Could not determine the VCS for URL 'https://example.com'."
+            }
+        }
+
+        "throw an exception if the main branch cannot be determined for the repository" {
+            mockkObject(VersionControlSystem) {
+                shouldThrow<IOException> {
+                    downloader.downloadRepository("https://git.example.org/repository.git", "")
+                }.message shouldBe "Could not determine the default branch for repository " +
+                        "'https://git.example.org/repository.git'."
             }
         }
 
@@ -203,7 +212,7 @@ class AnalyzerDownloaderTest : WordSpec({
 
                 shouldThrow<IOException> {
                     downloader.downloadRepository(repositoryUrl, revision = "invalid-revision")
-                }
+                }.message shouldBe "Failed to update working tree to revision 'invalid-revision'."
             }
         }
 

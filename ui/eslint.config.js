@@ -27,7 +27,13 @@ import globals from 'globals';
 
 export default defineConfig([
   {
-    ignores: ['dist/', '.eslintrc.cjs', 'src/api/', 'src/routeTree.gen.ts'],
+    ignores: [
+      'dist/',
+      'coverage/',
+      '.eslintrc.cjs',
+      'src/api/',
+      'src/routeTree.gen.ts',
+    ],
   },
   js.configs.recommended,
   ...tsEslint.configs['flat/recommended'],
@@ -69,14 +75,20 @@ export default defineConfig([
           message:
             'Do not nest a Button inside a Link, which renders an anchor. Use <Button asChild><Link …/></Button>.',
         },
+        // The selectors cannot see types. They rely on React Hook Form results
+        // being named `form`, as they are throughout the UI, and on `watch`
+        // being destructured from `useForm()` or `useFormContext()`.
+        {
+          selector:
+            'CallExpression[callee.object.name="form"][callee.property.name="watch"], VariableDeclarator[init.callee.name=/^use(Form|FormContext)$/] > ObjectPattern > Property[key.name="watch"]',
+          message:
+            'Do not use watch() from React Hook Form. Its value is not seen by React Compiler; use useWatch() instead.',
+        },
       ],
       // Report conditions that can never change the outcome, such as `?.` on a
       // value that is never nullish, so that the checks that do matter stand
       // out.
       '@typescript-eslint/no-unnecessary-condition': 'error',
-      // Silence the warnings about TanStack Table hooks, because React Compiler
-      // is not used in this project.
-      'react-hooks/incompatible-library': 'off',
     },
   },
 ]);

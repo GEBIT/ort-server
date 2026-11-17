@@ -23,7 +23,6 @@ import org.eclipse.apoapsis.ortserver.components.authorization.rights.Repository
 import org.eclipse.apoapsis.ortserver.components.authorization.service.AuthorizationService
 import org.eclipse.apoapsis.ortserver.components.search.apimodel.RunWithPackage
 import org.eclipse.apoapsis.ortserver.components.search.apimodel.RunWithVulnerability
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
 import org.eclipse.apoapsis.ortserver.dao.repositories.advisorjob.AdvisorJobsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.advisorrun.AdvisorResultsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.advisorrun.AdvisorResultsVulnerabilitiesTable
@@ -44,12 +43,16 @@ import org.eclipse.apoapsis.ortserver.dao.repositories.resolvedconfiguration.Res
 import org.eclipse.apoapsis.ortserver.dao.repositories.resolvedconfiguration.ResolvedPackageCurationProvidersTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.resolvedconfiguration.ResolvedPackageCurationsTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifiersTable
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.dao.utils.apply
 import org.eclipse.apoapsis.ortserver.dao.utils.applyIRegex
 import org.eclipse.apoapsis.ortserver.dao.utils.extractIds
 import org.eclipse.apoapsis.ortserver.model.CompoundHierarchyId
 import org.eclipse.apoapsis.ortserver.model.HierarchyId
 import org.eclipse.apoapsis.ortserver.model.HierarchyLevel
+import org.eclipse.apoapsis.ortserver.model.OrganizationId
+import org.eclipse.apoapsis.ortserver.model.ProductId
+import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.util.HierarchyFilter
 import org.eclipse.apoapsis.ortserver.shared.apimodel.Identifier
 
@@ -80,12 +83,14 @@ class SearchService(
      * @param userId The user ID performing the search.
      * @param scope Optional scope to limit the search. Can be an [OrganizationId], [ProductId], or [RepositoryId].
      *              If null, performs a global search (requires superuser permission).
+     * @param userSub The ID in Keycloak of the user performing the search.
      */
     suspend fun findOrtRunsByPackage(
         identifier: String?,
         purl: String?,
         userId: String,
-        scope: HierarchyId? = null
+        scope: HierarchyId? = null,
+        userSub: String? = null
     ): List<RunWithPackage> {
         require((identifier == null) != (purl == null)) {
             "Exactly one of 'identifier' or 'purl' must be provided."
@@ -94,10 +99,11 @@ class SearchService(
         val hierarchyFilter = authorizationService.filterHierarchyIds(
             userId = userId,
             repositoryPermissions = setOf(RepositoryPermission.READ),
-            containedIn = scope
+            containedIn = scope,
+            userSub = userSub
         )
 
-        return db.blockingQuery {
+        return db.transaction {
             val query = OrtRunsTable
                 .innerJoin(AnalyzerJobsTable, { OrtRunsTable.id }, { ortRunId })
                 .innerJoin(AnalyzerRunsTable, { AnalyzerJobsTable.id }, { analyzerJobId })
@@ -122,20 +128,23 @@ class SearchService(
      * @param userId The user ID performing the search.
      * @param scope Optional scope to limit the search. Can be an [OrganizationId], [ProductId], or [RepositoryId].
      *              If null, performs a global search (requires superuser permission).
+     * @param userSub The ID in Keycloak of the user performing the search.
      */
     suspend fun findOrtRunsByVulnerability(
         externalId: String,
         userId: String,
         scope: HierarchyId? = null,
-        returnPurl: Boolean = false
+        returnPurl: Boolean = false,
+        userSub: String? = null
     ): List<RunWithVulnerability> {
         val hierarchyFilter = authorizationService.filterHierarchyIds(
             userId = userId,
             repositoryPermissions = setOf(RepositoryPermission.READ),
-            containedIn = scope
+            containedIn = scope,
+            userSub = userSub
         )
 
-        return db.blockingQuery {
+        return db.transaction {
             val query = createVulnerabilityBaseQuery()
 
             if (returnPurl) {
@@ -147,9 +156,7 @@ class SearchService(
     }
 }
 
-/**
- * Find runs by ORT package identifier without curation resolution (for performance reasons).
- */
+/** Find runs by ORT package identifier without curation resolution (for performance reasons). */
 private fun findByIdentifier(
     identifier: String,
     query: Join,
@@ -194,9 +201,7 @@ private fun findByIdentifier(
     }
 }
 
-/**
- * Find runs by PURL using curated PURL resolution.
- */
+/** Find runs by PURL using curated PURL resolution. Return the identifier of the matching package as well. */
 private fun findByPurl(
     purl: String,
     query: Join,
@@ -209,8 +214,14 @@ private fun findByPurl(
         generateHierarchyCondition(level, ids, filter)
     }
 
-    return query.select(OrtRunsTable.columns + effectivePurl).where(whereClause).map { row ->
+    return query.select(OrtRunsTable.columns + IdentifiersTable.columns + effectivePurl).where(whereClause).map { row ->
         val ortRun = OrtRunDao.wrapRow(row).mapToModel()
+        val packageId = Identifier(
+            type = row[IdentifiersTable.type],
+            namespace = row[IdentifiersTable.namespace],
+            name = row[IdentifiersTable.name],
+            version = row[IdentifiersTable.version]
+        )
 
         RunWithPackage(
             organizationId = ortRun.organizationId,
@@ -220,7 +231,7 @@ private fun findByPurl(
             ortRunIndex = ortRun.index,
             revision = ortRun.revision,
             createdAt = ortRun.createdAt,
-            packageId = null,
+            packageId = packageId,
             purl = row[effectivePurl]
         )
     }
@@ -241,9 +252,7 @@ private fun createVulnerabilityBaseQuery() = OrtRunsTable
     .innerJoin(RepositoriesTable, { OrtRunsTable.repositoryId }, { RepositoriesTable.id })
     .innerJoin(ProductsTable, { RepositoriesTable.productId }, { ProductsTable.id })
 
-/**
- * Search for vulnerabilities and return package identifiers.
- */
+/** Search for vulnerabilities and return package identifiers. */
 private fun findVulnerabilitiesWithIdentifier(
     externalId: String,
     query: Join,
@@ -280,9 +289,7 @@ private fun findVulnerabilitiesWithIdentifier(
     }
 }
 
-/**
- * Search for vulnerabilities and return effective PURLs with curation resolution.
- */
+/** Search for vulnerabilities and return effective PURLs with curation resolution. */
 private fun findVulnerabilitiesWithPurl(
     externalId: String,
     query: Join,
@@ -348,9 +355,7 @@ private fun createEffectivePurlExpression(): CustomFunction<String> {
     )
 }
 
-/**
- * Generate a condition defined by a [HierarchyFilter] for the given [level] and [ids].
- */
+/** Generate a condition defined by a [HierarchyFilter] for the given [level] and [ids]. */
 private fun generateHierarchyCondition(
     level: HierarchyLevel,
     ids: List<CompoundHierarchyId>,

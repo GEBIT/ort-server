@@ -26,41 +26,31 @@ import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryResult
 import org.eclipse.apoapsis.ortserver.model.util.OptionalValue
 
-/**
- * A repository of [organizations][Organization].
- */
+/** A repository of [organizations][Organization]. */
 interface OrganizationRepository {
-    /**
-     * Create an organization.
-     */
-    fun create(name: String, description: String?): Organization
+    /** Create an organization. */
+    suspend fun create(name: String, description: String?): Organization
 
-    /**
-     * Get an organization by [id]. Returns null if the organization is not found.
-     */
-    fun get(id: Long): Organization?
+    /** Get an organization by [id]. Returns null if the organization is not found. */
+    suspend fun get(id: Long): Organization?
 
     /**
      * List all organizations according to the given [parameters]. Optionally, a [nameFilter] on the product name and a
      * [hierarchyFilter] can be provided.
      */
-    fun list(
+    suspend fun list(
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
         nameFilter: FilterParameter? = null,
         hierarchyFilter: HierarchyFilter = HierarchyFilter.WILDCARD
     ): ListQueryResult<Organization>
 
-    /**
-     * Update an organization by [id] with the [present][OptionalValue.Present] values.
-     */
-    fun update(
+    /** Update an organization by [id] with the [present][OptionalValue.Present] values. */
+    suspend fun update(
         id: Long,
         name: OptionalValue<String> = OptionalValue.Absent,
         description: OptionalValue<String?> = OptionalValue.Absent
     ): Organization
 
-    /**
-     * Delete an organization by [id].
-     */
-    fun delete(id: Long)
+    /** Delete an organization by [id]. */
+    suspend fun delete(id: Long)
 }

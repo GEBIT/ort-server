@@ -20,7 +20,7 @@
 import { PackageURL } from 'packageurl-js';
 
 import { Identifier } from '@/api';
-import type { PackageIdType } from '@/schemas';
+import { PackageIdType, packageIdTypeSchema } from '@/schemas';
 
 export function identifierToPurl(pkg: Identifier | undefined | null): string {
   if (!pkg) {
@@ -48,9 +48,34 @@ export function getPackageIdString(
   pkg: PackageIdentifier,
   packageIdType: PackageIdType
 ): string {
-  return packageIdType === 'PURL'
+  return packageIdType === packageIdTypeSchema.enum.PURL
     ? (pkg.purl ?? '')
     : identifierToString(pkg.packageId);
+}
+
+/**
+ * Return the search parameters of a link to the packages table of a run that finds the package with the given
+ * identifier by an exact match and opens its row.
+ */
+export function getExactPackageLinkSearch(identifier: Identifier) {
+  const pkgId = identifierToString(identifier);
+
+  return {
+    pkgId,
+    pkgIdType: packageIdTypeSchema.enum.ORT_ID,
+    pkgIdMatchType: 'exact' as const,
+    marked: pkgId,
+  };
+}
+
+/** Return an API query filter for a package identifier of the given type. */
+export function getPackageIdFilter(
+  packageId: string | undefined,
+  packageIdType: PackageIdType
+): { identifier?: string; purl?: string } {
+  return packageIdType === packageIdTypeSchema.enum.ORT_ID
+    ? { identifier: packageId }
+    : { purl: packageId };
 }
 
 /** Compare packages by the identifiers displayed in package columns. */

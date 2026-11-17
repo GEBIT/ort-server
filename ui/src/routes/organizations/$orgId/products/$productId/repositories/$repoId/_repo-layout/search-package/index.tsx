@@ -19,7 +19,6 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
-import { useMemo } from 'react';
 import z from 'zod';
 
 import { getRunsWithPackageOptions } from '@/api/@tanstack/react-query.gen';
@@ -42,6 +41,7 @@ import {
 } from '@/helpers/handle-multisort';
 import {
   comparePackageIds,
+  getExactPackageLinkSearch,
   getPackageIdString,
 } from '@/helpers/identifier-conversion';
 import {
@@ -52,6 +52,7 @@ import {
 import { toastError } from '@/lib/toast';
 import {
   packageIdentifierSearchParameterSchema,
+  packageIdTypeSchema,
   paginationSearchParameterSchema,
   sortingSearchParameterSchema,
 } from '@/schemas';
@@ -118,10 +119,11 @@ function SearchPackageComponent() {
               repoId: row.original.repositoryId.toString(),
               runIndex: row.original.ortRunIndex.toString(),
             }}
-            search={{
-              pkgId: id || undefined,
-              marked: '0',
-            }}
+            search={
+              row.original.packageId
+                ? getExactPackageLinkSearch(row.original.packageId)
+                : { pkgId: id || undefined }
+            }
           >
             <BreakableString text={id} />
           </Link>
@@ -130,20 +132,9 @@ function SearchPackageComponent() {
     }),
   ]);
 
-  const pageIndex = useMemo(
-    () => (search.page ? search.page - 1 : 0),
-    [search.page]
-  );
-
-  const pageSize = useMemo(
-    () => (search.pageSize ? search.pageSize : defaultPageSize),
-    [search.pageSize]
-  );
-
-  const sortBy = useMemo(
-    () => (search.sortBy ? search.sortBy : undefined),
-    [search.sortBy]
-  );
+  const pageIndex = search.page ? search.page - 1 : 0;
+  const pageSize = search.pageSize ? search.pageSize : defaultPageSize;
+  const sortBy = search.sortBy ? search.sortBy : undefined;
 
   const {
     data: runsWithPackage,
@@ -153,7 +144,7 @@ function SearchPackageComponent() {
   } = useQuery({
     ...getRunsWithPackageOptions({
       query: {
-        ...(packageIdType === 'PURL'
+        ...(packageIdType === packageIdTypeSchema.enum.PURL
           ? { purl: identifier }
           : { identifier: identifier }),
         repositoryId: Number.parseInt(params.repoId),

@@ -18,10 +18,10 @@
  */
 
 import { useQuery, useSuspenseQuery } from '@tanstack/react-query';
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { ExpandedState } from '@tanstack/react-table';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import z from 'zod';
 
 import { RuleViolation, Severity } from '@/api';
@@ -31,8 +31,6 @@ import {
   getRunRuleViolationsOptions,
 } from '@/api/@tanstack/react-query.gen';
 import { zSeverity } from '@/api/zod.gen';
-import { BreakableString } from '@/components/breakable-string';
-import { CopyToClipboard } from '@/components/copy-to-clipboard';
 import { DataTableCards } from '@/components/data-table-cards/data-table-cards';
 import { MarkItems } from '@/components/data-table/mark-items';
 import { FormattedValue } from '@/components/formatted-value';
@@ -55,11 +53,6 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
-import {
   getResolvedBackgroundColor,
   getRuleViolationSeverityBackgroundColor,
 } from '@/helpers/get-status-class';
@@ -79,6 +72,7 @@ import {
   useAppTable,
 } from '@/hooks/use-app-table';
 import type { AppRow } from '@/hooks/use-app-table';
+import { useRepositoryPermission } from '@/hooks/use-authorization';
 import { ACTION_COLUMN_SIZE } from '@/lib/constants';
 import { toastError } from '@/lib/toast';
 import {
@@ -87,12 +81,14 @@ import {
   itemStatusSearchParameterSchema,
   markedSearchParameterSchema,
   packageIdentifierSearchParameterSchema,
+  packageIdTypeSchema,
   paginationSearchParameterSchema,
   ruleSearchParameterSchema,
   severitySearchParameterSchema,
   sortingSearchParameterSchema,
 } from '@/schemas';
 import { useUserSettingsStore } from '@/store/user-settings.store';
+import { RunPackageLink } from '../-components/run-package-link';
 
 const defaultPageSize = 10;
 const supportedSortColumns = new Set([
@@ -113,54 +109,18 @@ const RuleViolationCard = ({
 }) => {
   const params = Route.useParams();
   const packageIdType = useUserSettingsStore((state) => state.packageIdType);
-  const id =
-    packageIdType === 'PURL' && ruleViolation.purl
-      ? ruleViolation.purl
-      : identifierToString(ruleViolation.id);
-
   return (
     <div className='flex flex-col gap-1'>
       <div className='flex items-center justify-between'>
         <div className='min-w-0 flex-1'>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              {ruleViolation.purl ? (
-                <Link
-                  className='text-left font-semibold text-blue-400 hover:underline'
-                  to='/organizations/$orgId/products/$productId/repositories/$repoId/runs/$runIndex/packages'
-                  params={{
-                    orgId: params.orgId,
-                    productId: params.productId,
-                    repoId: params.repoId,
-                    runIndex: params.runIndex,
-                  }}
-                  search={{ pkgId: id, marked: '0' }}
-                >
-                  <BreakableString text={id} />
-                </Link>
-              ) : (
-                <Link
-                  className='text-left font-semibold text-blue-400 hover:underline'
-                  to='/organizations/$orgId/products/$productId/repositories/$repoId/runs/$runIndex/projects'
-                  params={{
-                    orgId: params.orgId,
-                    productId: params.productId,
-                    repoId: params.repoId,
-                    runIndex: params.runIndex,
-                  }}
-                  search={{ projectId: id, marked: id }}
-                >
-                  <BreakableString text={id} />
-                </Link>
-              )}
-            </TooltipTrigger>
-            <TooltipContent>
-              {ruleViolation.purl
-                ? 'Inspect the package details in packages table'
-                : 'Inspect the project details in projects table'}
-            </TooltipContent>
-          </Tooltip>
-          <CopyToClipboard copyText={id} className='h-5 px-2 align-middle' />
+          <RunPackageLink
+            identifier={ruleViolation.id}
+            purl={ruleViolation.purl}
+            packageIdType={packageIdType}
+            params={params}
+            linkProjectWhenPurlIsNull
+            copyClassName='h-5 px-2 align-middle'
+          />
         </div>
         <Badge
           className='bg-blue-300 whitespace-nowrap text-black'
@@ -202,6 +162,10 @@ const RuleViolationCard = ({
 
 const RuleViolationsComponent = () => {
   const params = Route.useParams();
+  const { isAllowed: canManageResolutions } = useRepositoryPermission(
+    Number.parseInt(params.repoId),
+    'MANAGE_RESOLUTIONS'
+  );
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const packageIdType = useUserSettingsStore((state) => state.packageIdType);
@@ -221,7 +185,8 @@ const RuleViolationsComponent = () => {
   const itemStatus = search.itemResolved;
   const packageIdentifier = search.pkgId;
   const selectedRules = search.rule;
-  const columnId = packageIdType === 'ORT_ID' ? 'identifier' : 'purl';
+  const columnId =
+    packageIdType === packageIdTypeSchema.enum.ORT_ID ? 'identifier' : 'purl';
   const resolved =
     itemStatus?.length === 1 ? itemStatus[0] === 'Resolved' : undefined;
   const sortBy =
@@ -272,7 +237,7 @@ const RuleViolationsComponent = () => {
         resolved,
         severity: severity?.join(','),
         rule: selectedRules?.join(','),
-        ...(packageIdType === 'ORT_ID'
+        ...(packageIdType === packageIdTypeSchema.enum.ORT_ID
           ? { identifier: packageIdentifier }
           : { purl: packageIdentifier }),
       },
@@ -331,14 +296,17 @@ const RuleViolationsComponent = () => {
     columnHelper.accessor(
       (ruleViolation) => {
         // Return purl only if the rule violation has been reported for a package
-        if (packageIdType === 'PURL' && ruleViolation.purl) {
+        if (
+          packageIdType === packageIdTypeSchema.enum.PURL &&
+          ruleViolation.purl
+        ) {
           return ruleViolation.purl;
         } else {
           return identifierToString(ruleViolation.id);
         }
       },
       {
-        id: `${packageIdType === 'PURL' ? 'purl' : 'identifier'}`,
+        id: `${packageIdType === packageIdTypeSchema.enum.PURL ? 'purl' : 'identifier'}`,
         header: 'Package ID',
         meta: {
           filter: {
@@ -422,64 +390,60 @@ const RuleViolationsComponent = () => {
     }),
   ]);
 
-  const renderSubComponent = useCallback(
-    ({ row }: { row: AppRow<RuleViolation> }) => {
-      const ruleViolation = row.original;
+  const renderSubComponent = ({ row }: { row: AppRow<RuleViolation> }) => {
+    const ruleViolation = row.original;
 
-      return (
-        <Accordion
-          type='multiple'
-          className='w-full'
-          defaultValue={getResolutionAccordionDefaultValue(ruleViolation)}
-        >
-          <AccordionItem value='resolutions'>
-            <AccordionTrigger className='font-semibold'>
-              {getResolutionAccordionLabel(ruleViolation)}
-            </AccordionTrigger>
-            <AccordionContent>
-              <Resolutions
-                item={ruleViolation}
-                repositoryId={params.repoId}
-                runId={ortRun.id}
-              />
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value='details'>
-            <AccordionTrigger className='font-semibold'>
-              Details
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className='flex flex-col gap-4'>
-                <div>{ruleViolation.message}</div>
-                <div className='grid grid-cols-8 gap-2'>
-                  <div className='col-span-2 font-semibold'>License:</div>
-                  <div className='col-span-6'>
-                    <FormattedValue value={ruleViolation.license} />
-                  </div>
-                  <div className='col-span-2 font-semibold'>
-                    License sources:
-                  </div>
-                  <div className='col-span-6'>
-                    <FormattedValue
-                      value={
-                        ruleViolation.licenseSources &&
-                        ruleViolation.licenseSources.length > 0
-                          ? ruleViolation.licenseSources.join(', ')
-                          : null
-                      }
-                    />
-                  </div>
-                  <div className='col-span-2 font-semibold'>How to fix:</div>
+    return (
+      <Accordion
+        type='multiple'
+        className='w-full'
+        defaultValue={getResolutionAccordionDefaultValue(ruleViolation)}
+      >
+        <AccordionItem value='resolutions'>
+          <AccordionTrigger className='font-semibold'>
+            {getResolutionAccordionLabel(
+              ruleViolation,
+              canManageResolutions !== false
+            )}
+          </AccordionTrigger>
+          <AccordionContent>
+            <Resolutions
+              item={ruleViolation}
+              repositoryId={params.repoId}
+              runId={ortRun.id}
+            />
+          </AccordionContent>
+        </AccordionItem>
+        <AccordionItem value='details'>
+          <AccordionTrigger className='font-semibold'>Details</AccordionTrigger>
+          <AccordionContent>
+            <div className='flex flex-col gap-4'>
+              <div>{ruleViolation.message}</div>
+              <div className='grid grid-cols-8 gap-2'>
+                <div className='col-span-2 font-semibold'>License:</div>
+                <div className='col-span-6'>
+                  <FormattedValue value={ruleViolation.license} />
                 </div>
-                <MarkdownRenderer markdown={ruleViolation.howToFix} />
+                <div className='col-span-2 font-semibold'>License sources:</div>
+                <div className='col-span-6'>
+                  <FormattedValue
+                    value={
+                      ruleViolation.licenseSources &&
+                      ruleViolation.licenseSources.length > 0
+                        ? ruleViolation.licenseSources.join(', ')
+                        : null
+                    }
+                  />
+                </div>
+                <div className='col-span-2 font-semibold'>How to fix:</div>
               </div>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      );
-    },
-    [params.repoId, ortRun.id]
-  );
+              <MarkdownRenderer markdown={ruleViolation.howToFix} />
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
+    );
+  };
 
   const [expanded, setExpanded] = useState<ExpandedState>(
     search.marked ? { [search.marked]: true } : {}

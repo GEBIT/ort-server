@@ -30,8 +30,6 @@ import io.kotest.matchers.maps.shouldHaveSize
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.repositories.scannerrun.ScannerRunDao
 import org.eclipse.apoapsis.ortserver.dao.repositories.scannerrun.ScannerRunsPackageProvenancesTable
 import org.eclipse.apoapsis.ortserver.dao.tables.PackageProvenanceDao
@@ -41,11 +39,13 @@ import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifierDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.RemoteArtifactDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.VcsInfoDao
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.runs.Identifier
 import org.eclipse.apoapsis.ortserver.model.runs.RemoteArtifact
 import org.eclipse.apoapsis.ortserver.model.runs.VcsInfo
 import org.eclipse.apoapsis.ortserver.model.runs.scanner.ScannerRun
 import org.eclipse.apoapsis.ortserver.services.ortrun.mapToOrt
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 import org.eclipse.apoapsis.ortserver.workers.scanner.ScanResultFixtures.SCANNER_VERSION
 import org.eclipse.apoapsis.ortserver.workers.scanner.ScanResultFixtures.createArtifactProvenance
 import org.eclipse.apoapsis.ortserver.workers.scanner.ScanResultFixtures.createIssue
@@ -72,12 +72,12 @@ class OrtServerScanResultStorageTest : WordSpec() {
      * Create a [PackageProvenanceDao] for the given [artifact] and associate it with [scannerRun].
      * [namespace] allows creating multiple distinct packages that share the same artifact.
      */
-    private fun createPackageProvenanceForArtifact(
+    private suspend fun createPackageProvenanceForArtifact(
         scannerRun: ScannerRun,
         artifact: RemoteArtifact,
         namespace: String = "com.example"
     ): PackageProvenanceDao =
-        dbExtension.db.blockingQuery {
+        dbExtension.db.transaction {
             val identifier = IdentifierDao.getOrPut(
                 Identifier(type = "Maven", namespace = namespace, name = "lib", version = "1.0")
             )
@@ -90,14 +90,12 @@ class OrtServerScanResultStorageTest : WordSpec() {
             provenance
         }
 
-    /**
-     * Create a [PackageProvenanceDao] for the given [vcsInfo] and associate it with [scannerRun].
-     */
-    private fun createPackageProvenanceForVcs(
+    /** Create a [PackageProvenanceDao] for the given [vcsInfo] and associate it with [scannerRun]. */
+    private suspend fun createPackageProvenanceForVcs(
         scannerRun: ScannerRun,
         vcsInfo: VcsInfo
     ): PackageProvenanceDao =
-        dbExtension.db.blockingQuery {
+        dbExtension.db.transaction {
             val identifier = IdentifierDao.getOrPut(
                 Identifier(type = "Maven", namespace = "com.example", name = "lib", version = "1.0")
             )
@@ -115,12 +113,12 @@ class OrtServerScanResultStorageTest : WordSpec() {
      * Assert that [ScanResultPackageProvenancesTable] contains a row linking [scanResult] to [packageProvenance].
      * [run] defaults to the test's [scannerRun].
      */
-    private fun verifyJunctionRow(
+    private suspend fun verifyJunctionRow(
         scanResult: OrtScanResult,
         packageProvenance: PackageProvenanceDao,
         run: ScannerRun = scannerRun
     ) {
-        dbExtension.db.blockingQuery {
+        dbExtension.db.transaction {
             val scanResultDao = ScannerRunDao[run.id].scanResults.first {
                 it.scannerName == scanResult.scanner.name
             }
@@ -132,22 +130,22 @@ class OrtServerScanResultStorageTest : WordSpec() {
         }
     }
 
-    /**
-     * Return a [Set] with the IDs of all scan summaries assigned to a scan result.
-     */
-    private fun loadScanSummaryIds(): Set<Long> =
-        dbExtension.db.blockingQuery {
+    /** Return a [Set] with the IDs of all scan summaries assigned to a scan result. */
+    private suspend fun loadScanSummaryIds(): Set<Long> =
+        dbExtension.db.transaction {
             ScanResultDao.all().map { it.scanSummary.id.value }.toSet()
         }
 
     init {
+        tags(Integration)
+
         beforeEach {
             scannerRun = dbExtension.fixtures.scannerRunRepository.create(dbExtension.fixtures.scannerJob.id)
             scanResultStorage = OrtServerScanResultStorage(dbExtension.db, scannerRun.id)
         }
 
-        fun verifyAssociatedScanResults(scannerRun: ScannerRun, vararg scanResults: OrtScanResult) {
-            dbExtension.db.blockingQuery {
+        suspend fun verifyAssociatedScanResults(scannerRun: ScannerRun, vararg scanResults: OrtScanResult) {
+            dbExtension.db.transaction {
                 val associatedScanResults = ScannerRunDao[scannerRun.id].scanResults.map { it.mapToModel() }
 
                 associatedScanResults shouldHaveSize scanResults.size
@@ -183,7 +181,7 @@ class OrtServerScanResultStorageTest : WordSpec() {
 
                 scanResultStorage.write(scanResult)
 
-                dbExtension.db.dbQuery {
+                dbExtension.db.transaction {
                     ScanResultDao.all().count()
                 } shouldBe 1
             }
@@ -199,7 +197,7 @@ class OrtServerScanResultStorageTest : WordSpec() {
 
                 scanResultStorage.write(scanResult)
 
-                dbExtension.db.dbQuery {
+                dbExtension.db.transaction {
                     ScanResultDao.all().count()
                 } shouldBe 1
             }
@@ -217,7 +215,7 @@ class OrtServerScanResultStorageTest : WordSpec() {
 
                 scanResultStorage.write(scanResult2)
 
-                dbExtension.db.dbQuery {
+                dbExtension.db.transaction {
                     ScanResultDao.all().count()
                 } shouldBe 2
             }
@@ -230,7 +228,7 @@ class OrtServerScanResultStorageTest : WordSpec() {
 
                 scanResultStorage.write(scanResult2)
 
-                dbExtension.db.dbQuery {
+                dbExtension.db.transaction {
                     ScanResultDao.all().count()
                 } shouldBe 2
             }
@@ -243,7 +241,7 @@ class OrtServerScanResultStorageTest : WordSpec() {
 
                 scanResultStorage.write(scanResult2)
 
-                dbExtension.db.dbQuery {
+                dbExtension.db.transaction {
                     ScanResultDao.all().count()
                 } shouldBe 2
             }
@@ -261,7 +259,7 @@ class OrtServerScanResultStorageTest : WordSpec() {
 
                 scanResultStorage.write(scanResult2)
 
-                dbExtension.db.dbQuery {
+                dbExtension.db.transaction {
                     ScanResultDao.all().count()
                 } shouldBe 2
             }

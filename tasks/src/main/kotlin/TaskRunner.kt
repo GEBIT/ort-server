@@ -25,6 +25,9 @@ import io.kubernetes.client.openapi.apis.BatchV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.util.ClientBuilder
 
+import java.io.File
+import java.io.IOException
+
 import kotlin.system.exitProcess
 
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +35,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 
+import org.eclipse.apoapsis.ortserver.components.projections.ProjectionRegistry
+import org.eclipse.apoapsis.ortserver.components.reportstorage.reportStorageModule
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
 import org.eclipse.apoapsis.ortserver.config.Path
 import org.eclipse.apoapsis.ortserver.dao.databaseModule
@@ -67,13 +72,15 @@ import org.eclipse.apoapsis.ortserver.model.repositories.RepositoryRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.ResolvedConfigurationRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.ScannerJobRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.ScannerRunRepository
-import org.eclipse.apoapsis.ortserver.services.ReportStorageService
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrphanRemovalService
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrtRunService
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrtServerFileListStorage
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 import org.eclipse.apoapsis.ortserver.storage.Storage
 import org.eclipse.apoapsis.ortserver.tasks.impl.DeleteOldOrtRunsTask
 import org.eclipse.apoapsis.ortserver.tasks.impl.DeleteOrphanedEntitiesTask
+import org.eclipse.apoapsis.ortserver.tasks.impl.DeleteUnusedProjectionsTask
+import org.eclipse.apoapsis.ortserver.tasks.impl.SyncKeycloakUsersTask
 import org.eclipse.apoapsis.ortserver.tasks.impl.kubernetes.FailedJobNotifier
 import org.eclipse.apoapsis.ortserver.tasks.impl.kubernetes.JobHandler
 import org.eclipse.apoapsis.ortserver.tasks.impl.kubernetes.LongRunningJobsFinderTask
@@ -109,8 +116,20 @@ private const val TASK_RUNNER_SECTION = "taskRunner"
 /** The name of the configuration property that defines the tasks to be executed. */
 private const val TASKS_PROPERTY = "tasks"
 
+/** Line breaks, together with the whitespace around them, to be replaced in the reason of a failed task. */
+private val LINE_BREAKS = Regex("\\s*\\R\\s*")
+
+/** The name under which a failure to set up the task runner itself is reported. */
+private const val TASK_RUNNER_NAME = "task runner"
+
 /** The name of the environment variable that determines whether the JVM should be kept alive after task execution. */
 private const val KEEP_JVM_VARIABLE = "TASKS_KEEP_JVM"
+
+/** The name of the environment variable that overrides the path of the termination message file. */
+private const val TERMINATION_MESSAGE_PATH_VARIABLE = "TASKS_TERMINATION_MESSAGE_PATH"
+
+/** The file that Kubernetes reads as the termination message of a container, unless configured otherwise. */
+private const val DEFAULT_TERMINATION_MESSAGE_PATH = "/dev/termination-log"
 
 /**
  * The main entry point of the task runner component.
@@ -119,6 +138,11 @@ private const val KEEP_JVM_VARIABLE = "TASKS_KEEP_JVM"
  * is read from a section named `taskRunner`. It supports the following properties:
  * - `tasks`: A comma-separated list of names for the tasks to be executed. This can be overridden using the `TASKS`
  *   environment variable.
+ *
+ * The process exits with code 1 if any task fails, if a task does not exist, or if the task runner cannot be set up,
+ * and with code 0 otherwise. The failed tasks and their reasons are also written to the termination message file of
+ * Kubernetes, `/dev/termination-log`, if that file exists. The `TASKS_TERMINATION_MESSAGE_PATH` environment variable
+ * changes its path.
  *
  * In addition, the function reads the `TASKS_KEEP_JVM` environment variable. Its value is a flag that controls whether
  * the task runner should end the JVM process after executing the tasks. This may be required to prevent that some
@@ -129,6 +153,7 @@ private const val KEEP_JVM_VARIABLE = "TASKS_KEEP_JVM"
  * - `delete-old-ort-runs`: Deletes old ORT runs according to the configured data retention policy.
  * - `delete-orphaned-entities`: Deletes entities from the database that are shared between ORT runs, but are no longer
  *   referenced by any run.
+ * - `delete-unused-projections`: Deletes projections that have not been accessed for the configured number of days.
  * - `kubernetes-reaper`: Cleans up completed Kubernetes jobs and also notifies the Orchestrator about failed jobs.
  *   This task is part of the Kubernetes Job Monitor.
  * - `kubernetes-lost-jobs-finder`: Checks for jobs that are active, according to the database, but for which no
@@ -136,11 +161,50 @@ private const val KEEP_JVM_VARIABLE = "TASKS_KEEP_JVM"
  *   the Kubernetes Job Monitor.
  * - `kubernetes-long-running-jobs-finder`: Checks for worker jobs in Kubernetes that are running longer than a
  *   configured timeout and terminates them. This task is part of the Kubernetes Job Monitor.
+ * - `sync-keycloak-users`: Syncs the stored users and the role assignments with the users in Keycloak.
  */
 suspend fun main() {
-    runTasks(listOf(configModule(), databaseModule(), tasksModule()))
+    val exitCode = runTaskRunner(listOf(configModule(), databaseModule(), tasksModule()))
 
-    endTaskRunner()
+    if (!System.getenv(KEEP_JVM_VARIABLE).toBoolean()) exitProcess(exitCode)
+}
+
+/** A task that failed, with a one-line [reason] for the operator. */
+internal data class TaskFailure(val taskName: String, val reason: String)
+
+/**
+ * Run the configured tasks with the given [modules] and log a summary of the tasks that failed. Return the exit code
+ * for the process: 1 if a task failed or the task runner could not be set up, 0 otherwise.
+ */
+internal suspend fun runTaskRunner(modules: List<Module>): Int {
+    val failures = runCatching { runTasks(modules) }.getOrElse { e ->
+        logger.error("Could not set up the task runner.", e)
+        listOf(TaskFailure(TASK_RUNNER_NAME, e.toReason()))
+    }
+
+    if (failures.isEmpty()) return 0
+
+    // Write the termination message first, so that the summary stays the last line of the output.
+    writeTerminationMessage(failures)
+    logger.error("Failed tasks: ${failures.joinToString { "${it.taskName} (${it.reason})" }}.")
+    return 1
+}
+
+/**
+ * Write the given [failures] to the file that Kubernetes shows as the termination message of the container, so that
+ * operators can see why tasks failed without reading the logs. Do nothing if the file does not exist, which is the
+ * case outside Kubernetes.
+ */
+private fun writeTerminationMessage(failures: List<TaskFailure>) {
+    val file = File(System.getenv(TERMINATION_MESSAGE_PATH_VARIABLE) ?: DEFAULT_TERMINATION_MESSAGE_PATH)
+    if (!file.exists()) return
+
+    // Kubernetes truncates the termination message to the size it allows for the container.
+    try {
+        file.writeText(failures.joinToString("\n") { "${it.taskName}: ${it.reason}" })
+    } catch (e: IOException) {
+        logger.warn("Could not write the termination message to '$file'.", e)
+    }
 }
 
 /**
@@ -149,19 +213,19 @@ suspend fun main() {
  * The tasks to run are defined via the configuration as a comma-separated list of task names. To change the set of
  * tasks dynamically, the configuration can be overwritten using an environment variable. The task names must match
  * named bean definitions of type [Task] in the Koin modules. The function fetches all referenced tasks from Koin and
- * executes them asynchronously.
+ * executes them asynchronously. Return the tasks that failed.
  */
-internal suspend fun runTasks(modules: List<Module>) {
+internal suspend fun runTasks(modules: List<Module>): List<TaskFailure> {
     logger.info("Setting up Koin application.")
     val app = startKoin {
         modules(modules)
     }
 
-    try {
+    return try {
         val config = app.koin.get<ConfigManager>().subConfig(Path(TASK_RUNNER_SECTION))
         val tasksToRun = config.getString(TASKS_PROPERTY).split(',')
 
-        withContext(Dispatchers.IO) {
+        withContext(Dispatchers.Virtual) {
             tasksToRun.map { taskName ->
                 async {
                     logger.info("Executing task '$taskName'.")
@@ -169,48 +233,30 @@ internal suspend fun runTasks(modules: List<Module>) {
                         val task = app.koin.get<Task>(named(taskName))
                         task.execute()
                         logger.info("Task '$taskName' executed successfully.")
-                    }.onFailure { e ->
-                        logTaskExecutionError(taskName, e)
+                    }.exceptionOrNull()?.let { e ->
+                        TaskFailure(taskName, logTaskExecutionError(taskName, e))
                     }
                 }
-            }.awaitAll()
+            }.awaitAll().filterNotNull()
         }
     } finally {
         stopKoin()
     }
 }
 
-/**
- * Exit the JVM depending on the value of the corresponding environment variable. This function is called after task
- * execution to make sure that the JVM process is cleanly terminated.
- */
-internal fun endTaskRunner() {
-    if (!System.getenv(KEEP_JVM_VARIABLE).toBoolean()) {
-        logger.info("Exiting JVM after task execution.")
-        exitProcess(0)
-    }
-}
-
-/**
- * Create a [Module] that provides access to the configuration of the tasks.
- */
+/** Create a [Module] that provides access to the configuration of the tasks. */
 internal fun configModule(): Module =
     module {
         single { ConfigManager.create(ConfigFactory.load()) }
     }
 
-/**
- * Create a [Module] for the standard tasks and their dependencies.
- */
+/** Create a [Module] for the standard tasks and their dependencies. */
 private fun tasksModule(): Module =
     module {
-        single {
-            val storage = Storage.create("reportStorage", get())
-            ReportStorageService(storage, get())
-        }
+        includes(reportStorageModule)
 
         single {
-            val storage = Storage.create(OrtServerFileListStorage.STORAGE_TYPE, get())
+            val storage = Storage.create(OrtServerFileListStorage.STORAGE_TYPE, get(), get())
             FileListResolver(
                 OrtServerFileListStorage(storage),
                 DefaultProvenanceDownloader(DownloaderConfiguration(), DefaultWorkingTreeCache())
@@ -246,6 +292,7 @@ private fun tasksModule(): Module =
         single { TimeHelper() }
 
         singleOf(::OrphanRemovalService)
+        singleOf(::ProjectionRegistry)
         singleOf(::OrtRunService)
 
         singleOf(DeleteOldOrtRunsTask::create) {
@@ -254,6 +301,10 @@ private fun tasksModule(): Module =
         }
         singleOf(DeleteOrphanedEntitiesTask::create) {
             named("delete-orphaned-entities")
+            bind<Task>()
+        }
+        singleOf(DeleteUnusedProjectionsTask::create) {
+            named("delete-unused-projections")
             bind<Task>()
         }
         singleOf(::LongRunningJobsFinderTask) {
@@ -268,15 +319,31 @@ private fun tasksModule(): Module =
             named("kubernetes-reaper")
             bind<Task>()
         }
+        singleOf(SyncKeycloakUsersTask::create) {
+            named("sync-keycloak-users")
+            bind<Task>()
+        }
     }
 
 /**
- * Log an [exception] about a failed execution of the task with the given [taskName]. Based on the concrete exception,
- *
+ * Log an [exception] about a failed execution of the task with the given [taskName], and return the reason of the
+ * failure for the operator.
  */
-private fun logTaskExecutionError(taskName: String, exception: Throwable) {
+private fun logTaskExecutionError(taskName: String, exception: Throwable): String =
     when (exception) {
-        is NoDefinitionFoundException -> logger.error("Task '$taskName' does not exist.", exception)
-        else -> logger.error("Execution of task '$taskName' failed.", exception)
+        is NoDefinitionFoundException -> {
+            logger.error("Task '$taskName' does not exist.", exception)
+            "Task '$taskName' does not exist."
+        }
+
+        else -> {
+            logger.error("Execution of task '$taskName' failed.", exception)
+            exception.toReason()
+        }
     }
-}
+
+/**
+ * Return a one-line description of this exception with its class name and message. Line breaks in the message are
+ * replaced by spaces, so that the summary of failed tasks stays a single line.
+ */
+private fun Throwable.toReason(): String = "${this::class.simpleName}: ${message?.replace(LINE_BREAKS, " ")}"

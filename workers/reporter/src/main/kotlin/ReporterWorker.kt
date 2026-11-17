@@ -23,7 +23,7 @@ import kotlin.time.Clock
 
 import org.eclipse.apoapsis.ortserver.components.adminconfig.AdminConfigService
 import org.eclipse.apoapsis.ortserver.components.resolutions.issues.IssueResolutionService
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.runs.reporter.Report
 import org.eclipse.apoapsis.ortserver.model.runs.reporter.ReporterRun
@@ -73,10 +73,6 @@ internal class ReporterWorker(
             EndpointComponent.generateKeepAliveFile()
         }
 
-        /**
-         * The setup of environment is only needed by a reporter that creates source code bundles.
-         * TODO: Find a better solution which would allow to set up environment only for a specific reporter if needed.
-         */
         val ortResult = ortRunService.generateOrtResult(ortRun, failIfRepoInfoMissing = false)
         val startTime = Clock.System.now()
 
@@ -142,7 +138,7 @@ internal class ReporterWorker(
                 vulnerabilities = emptyList()
             )
 
-            db.dbQuery {
+            db.transaction {
                 ortRunService.storeReporterRun(reporterRun)
                 reporterRunnerResult.resolvedPackageConfigurations?.let {
                     ortRunService.storeResolvedPackageConfigurations(ortRun.id, it)
@@ -153,6 +149,7 @@ internal class ReporterWorker(
                 reporterRunnerResult.issues.takeUnless { it.isEmpty() }?.let {
                     ortRunService.storeIssues(ortRun.id, it)
                 }
+                ortRunService.updateIssueHowToFixTexts(ortRun.id, reporterRunnerResult.issuesWithHowToFix)
                 ortRunService.storeResolvedItems(ortRun.id, resolvedReporterItems)
             }
 
@@ -176,23 +173,21 @@ internal class ReporterWorker(
     }.getOrElse {
         when (it) {
             is JobIgnoredException -> {
-                logger.warn("Message with traceId '$traceId' ignored: ${it.message}")
+                logger.warn("Not running the reporter because message '$traceId' got ignored: ${it.message}")
                 RunResult.Ignored
             }
 
             else -> {
-                logger.error("Error while processing message with traceId '$traceId': ${it.message}")
+                logger.error("Error while running the reporter as instructed by message '$traceId': ${it.message}")
                 RunResult.Failed(it)
             }
         }
     }
 
-    private fun getValidReporterJob(jobId: Long) =
+    private suspend fun getValidReporterJob(jobId: Long) =
         ortRunService.getReporterJob(jobId).validateForProcessing(jobId)
 
-    /**
-     * Create a [Report] for the given [file] and [runId] together with a link to download it.
-     */
+    /** Create a [Report] for the given [file] and [runId] together with a link to download it. */
     private fun toReport(file: String, sizeInBytes: Long, runId: Long): Report {
         val reportToken = linkGenerator.generateLink(runId)
         return Report(file, reportToken.downloadLink, reportToken.expirationTime, sizeInBytes)

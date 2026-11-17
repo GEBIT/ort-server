@@ -17,13 +17,16 @@
  * License-Filename: LICENSE
  */
 
+// @vitest-environment jsdom
+
+import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ENVIRONMENT_DEFINITION_SCHEMAS } from '@/lib/environment-definition-fields';
-import { defaultValues } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/_repo-layout/create-run/-components';
-import { PackageManagerField } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/-components';
 import { EnvironmentDefinitionsFields } from '@/routes/organizations/$orgId/products/$productId/repositories/$repoId/-components/environment-definitions';
-import { renderWithForm } from '../fixtures/form-harness';
+import { createFormDefaultValues } from '../fixtures/create-run';
+import { renderWithForm, renderWithStableForm } from '../fixtures/form-harness';
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const actual =
@@ -59,7 +62,7 @@ vi.mock('@/hooks/use-infrastructure-services', () => ({
   }),
 }));
 
-const baseDefaultValues = defaultValues(null, [], [], false, [], []);
+const baseDefaultValues = createFormDefaultValues();
 const conanDefaultEntry = ENVIRONMENT_DEFINITION_SCHEMAS.find(
   (schema) => schema.key === 'conan'
 )?.defaultEntries[0];
@@ -81,23 +84,6 @@ const populatedDefaultValues = {
   },
 };
 
-const packageManagerDefaultValues = {
-  ...baseDefaultValues,
-  jobConfigs: {
-    ...baseDefaultValues.jobConfigs,
-    analyzer: {
-      ...baseDefaultValues.jobConfigs.analyzer,
-      packageManagers: {
-        ...baseDefaultValues.jobConfigs.analyzer.packageManagers,
-        Conan: {
-          ...baseDefaultValues.jobConfigs.analyzer.packageManagers.Conan,
-          options: [{ key: 'remote', value: 'central' }],
-        },
-      },
-    },
-  },
-};
-
 const renderEnvironmentDefinitions = (
   defaultValues: typeof baseDefaultValues
 ) =>
@@ -106,10 +92,9 @@ const renderEnvironmentDefinitions = (
   });
 
 describe('EnvironmentDefinitionsFields', () => {
-  it('renders an empty environment definition list', () => {
+  it('renders only the add action without definitions', () => {
     const markup = renderEnvironmentDefinitions(baseDefaultValues);
 
-    expect(markup).toContain('Environment configuration');
     expect(markup).toContain('Add environment configuration');
     expect(markup).not.toContain('>Package manager<');
   });
@@ -125,20 +110,22 @@ describe('EnvironmentDefinitionsFields', () => {
     expect(markup).toMatch(new RegExp(`<button[^>]*id="${selectorId}"`));
     expect(markup).toContain('Remote name');
   });
-});
 
-describe('PackageManagerField', () => {
-  it('renders controls inside an open package manager accordion', () => {
-    const markup = renderWithForm(
-      (form) => <PackageManagerField form={form} />,
-      { defaultValues: packageManagerDefaultValues }
+  it('shows an added definition without a render of its parent', async () => {
+    const user = userEvent.setup();
+    renderWithStableForm(
+      (form) => <EnvironmentDefinitionsFields form={form} />,
+      {
+        defaultValues: baseDefaultValues,
+      }
     );
 
-    expect(markup).toContain('Enabled package managers');
-    expect(markup).toContain('data-state="open"');
-    expect(markup).toContain('Options:');
-    expect(markup).toContain('>Key<');
-    expect(markup).toContain('>Value<');
-    expect(markup).toContain('Must run after');
+    expect(screen.queryByText('Package manager')).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole('button', { name: /Add environment configuration/ })
+    );
+
+    expect(screen.getByText('Package manager')).toBeInTheDocument();
   });
 });

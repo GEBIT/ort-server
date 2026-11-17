@@ -21,7 +21,7 @@ package org.eclipse.apoapsis.ortserver.workers.scanner
 
 import org.eclipse.apoapsis.ortserver.components.adminconfig.AdminConfigService
 import org.eclipse.apoapsis.ortserver.components.resolutions.issues.IssueResolutionService
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.runs.Identifier
 import org.eclipse.apoapsis.ortserver.model.runs.Issue
@@ -59,7 +59,7 @@ class ScannerWorker(
     private val issueResolutionService: IssueResolutionService
 ) {
     suspend fun run(jobId: Long, traceId: String): RunResult = runCatching {
-        val (scannerJob, ortRun, ortResult) = db.dbQuery {
+        val (scannerJob, ortRun, ortResult) = db.transaction {
             var job = getValidScannerJob(jobId)
             val ortRun = ortRunService.getOrtRun(job.ortRunId)
             requireNotNull(ortRun) {
@@ -120,7 +120,7 @@ class ScannerWorker(
                 vulnerabilities = emptyList()
             )
 
-            db.dbQuery {
+            db.transaction {
                 getValidScannerJob(scannerJob.id)
                 ortRunService.finalizeScannerRun(
                     scannerRunResult.scannerRun.mapToModel(scannerJob.id).copy(id = scannerRunId),
@@ -149,24 +149,22 @@ class ScannerWorker(
     }.getOrElse {
         when (it) {
             is JobIgnoredException -> {
-                logger.warn("Message with traceId '$traceId' ignored: ${it.message}")
+                logger.warn("Not running the scanner because message '$traceId' got ignored: ${it.message}")
                 RunResult.Ignored
             }
 
             else -> {
-                logger.error("Error while processing message with traceId '$traceId': ${it.message}")
+                logger.error("Error while running the scanner as instructed by message '$traceId': ${it.message}")
                 RunResult.Failed(it)
             }
         }
     }
 
-    private fun getValidScannerJob(jobId: Long) =
+    private suspend fun getValidScannerJob(jobId: Long) =
         ortRunService.getScannerJob(jobId).validateForProcessing(jobId)
 }
 
-/**
- * Extract all [Issue]s from this [OrtScannerResult] and convert it to the ORT Server model.
- */
+/** Extract all [Issue]s from this [OrtScannerResult] and convert it to the ORT Server model. */
 private fun OrtScannerResult.extractIssues(): Set<Issue> {
     val result = mutableSetOf<Issue>()
 

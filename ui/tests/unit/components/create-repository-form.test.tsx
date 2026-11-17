@@ -35,7 +35,7 @@ describe('CreateRepositoryForm', () => {
     render(<CreateRepositoryForm isPending={false} onSubmit={vi.fn()} />);
 
     const urlInput = screen.getByLabelText('URL');
-    const createButton = screen.getByRole('button', { name: 'Create' });
+    const createButton = screen.getByRole('button', { name: 'Add' });
 
     expect(createButton).toBeDisabled();
 
@@ -52,59 +52,12 @@ describe('CreateRepositoryForm', () => {
     expect(createButton).toBeDisabled();
   });
 
-  it('renders the fields in the expected order', () => {
-    const { container } = render(
-      <CreateRepositoryForm isPending={false} onSubmit={vi.fn()} />
-    );
-
-    const labels = Array.from(container.querySelectorAll('label')).map(
-      (label) => label.textContent
-    );
-
-    expect(labels).toEqual([
-      'URL',
-      'Type',
-      'Name',
-      'Description',
-      'Username',
-      passwordLabel,
-    ]);
-
-    const urlField = screen
-      .getByLabelText('URL')
-      .closest('[data-slot="form-item"]');
-    const typeField = screen
-      .getByLabelText('Type')
-      .closest('[data-slot="form-item"]');
-
-    expect(urlField?.parentElement).toBe(typeField?.parentElement);
-    expect(urlField?.parentElement).toHaveClass(
-      'grid',
-      'md:grid-cols-[minmax(0,1fr)_auto]'
-    );
-
-    const usernameField = screen
-      .getByLabelText('Username')
-      .closest('[data-slot="form-item"]');
-    const passwordField = screen
-      .getByLabelText(passwordLabel)
-      .closest('[data-slot="form-item"]');
-
-    expect(usernameField?.parentElement).toBe(passwordField?.parentElement);
-    expect(usernameField?.parentElement).toHaveClass('grid', 'md:grid-cols-2');
-    expect(
-      screen.getAllByPlaceholderText(
-        '(optional, only needed for private repositories)'
-      )
-    ).toHaveLength(2);
-  });
-
   it('requires a password or token when a username is entered', async () => {
     const user = userEvent.setup();
 
     render(<CreateRepositoryForm isPending={false} onSubmit={vi.fn()} />);
 
-    const createButton = screen.getByRole('button', { name: 'Create' });
+    const createButton = screen.getByRole('button', { name: 'Add' });
     const usernameInput = screen.getByLabelText('Username');
     const passwordInput = screen.getByLabelText(passwordLabel);
 
@@ -135,7 +88,7 @@ describe('CreateRepositoryForm', () => {
     await user.type(screen.getByLabelText('URL'), repositoryUrl);
     await user.type(screen.getByLabelText(passwordLabel), 'token');
 
-    expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add' })).toBeDisabled();
     expect(
       await screen.findByText(
         'A username is required for the password or personal access token.'
@@ -168,7 +121,7 @@ describe('CreateRepositoryForm', () => {
     await user.type(screen.getByLabelText('URL'), repositoryUrl);
     await user.type(screen.getByLabelText('Username'), 'jdoe');
     await user.type(screen.getByLabelText(passwordLabel), 'token');
-    await user.click(screen.getByRole('button', { name: 'Create' }));
+    await user.click(screen.getByRole('button', { name: 'Add' }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
     expect(onSubmit.mock.calls[0]?.[0]).toEqual({

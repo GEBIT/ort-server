@@ -52,7 +52,6 @@ abstract class InfrastructureServicesIntegrationTest(
         beforeEach {
             secretService = SecretService(
                 dbExtension.db,
-                dbExtension.fixtures.secretRepository,
                 SecretStorage(SecretsProviderFactoryForTesting().createProvider())
             )
 

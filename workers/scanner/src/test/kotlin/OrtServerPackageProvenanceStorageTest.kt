@@ -28,15 +28,15 @@ import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
 import org.eclipse.apoapsis.ortserver.dao.repositories.scannerrun.ScannerRunDao
 import org.eclipse.apoapsis.ortserver.dao.tables.NestedProvenanceDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.VcsInfoDao
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.runs.scanner.ScannerRun
 import org.eclipse.apoapsis.ortserver.services.ortrun.mapToModel
 import org.eclipse.apoapsis.ortserver.services.ortrun.mapToOrt
-import org.eclipse.apoapsis.ortserver.utils.logging.runBlocking
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.ossreviewtoolkit.model.ArtifactProvenance
 import org.ossreviewtoolkit.model.Hash
@@ -60,6 +60,8 @@ class OrtServerPackageProvenanceStorageTest : WordSpec() {
     private lateinit var scannerRun: ScannerRun
 
     init {
+        tags(Integration)
+
         beforeEach {
             scannerRun = dbExtension.fixtures.scannerRunRepository.create(dbExtension.fixtures.scannerJob.id)
             packageProvenanceCache = PackageProvenanceCache()
@@ -71,8 +73,12 @@ class OrtServerPackageProvenanceStorageTest : WordSpec() {
          * Verify that the provided [provenance] was associated to the [scannerRun]. Must be called before calling
          * any other functions on [packageProvenanceStorage] which might also create the association.
          */
-        fun verifyAssociatedProvenance(scannerRun: ScannerRun, provenance: Provenance, cache: PackageProvenanceCache) {
-            dbExtension.db.blockingQuery {
+        suspend fun verifyAssociatedProvenance(
+            scannerRun: ScannerRun,
+            provenance: Provenance,
+            cache: PackageProvenanceCache
+        ) {
+            dbExtension.db.transaction {
                 val associatedProvenanceDaos = ScannerRunDao[scannerRun.id].packageProvenances
 
                 val associatedProvenances = associatedProvenanceDaos.map { it.mapToModel().mapToOrt() }
@@ -80,7 +86,7 @@ class OrtServerPackageProvenanceStorageTest : WordSpec() {
                 associatedProvenances.single() shouldBe provenance
 
                 if (provenance is RepositoryProvenance) {
-                    runBlocking { cache.get(provenance).single() } shouldBe associatedProvenanceDaos.single().id.value
+                    cache.get(provenance).single() shouldBe associatedProvenanceDaos.single().id.value
                 }
             }
         }
@@ -115,7 +121,7 @@ class OrtServerPackageProvenanceStorageTest : WordSpec() {
                 val rootVcsInfo = vcsInfo.copy(path = "")
                 val rootProvenance = RepositoryProvenance(rootVcsInfo, rootVcsInfo.revision)
 
-                val nestedProvenanceId = dbExtension.db.blockingQuery {
+                val nestedProvenanceId = dbExtension.db.transaction {
                     val vcsInfoDao = VcsInfoDao.getOrPut(rootVcsInfo.mapToModel())
                     NestedProvenanceDao.new {
                         rootVcs = vcsInfoDao
@@ -127,7 +133,7 @@ class OrtServerPackageProvenanceStorageTest : WordSpec() {
 
                 packageProvenanceStorage.writeProvenance(id, vcsInfo, provenance)
 
-                dbExtension.db.blockingQuery {
+                dbExtension.db.transaction {
                     ScannerRunDao[scannerRun.id].packageProvenances.toList().forAll { provenanceDao ->
                         provenanceDao.nestedProvenance?.id?.value shouldBe nestedProvenanceId
                     }
@@ -160,7 +166,7 @@ class OrtServerPackageProvenanceStorageTest : WordSpec() {
         }
 
         "readProvenance" should {
-            fun createScannerRun(): ScannerRun {
+            suspend fun createScannerRun(): ScannerRun {
                 val ortRun = dbExtension.fixtures.createOrtRun()
                 val scannerJob = dbExtension.fixtures.createScannerJob(ortRun.id)
                 return dbExtension.fixtures.scannerRunRepository.create(scannerJob.id)

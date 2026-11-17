@@ -31,14 +31,18 @@ plugins {
 group = "org.eclipse.apoapsis.ortserver"
 
 dependencies {
+    api(projects.components.authorization.authorizationBackend)
+    api(projects.components.projections.projectionsBackend)
     api(projects.config.configSpi)
     api(projects.services.ortRunService)
 
+    implementation(projects.clients.keycloak)
+    implementation(projects.components.reportStorage.reportStorageBackend)
     implementation(projects.dao)
-    implementation(projects.utils.logging)
-    implementation(projects.services.reportStorageService)
+    implementation(projects.shared.coroutines)
     implementation(projects.storage.storageSpi)
     implementation(projects.transport.transportSpi)
+    implementation(projects.utils.logging)
 
     implementation(libs.koin.core)
     implementation(libs.kotlinx.coroutines)

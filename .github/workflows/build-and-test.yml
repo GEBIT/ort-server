@@ -15,13 +15,13 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
     - name: Checkout Repository
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
     - name: Build all classes
       run: ./gradlew --stacktrace classes
@@ -63,13 +63,13 @@ jobs:
 
     - name: Setup Java
       if: runner.os == 'Windows'
-      uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+      uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
       with:
         distribution: temurin
         java-version: 25
 
     - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
     - name: Get the Kotlin version
       id: get-kotlin-plugin-info
@@ -95,36 +95,30 @@ jobs:
       run: ./${{ matrix.target.artifact }}/${{ matrix.target.binName }} --version
 
     - name: Upload CLI binary
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ matrix.target.artifact }}
         path: ${{ matrix.target.artifact }}/${{ matrix.target.binName }}
         retention-days: 7
 
   build-ui:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
     - name: Checkout Repository
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
     - name: Generate OpenAPI spec
       run: ./gradlew --stacktrace :core:generateOpenApiSpec
 
-    - name: Install Node
-      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+    - name: Setup pnpm
+      uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
       with:
-        node-version: 24
-        cache-dependency-path: ui/pnpm-lock.yaml
-
-    - name: Enable Corepack
-      run: corepack enable
-
-    - name: Install dependencies
-      working-directory: ui
-      run: pnpm ci
+        cache: true
+        require-lockfile: true
+        working-directory: ui
 
     - name: Build UI
       working-directory: ui
@@ -140,16 +134,16 @@ jobs:
 
   test:
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
     - name: Checkout Repository
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
     - name: Run tests
-      run: ./gradlew --scan test allTests -Dkotest.tags='!Authorization & !Integration'
+      run: ./gradlew --continue --scan test allTests -Dkotest.tags='!Authorization & !Integration'
 
     - name: Create Test Summary
       uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2.4
@@ -158,7 +152,7 @@ jobs:
       if: success() || failure()
 
     - name: Upload test results
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: success() || failure()
       with:
         name: test-results
@@ -167,16 +161,16 @@ jobs:
 
   authorization-test:
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout Repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
       - name: Run authorization tests
-        run: ./gradlew --scan test allTests -Dkotest.tags='Authorization'
+        run: ./gradlew --continue --scan test allTests -Dkotest.tags='Authorization'
 
       - name: Create Test Summary
         uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2.4
@@ -185,7 +179,7 @@ jobs:
         if: success() || failure()
 
       - name: Upload test results
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: success() || failure()
         with:
           name: authorization-test-results
@@ -194,16 +188,16 @@ jobs:
 
   integration-test:
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
     - name: Checkout Repository
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
     - name: Run integration tests
-      run: ./gradlew --scan test allTests -Dkotest.tags='Integration'
+      run: ./gradlew --continue --scan test allTests -Dkotest.tags='Integration'
 
     - name: Create Test Summary
       uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2.4
@@ -212,7 +206,7 @@ jobs:
       if: success() || failure()
 
     - name: Upload test results
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: success() || failure()
       with:
         name: integration-test-results
@@ -221,41 +215,35 @@ jobs:
 
   publication-test:
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
     - name: Checkout Repository
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
     - name: Publish to local Maven repository
       run: ./gradlew publishToMavenLocal
 
   test-ui-e2e:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
     - name: Checkout Repository
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
 
     - name: Generate OpenAPI spec
       run: ./gradlew --stacktrace :core:generateOpenApiSpec
 
-    - name: Install Node
-      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+    - name: Setup pnpm
+      uses: pnpm/setup@731dfb6463bbd11c11fd0ee11fe00ed0e36d48a1 # v3.2.0
       with:
-        node-version: 24
-        cache-dependency-path: ui/pnpm-lock.yaml
- 
-    - name: Enable Corepack
-      run: corepack enable
-
-    - name: Install dependencies
-      working-directory: ui
-      run: pnpm ci
+        cache: true
+        require-lockfile: true
+        working-directory: ui
 
     - name: Generate API client and routes
       working-directory: ui
@@ -341,14 +329,14 @@ jobs:
 
     - name: Upload UI dev log
       if: success() || failure()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ui-dev-log
         path: ui-dev.log
         retention-days: 7
 
     - name: Upload Playwright report
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       if: success() || failure()
       with:
         name: playwright-report

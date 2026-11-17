@@ -45,6 +45,7 @@ internal fun Route.getRunSnippetFindingSnippets(
     get("runs/{runId}/snippet-findings/{snippetFindingId}/snippets", {
         operationId = "getRunSnippetFindingSnippets"
         summary = "Get upstream snippets for a specific snippet finding in an ORT run"
+        description = "Supported sort fields are 'purl', 'score', and 'license'."
         tags = listOf("Runs")
 
         request {
@@ -84,12 +85,18 @@ internal fun Route.getRunSnippetFindingSnippets(
                     }
                 }
             }
+
+            HttpStatusCode.NotFound to {
+                description = "The ORT run does not exist, or the snippet finding does not belong to it."
+            }
+
+            HttpStatusCode.BadRequest to {
+                description = "An unsupported sort field was provided."
+            }
         }
     }, requireRunReadPermission(ortRunRepository)) {
         val runId = call.requireIdParameter("runId")
         val snippetFindingId = call.requireIdParameter("snippetFindingId")
-
-        ortRunRepository.get(runId) ?: return@get call.respond(HttpStatusCode.NotFound)
 
         if (!service.hasSnippetFindingForRun(runId, snippetFindingId)) {
             return@get call.respond(HttpStatusCode.NotFound)

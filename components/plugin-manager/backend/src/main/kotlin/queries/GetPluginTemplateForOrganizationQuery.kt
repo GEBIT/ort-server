@@ -25,11 +25,8 @@ import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginType
 import org.eclipse.apoapsis.ortserver.dao.Query
 import org.eclipse.apoapsis.ortserver.model.OrganizationId
 
-import org.jetbrains.exposed.v1.core.Expression
-import org.jetbrains.exposed.v1.core.Op
-import org.jetbrains.exposed.v1.core.QueryBuilder
 import org.jetbrains.exposed.v1.core.eq
-import org.jetbrains.exposed.v1.core.longLiteral
+import org.jetbrains.exposed.v1.core.lowerCase
 import org.jetbrains.exposed.v1.jdbc.andWhere
 import org.jetbrains.exposed.v1.jdbc.selectAll
 
@@ -42,36 +39,16 @@ internal class GetPluginTemplateForOrganizationQuery(
         val template = PluginTemplatesReadModel
             .selectAll()
             .where { PluginTemplatesReadModel.pluginType eq pluginType }
-            .andWhere { PluginTemplatesReadModel.pluginId eq pluginId }
+            .andWhere { PluginTemplatesReadModel.pluginId.lowerCase() eq pluginId.lowercase() }
             .andWhere { organizationId.value inArray PluginTemplatesReadModel.organizationIds }
             .singleOrNull()
             ?: PluginTemplatesReadModel
                 .selectAll()
                 .where { PluginTemplatesReadModel.pluginType eq pluginType }
-                .andWhere { PluginTemplatesReadModel.pluginId eq pluginId }
+                .andWhere { PluginTemplatesReadModel.pluginId.lowerCase() eq pluginId.lowercase() }
                 .andWhere { PluginTemplatesReadModel.isGlobal eq true }
                 .singleOrNull()
 
-        return template?.let {
-            PluginTemplate(
-                name = it[PluginTemplatesReadModel.name],
-                pluginType = it[PluginTemplatesReadModel.pluginType],
-                pluginId = it[PluginTemplatesReadModel.pluginId],
-                options = it[PluginTemplatesReadModel.pluginOptions],
-                isGlobal = it[PluginTemplatesReadModel.isGlobal],
-                organizationIds = it[PluginTemplatesReadModel.organizationIds]
-            )
-        }
+        return template?.toPluginTemplate()
     }
 }
-
-private infix fun Long.inArray(arrayColumn: Expression<List<Long>>): Op<Boolean> =
-    object : Op<Boolean>() {
-        override fun toQueryBuilder(queryBuilder: QueryBuilder) {
-            queryBuilder.append("(")
-            queryBuilder.append(longLiteral(this@inArray))
-            queryBuilder.append(" = ANY(")
-            queryBuilder.append(arrayColumn)
-            queryBuilder.append("))")
-        }
-    }

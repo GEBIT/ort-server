@@ -58,19 +58,19 @@ const RepoLayout = () => {
           title: 'Secrets',
           to: '/organizations/$orgId/products/$productId/repositories/$repoId/secrets',
           icon: () => <BookLock className='h-4 w-4' />,
-          visible: repositoryPermissions?.includes('WRITE_SECRETS'),
+          visible: repositoryPermissions?.includes('READ'),
         },
         {
           title: 'Infrastructure Services',
           to: '/organizations/$orgId/products/$productId/repositories/$repoId/infrastructure-services',
           icon: () => <ServerCog className='h-4 w-4' />,
-          visible: repositoryPermissions?.includes('WRITE'),
+          visible: repositoryPermissions?.includes('READ'),
         },
         {
           title: 'Users',
           to: '/organizations/$orgId/products/$productId/repositories/$repoId/users',
           icon: () => <User className='h-4 w-4' />,
-          visible: repositoryPermissions?.includes('MANAGE_GROUPS'),
+          visible: repositoryPermissions?.includes('READ'),
         },
         {
           title: 'Settings',

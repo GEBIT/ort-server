@@ -22,14 +22,20 @@ import {
   AnalyzerJobConfiguration,
   EvaluatorJobConfiguration,
   NotifierJobConfiguration,
+  PathIncludesExcludes,
   PostRepositoryRun,
+  PreconfiguredPluginDescriptor,
   ReporterJobConfiguration,
   ScannerJobConfiguration,
+  ScopeIncludesExcludes,
 } from '@/api';
 import { convertArrayToMap } from './form-primitives';
+import { formEntriesToIncludesExcludes } from './includes-excludes';
 import {
+  createPackageManagerPayload,
   createPluginPayload,
   createProviderPluginPayload,
+  UNMANAGED_PACKAGE_MANAGER_ID,
 } from './plugin-utils';
 import type { CreateRunFormValues } from './run-schema';
 
@@ -38,67 +44,9 @@ import type { CreateRunFormValues } from './run-schema';
  * to the API. This function converts form values to correct payload to create an ORT run.
  */
 export function formValuesToPayload(
-  values: CreateRunFormValues
+  values: CreateRunFormValues,
+  plugins: PreconfiguredPluginDescriptor[]
 ): PostRepositoryRun {
-  /**
-   * A helper function to get the enabled package managers from the form values.
-   *
-   * @param packageManagers Package managers object from the form values.
-   * @returns Array of enabled package manager IDs.
-   */
-  const getEnabledPackageManagers = (
-    packageManagers: typeof values.jobConfigs.analyzer.packageManagers
-  ) => {
-    return Object.keys(packageManagers).filter(
-      (pm) =>
-        packageManagers[
-          // Ensure that TypeScript infers the correct type for the key.
-          // This is safe because the key is always a valid package manager ID.
-          pm as keyof typeof values.jobConfigs.analyzer.packageManagers
-        ].enabled
-    );
-  };
-
-  /**
-   * A helper function to get the package manager options for the enabled package managers.
-   * This is done by converting the packageManagers object into an array of key-value pairs,
-   * filtering out the disabled package managers, mapping the filtered array to an array of
-   * objects with the package manager ID as the key and the options as the value, and then
-   * reducing this array to a single object.
-   *
-   * @param packageManagers Package managers object from the form values.
-   * @returns Single object with package manager IDs as keys and options as values.
-   */
-  const getPackageManagerOptions = (
-    packageManagers: typeof values.jobConfigs.analyzer.packageManagers
-  ) => {
-    const options = Object.entries(packageManagers)
-      .filter(
-        // Skip package managers that are not enabled or have no extra options set.
-        ([, pm]) =>
-          pm.enabled &&
-          ((pm.options && pm.options.length > 0) ||
-            (pm.mustRunAfter && pm.mustRunAfter.length > 0))
-      )
-      .map(([pmId, pm]) => {
-        // Build the filtered options object, including only non-empty properties.
-        const filteredOptions = {
-          ...(pm.mustRunAfter?.length ? { mustRunAfter: pm.mustRunAfter } : {}),
-          ...(pm.options?.length
-            ? { options: convertArrayToMap(pm.options) }
-            : {}),
-        };
-        // Return the object only if it has valid options.
-        return Object.keys(filteredOptions).length > 0
-          ? { [pmId]: filteredOptions }
-          : {};
-      })
-      // Combine all package manager objects into a single result.
-      .reduce((acc, pm) => ({ ...acc, ...pm }), {});
-    // If no options are set, return undefined.
-    return Object.keys(options).length > 0 ? options : undefined;
-  };
-
   //
   // Analyzer configuration
   //
@@ -145,17 +93,22 @@ export function formValuesToPayload(
     // Determine the enabled package managers by filtering the packageManagers object
     // and finding those for which 'enabled' is true.
     enabledPackageManagers: [
-      ...getEnabledPackageManagers(values.jobConfigs.analyzer.packageManagers),
-      'Unmanaged',
+      ...values.jobConfigs.analyzer.packageManagers,
+      UNMANAGED_PACKAGE_MANAGER_ID,
     ],
     // Construct packageManagerOptions by including options for enabled package managers
     // that have options set in the form.
-    packageManagerOptions: getPackageManagerOptions(
-      values.jobConfigs.analyzer.packageManagers
+    packageManagerOptions: createPackageManagerPayload(
+      values.jobConfigs.analyzer.packageManagerConfig,
+      values.jobConfigs.analyzer.packageManagerMustRunAfter,
+      values.jobConfigs.analyzer.packageManagers,
+      plugins
     ),
     packageCurationProviders: createProviderPluginPayload(
       values.jobConfigs.analyzer.packageCurationProviderConfig,
-      values.jobConfigs.analyzer.packageCurationProviders
+      values.jobConfigs.analyzer.packageCurationProviders,
+      plugins,
+      'PACKAGE_CURATION_PROVIDER'
     ),
     keepAliveWorker: values.jobConfigs.analyzer.keepAliveWorker || undefined,
     keepAlivePhases:
@@ -176,7 +129,9 @@ export function formValuesToPayload(
         advisors: values.jobConfigs.advisor.advisors,
         config: createPluginPayload(
           values.jobConfigs.advisor.config,
-          values.jobConfigs.advisor.advisors
+          values.jobConfigs.advisor.advisors,
+          plugins,
+          'ADVISOR'
         ),
         keepAliveWorker: values.jobConfigs.advisor.keepAliveWorker || undefined,
       }
@@ -191,7 +146,7 @@ export function formValuesToPayload(
         const allScanners = values.jobConfigs.scanner.scanners;
         const scopes = values.jobConfigs.scanner.scannerScopes;
         // When any scanner is set to 'packages' or 'projects', both lists must be
-        // populated explicitly (because an empty projectScanners means "all scanners
+        // populated explicitly (because an unset projectScanners means "all scanners
         // scan everything"). Scanners set to 'both' (or with no explicit scope) must
         // therefore appear in *both* lists whenever the override is active.
         const hasProjectScannerOverride = allScanners.some(
@@ -215,18 +170,15 @@ export function formValuesToPayload(
           skipExcluded: values.jobConfigs.scanner.skipExcluded,
           keepAliveWorker:
             values.jobConfigs.scanner.keepAliveWorker || undefined,
-          // When the projectScanners override is active but no scanners scan packages,
-          // send an explicit empty array so the backend does not fall back to its
-          // default ["ScanCode"] (which it applies when the field is absent/null).
-          scanners: hasProjectScannerOverride
-            ? packageScanners
-            : packageScanners.length > 0
-              ? packageScanners
-              : undefined,
+          // Always send the package scanners, even if the list is empty, because the
+          // backend applies the default scanners if the field is absent.
+          scanners: packageScanners,
           projectScanners,
           config: createPluginPayload(
             values.jobConfigs.scanner.config,
-            allScanners
+            allScanners,
+            plugins,
+            'SCANNER'
           ),
         };
       })()
@@ -241,7 +193,9 @@ export function formValuesToPayload(
     ? {
         packageConfigurationProviders: createProviderPluginPayload(
           values.jobConfigs.evaluator.packageConfigurationProviderConfig,
-          values.jobConfigs.evaluator.packageConfigurationProviders
+          values.jobConfigs.evaluator.packageConfigurationProviders,
+          plugins,
+          'PACKAGE_CONFIGURATION_PROVIDER'
         ),
         keepAliveWorker:
           values.jobConfigs.evaluator.keepAliveWorker || undefined,
@@ -252,63 +206,23 @@ export function formValuesToPayload(
   // Reporter configuration
   //
 
-  const cycloneDxEnabled =
-    values.jobConfigs.reporter.formats.includes('CycloneDX');
-  const spdxDocumentEnabled =
-    values.jobConfigs.reporter.formats.includes('SpdxDocument');
-  const noticeFileEnabled =
-    values.jobConfigs.reporter.formats.includes('PlainTextTemplate');
-
-  const config: ReporterJobConfiguration['config'] = {};
-
-  if (spdxDocumentEnabled) {
-    config.SpdxDocument = {
-      options: {
-        outputFileFormats: 'YAML,JSON',
-      },
-      secrets: {},
-    };
-  }
-
-  if (cycloneDxEnabled) {
-    config.CycloneDX = {
-      options: {
-        outputFileFormats: 'XML,JSON',
-      },
-      secrets: {},
-    };
-  }
-
-  if (noticeFileEnabled) {
-    config.PlainTextTemplate = {
-      options: {
-        templateIds: 'NOTICE_DEFAULT,NOTICE_SUMMARY',
-      },
-      secrets: {},
-    };
-  }
-
-  // If WebApp and the deduplicateDependencyTree option are enabled, add the configuration.
-  const webAppEnabled = values.jobConfigs.reporter.formats.includes('WebApp');
-  if (webAppEnabled && values.jobConfigs.reporter.deduplicateDependencyTree) {
-    config.WebApp = {
-      options: {
-        deduplicateDependencyTree: 'true',
-      },
-      secrets: {},
-    };
-  }
-
   const reporterConfig: ReporterJobConfiguration | undefined = values.jobConfigs
     .reporter.enabled
     ? {
         formats: values.jobConfigs.reporter.formats,
-        config: Object.keys(config).length > 0 ? config : undefined,
+        config: createPluginPayload(
+          values.jobConfigs.reporter.config,
+          values.jobConfigs.reporter.formats,
+          plugins,
+          'REPORTER'
+        ),
         packageConfigurationProviders: evaluatorConfig
           ? undefined
           : createProviderPluginPayload(
               values.jobConfigs.reporter.packageConfigurationProviderConfig,
-              values.jobConfigs.reporter.packageConfigurationProviders
+              values.jobConfigs.reporter.packageConfigurationProviders,
+              plugins,
+              'PACKAGE_CONFIGURATION_PROVIDER'
             ),
         keepAliveWorker:
           values.jobConfigs.reporter.keepAliveWorker || undefined,
@@ -346,6 +260,8 @@ export function formValuesToPayload(
   return {
     revision: values.revision,
     path: values.path,
+    scopes: formEntriesToIncludesExcludes<ScopeIncludesExcludes>(values.scopes),
+    paths: formEntriesToIncludesExcludes<PathIncludesExcludes>(values.paths),
     jobConfigs: {
       analyzer: analyzerConfig,
       advisor: advisorConfig,

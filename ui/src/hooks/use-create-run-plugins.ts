@@ -1,0 +1,92 @@
+/*
+ * Copyright (C) 2026 The ORT Server Authors (See <https://github.com/eclipse-apoapsis/ort-server/blob/main/NOTICE>)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ * License-Filename: LICENSE
+ */
+
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+
+import type { PreconfiguredPluginDescriptor } from '@/api';
+import {
+  getDefaultPluginsForRepositoryOptions,
+  getPluginsForRepositoryOptions,
+} from '@/api/@tanstack/react-query.gen';
+
+const NO_PLUGINS: PreconfiguredPluginDescriptor[] = [];
+
+/**
+ * The query options for the plugins available for creating a run in the given repository with the
+ * given config context. The route loader and the page share them to use the same query.
+ */
+export const createRunPluginsOptions = (
+  repositoryId: number,
+  configContext?: string
+) =>
+  getPluginsForRepositoryOptions({
+    path: { repositoryId },
+    query: configContext ? { configContext } : undefined,
+  });
+
+/**
+ * The query options for the default plugins for creating a run in the given repository with the
+ * given config context. The route loader and the page share them to use the same query.
+ */
+export const createRunDefaultPluginsOptions = (
+  repositoryId: number,
+  configContext?: string
+) => ({
+  ...getDefaultPluginsForRepositoryOptions({
+    path: { repositoryId },
+    query: configContext ? { configContext } : undefined,
+  }),
+  // Retry only once, so that a failure does not keep the form disabled for long.
+  retry: 1,
+});
+
+/**
+ * Load the plugins available for creating a run and the plugins enabled by default. The plugins
+ * are reported as loading until those for the given config context are available, also while
+ * reloading them after a config context change. Meanwhile, the previous plugins are kept so that
+ * the form does not lose its values. The plugins are reported as failed if either the plugins or
+ * the default plugins could not be loaded.
+ */
+export const useCreateRunPlugins = (
+  repositoryId: number,
+  configContext: string
+) => {
+  const pluginsQuery = useQuery({
+    ...createRunPluginsOptions(repositoryId, configContext),
+    placeholderData: keepPreviousData,
+  });
+  const defaultPluginsQuery = useQuery({
+    ...createRunDefaultPluginsOptions(repositoryId, configContext),
+    placeholderData: keepPreviousData,
+  });
+
+  return {
+    plugins: pluginsQuery.data ?? NO_PLUGINS,
+    defaultPlugins: defaultPluginsQuery.data,
+    pluginsLoading:
+      pluginsQuery.isPending ||
+      pluginsQuery.isPlaceholderData ||
+      defaultPluginsQuery.isPending ||
+      defaultPluginsQuery.isPlaceholderData,
+    pluginsLoadFailed:
+      pluginsQuery.error !== null || defaultPluginsQuery.error !== null,
+    pluginsError: pluginsQuery.error,
+    defaultPluginsError: defaultPluginsQuery.error,
+  };
+};

@@ -318,9 +318,7 @@ class AnalyzerEndpointTest : KoinTest, StringSpec() {
         }
     }
 
-    /**
-     * Simulate an incoming request to analyze a project.
-     */
+    /** Simulate an incoming request to analyze a project. */
     private suspend fun sendAnalyzerRequest() {
         mockkTransaction {
             val message = Message(messageHeader, analyzerRequest)
@@ -381,7 +379,7 @@ class AnalyzerEndpointTest : KoinTest, StringSpec() {
             }
 
             declareMock<AdminConfigService> {
-                every { loadAdminConfig(any(), any()) } returns AdminConfig.DEFAULT
+                coEvery { loadAdminConfig(any(), any()) } returns AdminConfig.DEFAULT
             }
 
             val secretsMap = mapOf(

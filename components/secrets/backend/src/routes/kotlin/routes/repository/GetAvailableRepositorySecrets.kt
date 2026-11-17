@@ -32,12 +32,11 @@ import org.eclipse.apoapsis.ortserver.components.secrets.mapToApi
 import org.eclipse.apoapsis.ortserver.services.RepositoryService
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.jsonBody
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
-import org.eclipse.apoapsis.ortserver.shared.ktorutils.standardListQueryParameters
 
 internal fun Route.getAvailableRepositorySecrets(
     repositoryService: RepositoryService,
     secretService: SecretService
-) = get("/repositories/{repositoryId}/availableSecrets", {
+) = get("repositories/{repositoryId}/availableSecrets", {
     operationId = "getAvailableRepositorySecrets"
     summary = "Get all available secrets for a repository"
     description = "Get all secrets that are available in the context of the provided repository. In addition to " +
@@ -49,7 +48,6 @@ internal fun Route.getAvailableRepositorySecrets(
         pathParameter<Long>("repositoryId") {
             description = "The ID of the repository."
         }
-        standardListQueryParameters()
     }
 
     response {
@@ -63,6 +61,10 @@ internal fun Route.getAvailableRepositorySecrets(
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The repository does not exist."
         }
     }
 }, requirePermission(RepositoryPermission.READ)) {

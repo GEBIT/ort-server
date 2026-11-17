@@ -62,6 +62,7 @@ import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolutionReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseChoices
 import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseFindingCuration
+import org.eclipse.apoapsis.ortserver.model.runs.repository.LicenseFindingCurationReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageConfiguration
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCuration
 import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCurationData
@@ -76,6 +77,7 @@ import org.eclipse.apoapsis.ortserver.model.runs.repository.Resolutions
 import org.eclipse.apoapsis.ortserver.model.runs.repository.RuleViolationResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.RuleViolationResolutionReason
 import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeInclude
 import org.eclipse.apoapsis.ortserver.model.runs.repository.SpdxLicenseChoice
 import org.eclipse.apoapsis.ortserver.model.runs.repository.VcsInfoCurationData
 import org.eclipse.apoapsis.ortserver.model.runs.repository.VcsMatcher
@@ -150,6 +152,7 @@ import org.ossreviewtoolkit.model.config.IssueResolution as OrtIssueResolution
 import org.ossreviewtoolkit.model.config.IssueResolutionReason as OrtIssueResolutionReason
 import org.ossreviewtoolkit.model.config.LicenseChoices as OrtLicenseChoices
 import org.ossreviewtoolkit.model.config.LicenseFindingCuration as OrtLicenseFindingCuration
+import org.ossreviewtoolkit.model.config.LicenseFindingCurationReason as OrtLicenseFindingCurationReason
 import org.ossreviewtoolkit.model.config.PackageConfiguration as OrtPackageConfiguration
 import org.ossreviewtoolkit.model.config.PackageLicenseChoice as OrtPackageLicenseChoice
 import org.ossreviewtoolkit.model.config.PackageManagerConfiguration as OrtPackageManagerConfiguration
@@ -162,6 +165,7 @@ import org.ossreviewtoolkit.model.config.RuleViolationResolution as OrtRuleViola
 import org.ossreviewtoolkit.model.config.RuleViolationResolutionReason as OrtRuleViolationResolutionReason
 import org.ossreviewtoolkit.model.config.ScannerConfiguration as OrtScannerConfiguration
 import org.ossreviewtoolkit.model.config.ScopeExclude as OrtScopeExclude
+import org.ossreviewtoolkit.model.config.ScopeInclude as OrtScopeInclude
 import org.ossreviewtoolkit.model.config.VcsMatcher as OrtVcsMatcher
 import org.ossreviewtoolkit.model.config.VulnerabilityResolution as OrtVulnerabilityResolution
 import org.ossreviewtoolkit.model.config.VulnerabilityResolutionReason as OrtVulnerabilityResolutionReason
@@ -286,7 +290,8 @@ fun OrtExcludes.mapToModel() = Excludes(
 fun OrtIdentifier.mapToModel() = Identifier(type = type, namespace = namespace, name = name, version = version)
 
 fun OrtIncludes.mapToModel() = Includes(
-    paths = paths.map(OrtPathInclude::mapToModel)
+    paths = paths.map(OrtPathInclude::mapToModel),
+    scopes = scopes.map(OrtScopeInclude::mapToModel)
 )
 
 fun OrtIssueResolution.mapToModel(source: ResolutionSource) = IssueResolution(
@@ -320,9 +325,18 @@ fun OrtLicenseFindingCuration.mapToModel() = LicenseFindingCuration(
     lineCount = lineCount,
     detectedLicense = detectedLicense?.toString(),
     concludedLicense = concludedLicense.toString(),
-    reason = reason.name,
+    reason = reason.mapToModel(),
     comment = comment
 )
+
+fun OrtLicenseFindingCurationReason.mapToModel() = when (this) {
+    OrtLicenseFindingCurationReason.CODE -> LicenseFindingCurationReason.CODE
+    OrtLicenseFindingCurationReason.DATA_OF -> LicenseFindingCurationReason.DATA_OF
+    OrtLicenseFindingCurationReason.DOCUMENTATION_OF -> LicenseFindingCurationReason.DOCUMENTATION_OF
+    OrtLicenseFindingCurationReason.INCORRECT -> LicenseFindingCurationReason.INCORRECT
+    OrtLicenseFindingCurationReason.NOT_DETECTED -> LicenseFindingCurationReason.NOT_DETECTED
+    OrtLicenseFindingCurationReason.REFERENCE -> LicenseFindingCurationReason.REFERENCE
+}
 
 fun OrtLicenseSource.mapToModel() = when (this) {
     OrtLicenseSource.CONCLUDED -> LicenseSource.CONCLUDED
@@ -357,7 +371,8 @@ fun OrtPackage.mapToModel() =
         vcsProcessed = vcsProcessed.mapToModel(),
         isMetadataOnly = isMetadataOnly,
         isModified = isModified,
-        sourceCodeOrigins = sourceCodeOrigins?.map { it.mapToModel() }
+        sourceCodeOrigins = sourceCodeOrigins?.map { it.mapToModel() },
+        publishedAt = publishedAt?.toKotlinInstant()
     )
 
 fun OrtPackageConfiguration.mapToModel() = PackageConfiguration(
@@ -388,7 +403,8 @@ fun OrtPackageCurationData.mapToModel() = PackageCurationData(
     isModified = isModified,
     declaredLicenseMapping = declaredLicenseMapping.mapValues { it.value.toString() },
     sourceCodeOrigins = sourceCodeOrigins?.map { it.mapToModel() },
-    labels = labels
+    labels = labels,
+    publishedAt = publishedAt?.toKotlinInstant()
 )
 
 fun OrtPackageCurationProvider.mapToModel() = PackageCurationProviderConfig(name = id)
@@ -599,6 +615,8 @@ fun OrtScanSummary.mapToModel() =
     )
 
 fun OrtScopeExclude.mapToModel() = ScopeExclude(pattern = pattern, reason = reason.name, comment = comment)
+
+fun OrtScopeInclude.mapToModel() = ScopeInclude(pattern = pattern, reason = reason.name, comment = comment)
 
 fun OrtSeverity.mapToModel() = when (this) {
     OrtSeverity.ERROR -> Severity.ERROR

@@ -42,6 +42,7 @@ dependencies {
     implementation(projects.model)
     implementation(projects.services.hierarchyService)
     implementation(projects.services.ortRunService)
+    implementation(projects.shared.coroutines)
     implementation(projects.shared.reporters)
     implementation(projects.storage.storageSpi)
     implementation(projects.transport.transportSpi)
@@ -61,7 +62,7 @@ dependencies {
     runtimeOnly(platform(projects.storage))
     runtimeOnly(platform(projects.transport))
 
-    runtimeOnly(libs.log4jToSlf4j)
+    runtimeOnly(libs.log4j.to.slf4j)
     runtimeOnly(libs.logback)
     runtimeOnly(platform(ortLibs.ortPlugins.reporters))
 
@@ -90,10 +91,8 @@ tinyJib {
         mainClass = "org.eclipse.apoapsis.ortserver.workers.reporter.EntrypointKt"
         creationTime = "USE_CURRENT_TIMESTAMP"
 
-        jvmFlags = mutableListOf("--add-opens=java.base/sun.net.www.protocol.http=ALL-UNNAMED").apply {
-            if (System.getProperty("idea.active")?.toBoolean() == true) {
-                add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5030")
-            }
+        if (System.getProperty("idea.active")?.toBoolean() == true) {
+            jvmFlags = listOf("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5030")
         }
     }
 }

@@ -45,9 +45,7 @@ import org.eclipse.apoapsis.ortserver.transport.MessageSenderFactory
 /** The name to identify the test transport implementation. */
 const val TEST_TRANSPORT_NAME = "testMessageTransport"
 
-/**
- * A test [MessageSenderFactory] implementation that is referenced by test cases.
- */
+/** A test [MessageSenderFactory] implementation that is referenced by test cases. */
 class MessageSenderFactoryForTesting : MessageSenderFactory {
     companion object {
         /** A map for storing messages sent by one of the created senders. */
@@ -75,8 +73,21 @@ class MessageSenderFactoryForTesting : MessageSenderFactory {
         }
 
         /**
-         * Make sure that a sender for the given [endpoint] has been created and return its queue of sent messages.
+         * Remove and return all messages that have been sent so far by the created senders, independent of their
+         * endpoint. This allows checking that no other messages than the expected ones have been sent.
          */
+        fun takeAllMessages(): List<Message<*>> =
+            messageQueues.values.flatMap { queue -> buildList { queue.drainTo(this) } }
+
+        /**
+         * Discard all messages that have been sent so far by the created senders. This should be called before each
+         * test that checks sent messages, so that it is not affected by messages sent by other tests.
+         */
+        fun reset() {
+            messageQueues.values.forEach { it.clear() }
+        }
+
+        /** Make sure that a sender for the given [endpoint] has been created and return its queue of sent messages. */
         private fun <T : Any> queueFor(endpoint: Endpoint<T>) = messageQueues[endpoint].shouldNotBeNull()
     }
 
@@ -109,9 +120,7 @@ class MessageSenderForTesting<T : Any>(
     }
 }
 
-/**
- * A test [MessageReceiverFactory] implementation that is referenced by test cases.
- */
+/** A test [MessageReceiverFactory] implementation that is referenced by test cases. */
 class MessageReceiverFactoryForTesting : MessageReceiverFactory {
     companion object {
         /** Stores the [Endpoint] passed to [createReceiver]. */
@@ -123,9 +132,7 @@ class MessageReceiverFactoryForTesting : MessageReceiverFactory {
         /** Stores the handler function passed to [createReceiver]. */
         var createdHandler: Any? = null
 
-        /**
-         * Reset the properties passed from the last [createReceiver] call.
-         */
+        /** Reset the properties passed from the last [createReceiver] call. */
         fun reset() {
             createdEndpoint = null
             createdConfig = null

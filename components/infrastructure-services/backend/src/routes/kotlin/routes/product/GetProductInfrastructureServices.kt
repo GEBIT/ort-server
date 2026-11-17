@@ -43,7 +43,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.standardListQueryParamete
 
 internal fun Route.getProductInfrastructureServices(
     infrastructureServiceService: InfrastructureServiceService
-) = get("/products/{productId}/infrastructure-services", {
+) = get("products/{productId}/infrastructure-services", {
     operationId = "getProductInfrastructureServices"
     summary = "List all infrastructure services of a product"
     tags = listOf("Products")
@@ -86,6 +86,10 @@ internal fun Route.getProductInfrastructureServices(
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The product does not exist."
         }
     }
 }, requirePermission(ProductPermission.READ)) {

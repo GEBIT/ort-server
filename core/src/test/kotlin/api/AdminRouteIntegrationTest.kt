@@ -20,7 +20,9 @@
 package org.eclipse.apoapsis.ortserver.core.api
 
 import io.kotest.assertions.ktor.client.shouldHaveStatus
-import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.collections.shouldBeEmpty
+import io.kotest.matchers.collections.shouldBeSingleton
+import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 
@@ -31,16 +33,30 @@ import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
-
-import kotlinx.serialization.json.Json
 
 import org.eclipse.apoapsis.ortserver.api.v1.model.PostUser
 import org.eclipse.apoapsis.ortserver.api.v1.model.User
 import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithSuperuserStatus
+import org.eclipse.apoapsis.ortserver.clients.keycloak.test.TEST_REALM
+import org.eclipse.apoapsis.ortserver.components.authorization.rights.OrganizationRole
+import org.eclipse.apoapsis.ortserver.components.authorization.rights.ProductRole
+import org.eclipse.apoapsis.ortserver.components.authorization.rights.RepositoryRole
+import org.eclipse.apoapsis.ortserver.components.authorization.service.DbAuthorizationService
 import org.eclipse.apoapsis.ortserver.core.SUPERUSER
 import org.eclipse.apoapsis.ortserver.core.TEST_USER
+import org.eclipse.apoapsis.ortserver.dao.repositories.user.DaoUserRepository
+import org.eclipse.apoapsis.ortserver.model.CompoundHierarchyId
+import org.eclipse.apoapsis.ortserver.model.OrganizationId
+import org.eclipse.apoapsis.ortserver.model.ProductId
+import org.eclipse.apoapsis.ortserver.model.RepositoryId
+import org.eclipse.apoapsis.ortserver.model.User as ModelUser
+import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
+import org.eclipse.apoapsis.ortserver.shared.apimodel.ErrorResponse
+import org.eclipse.apoapsis.ortserver.shared.apimodel.PagedResponse
+import org.eclipse.apoapsis.ortserver.shared.apimodel.PagingData
+import org.eclipse.apoapsis.ortserver.shared.apimodel.SortDirection
+import org.eclipse.apoapsis.ortserver.shared.apimodel.SortProperty
 import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 class AdminRouteIntegrationTest : AbstractIntegrationTest({
@@ -54,30 +70,97 @@ class AdminRouteIntegrationTest : AbstractIntegrationTest({
     val testTemporary = true
 
     "GET /admin/users" should {
-        "return a list of users" {
+        val expectedRealmAdmin = UserWithSuperuserStatus(
+            user = User(
+                username = "realm-admin",
+                firstName = "Realm",
+                lastName = "Admin",
+                email = "realm.admin@example.org"
+            ),
+            isSuperuser = false
+        )
+        val expectedSuperuser = UserWithSuperuserStatus(
+            user = User(
+                username = SUPERUSER.username.value,
+                firstName = SUPERUSER.firstName,
+                lastName = SUPERUSER.lastName,
+                email = SUPERUSER.email
+            ),
+            isSuperuser = true
+        )
+        val expectedUser = UserWithSuperuserStatus(
+            user = User(
+                username = TEST_USER.username.value,
+                firstName = TEST_USER.firstName,
+                lastName = TEST_USER.lastName,
+                email = TEST_USER.email
+            ),
+            isSuperuser = false
+        )
+
+        "return a page of users in the default order" {
             integrationTestApplication {
                 val response = superuserClient.get("/api/v1/admin/users")
 
                 response shouldHaveStatus HttpStatusCode.OK
-                val users = Json.decodeFromString<Set<UserWithSuperuserStatus>>(response.bodyAsText())
-                users shouldContain UserWithSuperuserStatus(
-                    user = User(
-                        username = SUPERUSER.username.value,
-                        firstName = SUPERUSER.firstName,
-                        lastName = SUPERUSER.lastName,
-                        email = SUPERUSER.email
-                    ),
-                    isSuperuser = true
+                val users = response.body<PagedResponse<UserWithSuperuserStatus>>()
+                users.data shouldContainExactly listOf(expectedRealmAdmin, expectedSuperuser, expectedUser)
+                users.pagination shouldBe PagingData(
+                    limit = ListQueryParameters.DEFAULT_LIMIT,
+                    offset = 0,
+                    totalCount = 3,
+                    sortProperties = listOf(SortProperty("username", SortDirection.ASCENDING))
                 )
-                users shouldContain UserWithSuperuserStatus(
-                    user = User(
-                        username = TEST_USER.username.value,
-                        firstName = TEST_USER.firstName,
-                        lastName = TEST_USER.lastName,
-                        email = TEST_USER.email
-                    ),
-                    isSuperuser = false
+            }
+        }
+
+        "apply limit and offset while preserving the total count" {
+            integrationTestApplication {
+                val response = superuserClient.get("/api/v1/admin/users?limit=1&offset=1")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                val users = response.body<PagedResponse<UserWithSuperuserStatus>>()
+                users.data shouldContainExactly listOf(expectedSuperuser)
+                users.pagination shouldBe PagingData(
+                    limit = 1,
+                    offset = 1,
+                    totalCount = 3,
+                    sortProperties = listOf(SortProperty("username", SortDirection.ASCENDING))
                 )
+            }
+        }
+
+        "sort users and expose the requested sort property" {
+            integrationTestApplication {
+                val response = superuserClient.get("/api/v1/admin/users?sort=-username")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                val users = response.body<PagedResponse<UserWithSuperuserStatus>>()
+                users.data shouldContainExactly listOf(expectedUser, expectedSuperuser, expectedRealmAdmin)
+                users.pagination.sortProperties shouldBe
+                        listOf(SortProperty("username", SortDirection.DESCENDING))
+            }
+        }
+
+        "search users before paging" {
+            integrationTestApplication {
+                val response = superuserClient.get("/api/v1/admin/users?search=SuPeR&limit=1")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                val users = response.body<PagedResponse<UserWithSuperuserStatus>>()
+                users.data.shouldBeSingleton { it shouldBe expectedSuperuser }
+                users.pagination.totalCount shouldBe 1
+            }
+        }
+
+        "reject unsupported sort fields" {
+            integrationTestApplication {
+                val response = superuserClient.get("/api/v1/admin/users?sort=unknown")
+
+                response shouldHaveStatus HttpStatusCode.BadRequest
+                val error = response.body<ErrorResponse>()
+                error.message shouldBe "Invalid query parameters."
+                error.cause shouldBe "Unsupported sort field: 'unknown'."
             }
         }
 
@@ -149,7 +232,89 @@ class AdminRouteIntegrationTest : AbstractIntegrationTest({
     }
 
     "DELETE /admin/users" should {
-        "delete a user" {
+        "remove all roles and not restore them when the username is recreated" {
+            integrationTestApplication {
+                val client = superuserClient
+                val username = TEST_USER.username.value
+                val authorizationService = DbAuthorizationService(dbExtension.db)
+                val repositoryId = CompoundHierarchyId.forRepository(
+                    OrganizationId(dbExtension.fixtures.organization.id),
+                    ProductId(dbExtension.fixtures.product.id),
+                    RepositoryId(dbExtension.fixtures.repository.id)
+                )
+                val assignments = listOf(
+                    CompoundHierarchyId.WILDCARD to OrganizationRole.ADMIN,
+                    repositoryId.parent!!.parent!! to OrganizationRole.WRITER,
+                    repositoryId.parent!! to ProductRole.WRITER,
+                    repositoryId to RepositoryRole.WRITER
+                )
+                assignments.forEach { (hierarchyId, role) ->
+                    authorizationService.assignRole(username, role, hierarchyId)
+                }
+
+                val response = client.delete("/api/v1/admin/users") {
+                    parameter("username", username)
+                }
+
+                response shouldHaveStatus HttpStatusCode.NoContent
+
+                val createResponse = client.post("/api/v1/admin/users") {
+                    setBody(
+                        PostUser(
+                            username = username,
+                            firstName = testFirstName,
+                            lastName = testLastName,
+                            email = testEmail,
+                            password = testPassword,
+                            temporary = testTemporary
+                        )
+                    )
+                }
+                createResponse shouldHaveStatus HttpStatusCode.Created
+                assignments.forEach { (hierarchyId, _) ->
+                    val effectiveRole = authorizationService.getEffectiveRole(username, hierarchyId)
+                    effectiveRole.isSuperuser shouldBe false
+                    effectiveRole.getOrganizationPermissions().shouldBeEmpty()
+                    effectiveRole.getProductPermissions().shouldBeEmpty()
+                    effectiveRole.getRepositoryPermissions().shouldBeEmpty()
+                }
+            }
+        }
+
+        "keep a deleted user, so that their runs still show who started them" {
+            integrationTestApplication {
+                val userId = keycloak.keycloakAdminClient.realm(TEST_REALM).users()
+                    .searchByUsername(TEST_USER.username.value, true).single().id
+                val user = ModelUser(userId, TEST_USER.username.value, "Test User")
+                val run = dbExtension.fixtures.ortRunRepository.create(
+                    dbExtension.fixtures.repository.id,
+                    "revision",
+                    null,
+                    dbExtension.fixtures.jobConfigurations,
+                    labels = emptyMap(),
+                    traceId = null,
+                    environmentConfigPath = null,
+                    userDisplayName = user
+                )
+
+                val response = superuserClient.delete("/api/v1/admin/users") {
+                    parameter("username", TEST_USER.username.value)
+                }
+
+                response shouldHaveStatus HttpStatusCode.NoContent
+
+                val storedUser = DaoUserRepository(dbExtension.db).get(user.userId).shouldNotBeNull()
+                storedUser.username shouldBe user.username
+                storedUser.fullName shouldBe user.fullName
+                storedUser.deletedAt.shouldNotBeNull()
+
+                val runUser = dbExtension.fixtures.ortRunRepository.get(run.id)?.userDisplayName.shouldNotBeNull()
+                runUser.username shouldBe user.username
+                runUser.fullName shouldBe user.fullName
+            }
+        }
+
+        "delete a user without role assignments" {
             integrationTestApplication {
                 val response = superuserClient.delete("/api/v1/admin/users") {
                     parameter("username", TEST_USER.username.value)
@@ -159,7 +324,7 @@ class AdminRouteIntegrationTest : AbstractIntegrationTest({
             }
         }
 
-        "respond with an internal error if the user doesn't exist" {
+        "respond with NotFound if the user doesn't exist" {
             integrationTestApplication {
                 superuserClient.delete("/api/v1/admin/users") {
                     parameter("username", TEST_USER.username.value)
@@ -168,7 +333,7 @@ class AdminRouteIntegrationTest : AbstractIntegrationTest({
                     parameter("username", TEST_USER.username.value)
                 }
 
-                response shouldHaveStatus HttpStatusCode.InternalServerError
+                response shouldHaveStatus HttpStatusCode.NotFound
             }
         }
 
@@ -190,9 +355,24 @@ class AdminRouteIntegrationTest : AbstractIntegrationTest({
 
                 val usersResponse = superuserClient.get("/api/v1/admin/users")
                 usersResponse shouldHaveStatus HttpStatusCode.OK
-                usersResponse.body<List<UserWithSuperuserStatus>>()
+                usersResponse.body<PagedResponse<UserWithSuperuserStatus>>().data
                     .find { it.user.username == TEST_USER.username.value }
                     .shouldNotBeNull().isSuperuser shouldBe true
+            }
+        }
+
+        "store the ID of the user with the superuser role" {
+            integrationTestApplication {
+                val response = superuserClient.put("/api/v1/admin/users/${TEST_USER.username.value}/superuser")
+
+                response shouldHaveStatus HttpStatusCode.NoContent
+
+                val authorizationService = DbAuthorizationService(dbExtension.db)
+                val username = TEST_USER.username.value
+                authorizationService.getEffectiveRole(username, CompoundHierarchyId.WILDCARD, testUserId())
+                    .isSuperuser shouldBe true
+                authorizationService.getEffectiveRole(username, CompoundHierarchyId.WILDCARD, OTHER_USER_ID)
+                    .isSuperuser shouldBe false
             }
         }
 
@@ -223,7 +403,7 @@ class AdminRouteIntegrationTest : AbstractIntegrationTest({
 
                 val usersResponse = superuserClient.get("/api/v1/admin/users")
                 usersResponse shouldHaveStatus HttpStatusCode.OK
-                usersResponse.body<List<UserWithSuperuserStatus>>()
+                usersResponse.body<PagedResponse<UserWithSuperuserStatus>>().data
                     .find { it.user.username == TEST_USER.username.value }
                     .shouldNotBeNull().isSuperuser shouldBe false
             }
@@ -245,7 +425,7 @@ class AdminRouteIntegrationTest : AbstractIntegrationTest({
 
                 val usersResponse = superuserClient.get("/api/v1/admin/users")
                 usersResponse shouldHaveStatus HttpStatusCode.OK
-                usersResponse.body<List<UserWithSuperuserStatus>>()
+                usersResponse.body<PagedResponse<UserWithSuperuserStatus>>().data
                     .find { it.user.username == SUPERUSER.username.value }
                     .shouldNotBeNull().isSuperuser shouldBe true
             }
@@ -258,3 +438,6 @@ class AdminRouteIntegrationTest : AbstractIntegrationTest({
         }
     }
 }, createKeycloakRealmPerTest = true)
+
+/** The ID of a user other than [TEST_USER] who had the same username. */
+private const val OTHER_USER_ID = "other-user-id"

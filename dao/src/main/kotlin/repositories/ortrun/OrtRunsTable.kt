@@ -36,8 +36,8 @@ import org.eclipse.apoapsis.ortserver.dao.repositories.repositoryconfiguration.R
 import org.eclipse.apoapsis.ortserver.dao.repositories.repositoryconfiguration.RepositoryConfigurationsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.scannerjob.ScannerJobDao
 import org.eclipse.apoapsis.ortserver.dao.repositories.scannerjob.ScannerJobsTable
-import org.eclipse.apoapsis.ortserver.dao.repositories.userDisplayName.UserDisplayNameDao
-import org.eclipse.apoapsis.ortserver.dao.repositories.userDisplayName.UserDisplayNamesTable
+import org.eclipse.apoapsis.ortserver.dao.repositories.user.UserDao
+import org.eclipse.apoapsis.ortserver.dao.repositories.user.UsersTable
 import org.eclipse.apoapsis.ortserver.dao.tables.NestedRepositoriesTable
 import org.eclipse.apoapsis.ortserver.dao.tables.NestedRepositoryDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.OrtRunIssueDao
@@ -54,6 +54,7 @@ import org.eclipse.apoapsis.ortserver.model.JobSummaries
 import org.eclipse.apoapsis.ortserver.model.OrtRun
 import org.eclipse.apoapsis.ortserver.model.OrtRunStatus
 import org.eclipse.apoapsis.ortserver.model.OrtRunSummary
+import org.eclipse.apoapsis.ortserver.model.runs.repository.RunIncludesExcludes
 
 import org.jetbrains.exposed.v1.core.dao.id.EntityID
 import org.jetbrains.exposed.v1.core.eq
@@ -61,9 +62,7 @@ import org.jetbrains.exposed.v1.dao.LongEntity
 import org.jetbrains.exposed.v1.datetime.timestamp
 import org.jetbrains.exposed.v1.jdbc.select
 
-/**
- * A table to represent an ORT run.
- */
+/** A table to represent an ORT run. */
 object OrtRunsTable : SortableTable("ort_runs") {
     val repositoryId = reference("repository_id", RepositoriesTable)
 
@@ -85,8 +84,9 @@ object OrtRunsTable : SortableTable("ort_runs") {
     val path = text("path").nullable()
     val traceId = text("trace_id").nullable()
     val environmentConfigPath = text("environment_config_path").nullable()
-    val userDisplayName = reference("user_id", UserDisplayNamesTable.id).nullable()
+    val userDisplayName = reference("user_id", UsersTable.id).nullable()
     val ortServerVersion = text("ort_server_version").nullable()
+    val includesExcludes = jsonb<RunIncludesExcludes>("includes_excludes").nullable()
 
     /** Get the id of the analyzer run for the given ORT run [id]. Returns `null` if no run is found. */
     fun getAnalyzerRunIdById(id: Long): Long? =
@@ -120,8 +120,9 @@ class OrtRunDao(id: EntityID<Long>) : LongEntity(id) {
     var vcsId by OrtRunsTable.vcsId
     var vcsProcessedId by OrtRunsTable.vcsProcessedId
     var environmentConfigPath by OrtRunsTable.environmentConfigPath
-    var userDisplayName by UserDisplayNameDao optionalReferencedOn OrtRunsTable.userDisplayName
+    var userDisplayName by UserDao optionalReferencedOn OrtRunsTable.userDisplayName
     var ortServerVersion by OrtRunsTable.ortServerVersion
+    var includesExcludes by OrtRunsTable.includesExcludes
 
     val advisorJob by AdvisorJobDao optionalBackReferencedOn AdvisorJobsTable.ortRunId
     val analyzerJob by AnalyzerJobDao optionalBackReferencedOn AnalyzerJobsTable.ortRunId
@@ -157,7 +158,8 @@ class OrtRunDao(id: EntityID<Long>) : LongEntity(id) {
         traceId = traceId,
         environmentConfigPath = environmentConfigPath,
         userDisplayName = userDisplayName?.mapToModel(),
-        ortServerVersion = ortServerVersion
+        ortServerVersion = ortServerVersion,
+        includesExcludes = includesExcludes
     )
 
     /**

@@ -21,13 +21,20 @@
 
 import path from 'path';
 
+import babel from '@rolldown/plugin-babel';
 import { tanstackRouter } from '@tanstack/router-vite-plugin';
-import react from '@vitejs/plugin-react';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), tanstackRouter()],
+  plugins: [
+    react(),
+    babel({
+      presets: [reactCompilerPreset({ compilationMode: 'infer' })],
+    }),
+    tanstackRouter(),
+  ],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),
@@ -36,5 +43,12 @@ export default defineConfig({
   test: {
     include: ['tests/unit/**/*.{test,spec}.{ts,tsx}'],
     setupFiles: ['./tests/unit/setup.ts'],
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/api/**', 'src/routeTree.gen.ts', 'src/**/*.d.ts'],
+      reporter: ['text-summary', 'html', 'json-summary', 'lcov'],
+      reportsDirectory: 'coverage',
+    },
   },
 });

@@ -23,8 +23,6 @@ import com.github.michaelbull.result.getOr
 
 import org.eclipse.apoapsis.ortserver.components.resolutions.ruleviolations.RuleViolationResolutionService
 import org.eclipse.apoapsis.ortserver.dao.QueryParametersException
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.repositories.evaluatorjob.EvaluatorJobsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.evaluatorrun.EvaluatorRunsRuleViolationsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.evaluatorrun.EvaluatorRunsTable
@@ -32,6 +30,7 @@ import org.eclipse.apoapsis.ortserver.dao.repositories.evaluatorrun.ResolvedRule
 import org.eclipse.apoapsis.ortserver.dao.repositories.evaluatorrun.RuleViolationsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.repositoryconfiguration.RuleViolationResolutionsTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifiersTable
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.dao.utils.applyFilter
 import org.eclipse.apoapsis.ortserver.dao.utils.applyILike
 import org.eclipse.apoapsis.ortserver.dao.utils.calculateResolutionMessageHash
@@ -85,21 +84,19 @@ private class RuleViolationQueryContext(
     val statusExpression: ExpressionWithColumnType<String>
 )
 
-/**
- * A service to interact with rule violations.
- */
+/** A service to interact with rule violations. */
 class RuleViolationService(
     private val db: Database,
     private val ortRunService: OrtRunService,
     private val ruleViolationResolutionService: RuleViolationResolutionService
 ) {
     /** Return the distinct rule names found in the given ORT run, sorted case-insensitively. */
-    fun getRulesForOrtRunId(ortRunId: Long): List<String> {
+    suspend fun getRulesForOrtRunId(ortRunId: Long): List<String> {
         if (ortRunService.getOrtRun(ortRunId) == null) {
             throw ResourceNotFoundException("ORT run with ID $ortRunId not found.")
         }
 
-        return db.blockingQuery {
+        return db.transaction {
             RuleViolationsTable
                 .innerJoin(EvaluatorRunsRuleViolationsTable)
                 .innerJoin(EvaluatorRunsTable)
@@ -113,7 +110,7 @@ class RuleViolationService(
     }
 
     /** Return a page of rule violations for the given ORT run after applying the requested filters. */
-    fun listForOrtRunId(
+    suspend fun listForOrtRunId(
         ortRunId: Long,
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
         ruleViolationFilter: RuleViolationFilters = RuleViolationFilters()
@@ -122,14 +119,14 @@ class RuleViolationService(
             "ORT run with ID $ortRunId not found."
         )
 
-        return db.blockingQuery {
+        return db.transaction {
             val context = buildListForOrtRunIdQueryContext(ortRunId, ruleViolationFilter)
 
             val totalCount = context.query.count()
             val ruleViolationIds = fetchPagedRuleViolationIds(context, parameters)
 
             if (ruleViolationIds.isEmpty()) {
-                return@blockingQuery ListQueryResult(emptyList(), parameters, totalCount)
+                return@transaction ListQueryResult(emptyList(), parameters, totalCount)
             }
 
             val ruleViolationRows = fetchRuleViolationRows(ruleViolationIds)
@@ -349,7 +346,7 @@ class RuleViolationService(
                 }
             )
 
-    private fun getServerResolutions(repositoryId: Long): List<RuleViolationResolution> =
+    private suspend fun getServerResolutions(repositoryId: Long): List<RuleViolationResolution> =
         ruleViolationResolutionService.getResolutionsForRepository(RepositoryId(repositoryId))
             .getOr(emptyList())
 
@@ -422,7 +419,7 @@ class RuleViolationService(
         this?.split(',')?.mapTo(mutableSetOf()) { enumValueOf<LicenseSource>(it) }.orEmpty()
 
     /** Count rule violations found in provided ORT runs. */
-    suspend fun countForOrtRunIds(vararg ortRunIds: Long): Long = db.dbQuery {
+    suspend fun countForOrtRunIds(vararg ortRunIds: Long): Long = db.transaction {
         RuleViolationsTable
             .innerJoin(EvaluatorRunsRuleViolationsTable)
             .innerJoin(EvaluatorRunsTable)
@@ -434,7 +431,7 @@ class RuleViolationService(
     }
 
     /** Count rule violations by severity in provided ORT runs. */
-    suspend fun countBySeverityForOrtRunIds(vararg ortRunIds: Long): CountByCategory<Severity> = db.dbQuery {
+    suspend fun countBySeverityForOrtRunIds(vararg ortRunIds: Long): CountByCategory<Severity> = db.transaction {
         val countAlias = Count(RuleViolationsTable.id, true)
 
         val severityToCountMap = Severity.entries.associateWithTo(mutableMapOf()) { 0L }
@@ -446,15 +443,15 @@ class RuleViolationService(
             .select(RuleViolationsTable.severity, countAlias)
             .where { EvaluatorJobsTable.ortRunId inList ortRunIds.asList() }
             .groupBy(RuleViolationsTable.severity)
-            .map { row ->
-                severityToCountMap.put(row[RuleViolationsTable.severity], row[countAlias])
+            .forEach { row ->
+                severityToCountMap[row[RuleViolationsTable.severity]] = row[countAlias]
             }
 
         CountByCategory(severityToCountMap)
     }
 
     /** Count unresolved rule violations found in provided ORT runs. */
-    suspend fun countUnresolvedForOrtRunIds(vararg ortRunIds: Long): Long = db.dbQuery {
+    suspend fun countUnresolvedForOrtRunIds(vararg ortRunIds: Long): Long = db.transaction {
         val resolvedViolationIdsSubquery = ResolvedRuleViolationsTable
             .select(ResolvedRuleViolationsTable.ruleViolationId)
             .where { ResolvedRuleViolationsTable.ortRunId inList ortRunIds.asList() }
@@ -473,7 +470,9 @@ class RuleViolationService(
     }
 
     /** Count unresolved rule violations by severity for provided ORT runs. */
-    suspend fun countUnresolvedBySeverityForOrtRunIds(vararg ortRunIds: Long): CountByCategory<Severity> = db.dbQuery {
+    suspend fun countUnresolvedBySeverityForOrtRunIds(
+        vararg ortRunIds: Long
+    ): CountByCategory<Severity> = db.transaction {
         val countAlias = Count(RuleViolationsTable.id, true)
 
         val severityToCountMap = Severity.entries.associateWithTo(mutableMapOf()) { 0L }
@@ -492,8 +491,8 @@ class RuleViolationService(
                     not(RuleViolationsTable.id inSubQuery resolvedViolationIdsSubquery)
             }
             .groupBy(RuleViolationsTable.severity)
-            .map { row ->
-                severityToCountMap.put(row[RuleViolationsTable.severity], row[countAlias])
+            .forEach { row ->
+                severityToCountMap[row[RuleViolationsTable.severity]] = row[countAlias]
             }
 
         CountByCategory(severityToCountMap)

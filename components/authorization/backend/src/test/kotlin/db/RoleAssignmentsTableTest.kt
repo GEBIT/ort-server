@@ -25,9 +25,9 @@ import io.kotest.matchers.nulls.beNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
-import org.eclipse.apoapsis.ortserver.components.authorization.db.RoleAssignmentsTable.userId
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
+import org.eclipse.apoapsis.ortserver.dao.transaction
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
 import org.jetbrains.exposed.v1.jdbc.insert
@@ -37,9 +37,11 @@ class RoleAssignmentsTableTest : StringSpec() {
     private val dbExtension = extension(DatabaseTestExtension())
 
     init {
+        tags(Integration)
+
         "Inserting an entity without a role reference should fail" {
             shouldThrow<ExposedSQLException> {
-                dbExtension.db.blockingQuery {
+                dbExtension.db.transaction {
                     RoleAssignmentsTable.insert {
                         it[organizationId] = dbExtension.fixtures.organization.id
                         it[userId] = "user-id"
@@ -50,7 +52,7 @@ class RoleAssignmentsTableTest : StringSpec() {
 
         "Inserting an entity with multiple role references should fail" {
             shouldThrow<ExposedSQLException> {
-                dbExtension.db.blockingQuery {
+                dbExtension.db.transaction {
                     RoleAssignmentsTable.insert {
                         it[organizationId] = dbExtension.fixtures.organization.id
                         it[userId] = "user-id"
@@ -63,7 +65,7 @@ class RoleAssignmentsTableTest : StringSpec() {
 
         "Inserting multiple entities for the same user and element should fail" {
             shouldThrow<ExposedSQLException> {
-                dbExtension.db.blockingQuery {
+                dbExtension.db.transaction {
                     RoleAssignmentsTable.insert {
                         it[organizationId] = dbExtension.fixtures.organization.id
                         it[productId] = dbExtension.fixtures.product.id
@@ -84,7 +86,7 @@ class RoleAssignmentsTableTest : StringSpec() {
         }
 
         "A valid entity can be inserted and retrieved" {
-            val assignmentId = dbExtension.db.blockingQuery {
+            val assignmentId = dbExtension.db.transaction {
                 RoleAssignmentsTable.insert {
                     it[organizationId] = dbExtension.fixtures.organization.id
                     it[userId] = "user-id"
@@ -92,7 +94,7 @@ class RoleAssignmentsTableTest : StringSpec() {
                 } get RoleAssignmentsTable.id
             }
 
-            dbExtension.db.blockingQuery {
+            dbExtension.db.transaction {
                 val row = RoleAssignmentsTable.selectAll().single()
 
                 row[RoleAssignmentsTable.id] shouldBe assignmentId

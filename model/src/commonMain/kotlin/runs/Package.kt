@@ -19,6 +19,8 @@
 
 package org.eclipse.apoapsis.ortserver.model.runs
 
+import kotlin.time.Instant
+
 import org.eclipse.apoapsis.ortserver.model.SourceCodeOrigin
 import org.eclipse.apoapsis.ortserver.model.util.FilterOperatorAndValue
 
@@ -38,14 +40,15 @@ data class Package(
     val isMetadataOnly: Boolean = false,
     val isModified: Boolean = false,
     val sourceCodeOrigins: List<SourceCodeOrigin>? = null,
-    val labels: Map<String, String> = emptyMap()
+    val labels: Map<String, String> = emptyMap(),
+
+    /** The time when the package was published, or null if it is unknown. */
+    val publishedAt: Instant? = null
 )
 
-/**
- * Object containing values to filter a packages listing with.
- */
+/** Object containing values to filter a packages listing with. */
 data class PackageFilters(
-    /** Substring filter for identifier. Null if not set. */
+    /** Substring or exact filter for the full identifier. Null if not set. */
     val identifier: FilterOperatorAndValue<String>? = null,
 
     /** Substring filter for purl. Null if not set. */

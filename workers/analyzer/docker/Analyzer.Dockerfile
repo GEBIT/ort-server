@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.27
+# syntax=docker/dockerfile:1.29
 
 # This Dockerfile is the base image for the Analyzer Docker image. It contains all the tooling required to run the
 # Analyzer.
@@ -21,9 +21,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # License-Filename: LICENSE
 
+ARG ABOM_VERSION=0.2.1
 ARG ANDROID_CMD_VERSION=13114758
 ARG BAZELISK_VERSION=1.29.0
 ARG BOWER_VERSION=1.8.14
+ARG BUILDOZER_VERSION=f6a1982250030df9c2d24a675a04f150ff6aca6b # v8.5.1
 ARG BUN_VERSION=1.3.14
 ARG COCOAPODS_VERSION=1.16.2
 ARG COREPACK_VERSION=0.34.7
@@ -34,11 +36,12 @@ ARG CONAN2_VERSION=2.21.0
 ARG DART_VERSION=2.18.4
 ARG DOTNET_VERSION=6.0
 ARG GLEAM_VERSION=1.13.0
-ARG GO_VERSION=1.25.0
+ARG GO_VERSION=1.27.0
 ARG HASKELL_STACK_VERSION=2.13.1
 ARG FNM_VERSION=1.38.1
 ARG NODEJS_VERSION=24.15.0
 ARG NUGET_INSPECTOR_VERSION=0.10.0
+ARG PHP_VERSION=8.3
 ARG PIP_VERSION=25.2.0
 ARG PYENV_GIT_TAG=v2.6.11
 ARG PYTHON_INSPECTOR_VERSION=0.15.2
@@ -59,16 +62,20 @@ ARG BASE_IMAGE_TAG="latest"
 FROM ${BASE_REGISTRY}ort-server-base-image:$BASE_IMAGE_TAG AS ort-base-image
 
 # Check and set apt proxy
-COPY scripts/set_apt_proxy.sh /etc/analyzer_scripts/set_apt_proxy.sh
+COPY --chmod=755 scripts/set_apt_proxy.sh /etc/analyzer_scripts/set_apt_proxy.sh
 RUN /etc/analyzer_scripts/set_apt_proxy.sh
 
 # Base package set
 RUN --mount=type=cache,target=/var/cache,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=tmpfs,target=/var/log \
-    sudo apt-get update \
+    sudo apt-get update -qq \
+    && DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends extrepo \
+    && sudo extrepo enable mise \
+    && sudo apt-get update -qq \
     && DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends \
     ca-certificates \
+    cmake \
     coreutils \
     curl \
     dirmngr \
@@ -88,6 +95,7 @@ RUN --mount=type=cache,target=/var/cache,sharing=locked \
     locales \
     lzma \
     make \
+    mise \
     netbase \
     openssh-client \
     openssl \
@@ -423,6 +431,7 @@ COPY --from=dotnetbuild /opt/dotnet /opt/dotnet
 FROM ort-base-image AS bazelbuild
 
 ARG BAZELISK_VERSION
+ARG BUILDOZER_VERSION
 
 ENV BAZEL_HOME=/opt/bazel
 ENV GOBIN=/opt/go/bin
@@ -437,7 +446,7 @@ RUN mkdir -p $BAZEL_HOME/bin \
 
 COPY --from=gobuild /opt/go /opt/go
 
-RUN $GOBIN/go install github.com/bazelbuild/buildtools/buildozer@latest && chmod a+x $GOBIN/buildozer
+RUN $GOBIN/go install github.com/bazelbuild/buildtools/buildozer@$BUILDOZER_VERSION && chmod a+x $GOBIN/buildozer
 
 FROM scratch AS bazel
 COPY --from=bazelbuild /opt/bazel /opt/bazel
@@ -481,7 +490,9 @@ COPY --from=gleambuild /opt/gleam /opt/gleam
 # Components container
 FROM ort-base-image AS components
 
+ARG ABOM_VERSION
 ARG COMPOSER_VERSION
+ARG PHP_VERSION
 
 # Remove ort build scripts
 RUN sudo rm -rf /etc/analyzer_scripts
@@ -490,10 +501,16 @@ RUN sudo rm -rf /etc/analyzer_scripts
 RUN --mount=type=cache,target=/var/cache,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=tmpfs,target=/var/log \
+    curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x14aa40ec0831756756d7f66c4f4ea0aae5267a6c" | sudo gpg --dearmor -o /usr/share/keyrings/ondrej-php-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/ondrej-php-keyring.gpg] https://ppa.launchpadcontent.net/ondrej/php/ubuntu noble main" | sudo tee /etc/apt/sources.list.d/ondrej-php.list && \
     sudo apt-get update && \
     DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends \
-        php \
+        php${PHP_VERSION}-cli \
         subversion
+
+ENV ABOM_HOME=/opt/abom
+ENV PATH=$PATH:$ABOM_HOME
+RUN sudo mise install-into github:JulietSecurity/abom@$ABOM_VERSION $ABOM_HOME
 
 # Python
 ENV PYENV_ROOT=/opt/python
@@ -592,4 +609,4 @@ COPY --from=gleam --chown=$USER:$USER $GLEAM_HOME $GLEAM_HOME
 # Make sure the user executing the container has access rights in the $CARGO_HOME directory.
 RUN sudo chgrp -R 0 $CARGO_HOME && sudo chmod -R g+rwX $CARGO_HOME
 
-COPY scripts/await.sh /etc/analyzer_scripts/await.sh
+COPY --chmod=755 scripts/await.sh /etc/analyzer_scripts/await.sh

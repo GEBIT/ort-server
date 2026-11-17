@@ -20,7 +20,7 @@
 package org.eclipse.apoapsis.ortserver.workers.common.env.definition
 
 import org.eclipse.apoapsis.ortserver.model.CredentialsType
-import org.eclipse.apoapsis.ortserver.workers.common.ResolvedInfrastructureService
+import org.eclipse.apoapsis.ortserver.shared.authenticator.ResolvedInfrastructureService
 
 /**
  * A specific [EnvironmentServiceDefinition] class for generating the NuGet _NuGet.Config_ file with configuration
@@ -33,14 +33,10 @@ class NuGetDefinition(
 
     credentialsTypes: Set<CredentialsType>?,
 
-    /**
-     * The name to assign to the package source.
-     */
+    /** The name to assign to the package source. */
     val sourceName: String,
 
-    /**
-     * The path or URL of the package source.
-     */
+    /** The path or URL of the package source. */
     val sourcePath: String,
 
     /**
@@ -53,9 +49,7 @@ class NuGetDefinition(
      */
     val sourceProtocolVersion: String? = null,
 
-    /**
-     * Defines the authentication type for this package source.
-     */
+    /** Defines the authentication type for this package source. */
     val authMode: NuGetAuthMode = NuGetAuthMode.API_KEY
 ) : EnvironmentServiceDefinition(service, credentialsTypes)
 

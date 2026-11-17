@@ -39,7 +39,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 
 internal fun Route.patchProductSecret(secretService: SecretService) =
-    patch("/products/{productId}/secrets/{secretName}", {
+    patch("products/{productId}/secrets/{secretName}", {
         operationId = "patchProductSecret"
         summary = "Update a secret of a product"
         tags = listOf("Products")
@@ -58,7 +58,7 @@ internal fun Route.patchProductSecret(secretService: SecretService) =
                         description = "New access token for Maven Repo 1".asPresent()
                     )
                 }
-                description = "Set the values that should be updated. To delete a value, set it explicitly to null."
+                description = "Set the values that should be updated. Omitted values are not changed."
             }
         }
 
@@ -67,9 +67,13 @@ internal fun Route.patchProductSecret(secretService: SecretService) =
                 description = "Success"
                 jsonBody<Secret> {
                     example("Update Secret") {
-                        value = Secret(name = "token_maven_repo_1", description = "New access token for Maven Repo 1")
+                        value = Secret(name = "token-maven-repo-1", description = "New access token for Maven Repo 1")
                     }
                 }
+            }
+
+            HttpStatusCode.NotFound to {
+                description = "The product or the secret does not exist."
             }
         }
     }, requirePermission(ProductPermission.WRITE_SECRETS)) {

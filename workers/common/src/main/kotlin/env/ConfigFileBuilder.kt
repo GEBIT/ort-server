@@ -29,9 +29,9 @@ import kotlin.random.Random
 
 import org.eclipse.apoapsis.ortserver.components.adminconfig.MavenCentralMirror
 import org.eclipse.apoapsis.ortserver.model.Secret
-import org.eclipse.apoapsis.ortserver.workers.common.auth.InfraSecretResolverFun
-import org.eclipse.apoapsis.ortserver.workers.common.auth.SecretResolverFun
-import org.eclipse.apoapsis.ortserver.workers.common.auth.resolveSecrets
+import org.eclipse.apoapsis.ortserver.shared.authenticator.InfraSecretResolverFun
+import org.eclipse.apoapsis.ortserver.shared.authenticator.SecretResolverFun
+import org.eclipse.apoapsis.ortserver.shared.authenticator.resolveSecrets
 
 import org.ossreviewtoolkit.utils.common.Os
 import org.ossreviewtoolkit.utils.common.div
@@ -216,9 +216,7 @@ class ConfigFileBuilder(
     }
 }
 
-/**
- * An enumeration class to represent the typical environment variables that define proxy settings.
- */
+/** An enumeration class to represent the typical environment variables that define proxy settings. */
 enum class ProxyVariables(private val variableName: String) {
     HTTP_PROXY("HTTP_PROXY"),
     HTTPS_PROXY("HTTPS_PROXY"),
@@ -231,9 +229,7 @@ enum class ProxyVariables(private val variableName: String) {
     fun getValue(): String? = System.getenv(variableName) ?: System.getenv(variableName.lowercase())
 }
 
-/**
- * An enumeration class to represent the typical system properties that define proxy settings.
- */
+/** An enumeration class to represent the typical system properties that define proxy settings. */
 enum class ProxySystemProperties(private val propertyName: String) {
     HTTP_PROXY_HOST("http.proxyHost"),
     HTTP_PROXY_PORT("http.proxyPort"),
@@ -272,9 +268,7 @@ data class ProxyConfigFromSystemProperties(
     val nonProxyHosts: String?
 )
 
-/**
- * A data class that defines a single proxy server with configuration taken from standard Java system properties.
- */
+/** A data class that defines a single proxy server with configuration taken from standard Java system properties. */
 data class ProxyFromSystemProperties(
     val host: String,
     val port: String

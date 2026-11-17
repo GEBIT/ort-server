@@ -23,7 +23,6 @@ package org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun
 
 import kotlin.time.Instant
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
 import org.eclipse.apoapsis.ortserver.dao.mapAndDeduplicate
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerjob.AnalyzerJobDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.DeclaredLicenseDao
@@ -32,6 +31,7 @@ import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifierDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.OrtRunIssueDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.RemoteArtifactDao
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.VcsInfoDao
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.repositories.AnalyzerRunRepository
 import org.eclipse.apoapsis.ortserver.model.runs.AnalyzerConfiguration
 import org.eclipse.apoapsis.ortserver.model.runs.AnalyzerRun
@@ -48,11 +48,9 @@ import org.eclipse.apoapsis.ortserver.model.runs.ShortestDependencyPath
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
 
-/**
- * An implementation of [AnalyzerRunRepository] that stores analyzer runs in [AnalyzerRunsTable].
- */
+/** An implementation of [AnalyzerRunRepository] that stores analyzer runs in [AnalyzerRunsTable]. */
 class DaoAnalyzerRunRepository(private val db: Database) : AnalyzerRunRepository {
-    override fun create(
+    override suspend fun create(
         analyzerJobId: Long,
         startTime: Instant,
         endTime: Instant,
@@ -65,7 +63,7 @@ class DaoAnalyzerRunRepository(private val db: Database) : AnalyzerRunRepository
         shortestDependencyPaths: Map<Identifier, List<ShortestDependencyPath>>,
         excludedPackageIds: Set<Identifier>,
         excludedProjectIds: Set<Identifier>
-    ): AnalyzerRun = db.blockingQuery {
+    ): AnalyzerRun = db.transaction {
         val jobDao = AnalyzerJobDao[analyzerJobId]
         val environmentDao = EnvironmentDao.getOrPut(environment)
 
@@ -107,10 +105,10 @@ class DaoAnalyzerRunRepository(private val db: Database) : AnalyzerRunRepository
         checkNotNull(get(analyzerRun.id.value))
     }
 
-    override fun get(id: Long): AnalyzerRun? = db.blockingQuery { AnalyzerRunsTable.getById(id) }
+    override suspend fun get(id: Long): AnalyzerRun? = db.transaction { AnalyzerRunsTable.getById(id) }
 
-    override fun getByJobId(analyzerJobId: Long): AnalyzerRun? =
-        db.blockingQuery { AnalyzerRunsTable.getByAnalyzerJobId(analyzerJobId) }
+    override suspend fun getByJobId(analyzerJobId: Long): AnalyzerRun? =
+        db.transaction { AnalyzerRunsTable.getByAnalyzerJobId(analyzerJobId) }
 }
 
 private fun createAnalyzerConfiguration(
@@ -175,9 +173,7 @@ private fun createProject(
     return projectDao
 }
 
-/**
- * Create a new [ProjectDao] entity in the database with the given values.
- */
+/** Create a new [ProjectDao] entity in the database with the given values. */
 private fun insertProject(
     identifier: IdentifierDao,
     vcs: VcsInfoDao,
@@ -254,9 +250,7 @@ private fun createPackage(
     return pkgDao
 }
 
-/**
- * Create a new [PackageDao] entity in the database with the given values.
- */
+/** Create a new [PackageDao] entity in the database with the given values. */
 private fun insertPackage(
     identifier: IdentifierDao,
     vcs: VcsInfoDao,
@@ -278,6 +272,7 @@ private fun insertPackage(
         this.homepageUrl = pkg.homepageUrl
         this.isMetadataOnly = pkg.isMetadataOnly
         this.isModified = pkg.isModified
+        this.publishedAt = pkg.publishedAt
     }
 
     pkg.authors.forEach { author ->

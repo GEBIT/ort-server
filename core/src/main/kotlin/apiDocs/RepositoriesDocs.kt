@@ -45,6 +45,11 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.OrtRunStatus
 import org.eclipse.apoapsis.ortserver.api.v1.model.OrtRunSummary
 import org.eclipse.apoapsis.ortserver.api.v1.model.PackageManagerConfiguration
 import org.eclipse.apoapsis.ortserver.api.v1.model.PatchRepository
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathExclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathExcludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathInclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathIncludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathIncludesExcludes
 import org.eclipse.apoapsis.ortserver.api.v1.model.PostRepositoryRun
 import org.eclipse.apoapsis.ortserver.api.v1.model.ProviderPluginConfiguration
 import org.eclipse.apoapsis.ortserver.api.v1.model.ReporterJob
@@ -53,11 +58,13 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.Repository
 import org.eclipse.apoapsis.ortserver.api.v1.model.RepositoryType
 import org.eclipse.apoapsis.ortserver.api.v1.model.ScannerJob
 import org.eclipse.apoapsis.ortserver.api.v1.model.ScannerJobConfiguration
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeExclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeExcludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeIncludesExcludes
 import org.eclipse.apoapsis.ortserver.api.v1.model.SubmoduleFetchStrategy.FULLY_RECURSIVE
 import org.eclipse.apoapsis.ortserver.api.v1.model.User
 import org.eclipse.apoapsis.ortserver.api.v1.model.UserDisplayName
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserGroup
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithGroups
+import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithRepositoryRole
 import org.eclipse.apoapsis.ortserver.api.v1.model.Username
 import org.eclipse.apoapsis.ortserver.components.authorization.api.RepositoryRole
 import org.eclipse.apoapsis.ortserver.shared.apimodel.InfrastructureService
@@ -68,6 +75,21 @@ import org.eclipse.apoapsis.ortserver.shared.apimodel.SortProperty
 import org.eclipse.apoapsis.ortserver.shared.apimodel.asPresent
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.jsonBody
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.standardListQueryParameters
+
+internal val examplePathIncludesExcludes = PathIncludesExcludes(
+    includes = listOf(
+        PathInclude(pattern = "src/**", reason = PathIncludeReason.SOURCE_OF, comment = "The source code.")
+    ),
+    excludes = listOf(
+        PathExclude(pattern = "docs/**", reason = PathExcludeReason.DOCUMENTATION_OF, comment = "The documentation.")
+    )
+)
+
+internal val exampleScopeIncludesExcludes = ScopeIncludesExcludes(
+    excludes = listOf(
+        ScopeExclude(pattern = "test.*", reason = ScopeExcludeReason.TEST_DEPENDENCY_OF, comment = "Test scopes.")
+    )
+)
 
 internal val fullJobConfigurations = JobConfigurations(
     analyzer = AnalyzerJobConfiguration(
@@ -201,9 +223,7 @@ val jobs = Jobs(
     }
 )
 
-/**
- * Create a [JobSummary] for a job that was created the provided [offset] duration ago.
- */
+/** Create a [JobSummary] for a job that was created the provided [offset] duration ago. */
 fun createJobSummary(offset: Duration, status: JobStatus = JobStatus.FINISHED): JobSummary {
     val createdAt = CREATED_AT - offset
     return JobSummary(
@@ -213,6 +233,60 @@ fun createJobSummary(offset: Duration, status: JobStatus = JobStatus.FINISHED): 
         finishedAt = (createdAt + 2.minutes).takeIf { status == JobStatus.FINISHED },
         status = status
     )
+}
+
+val getRepositories: RouteConfig.() -> Unit = {
+    operationId = "getRepositories"
+    summary = "Get all repositories"
+    description = "Get the repositories of all products on the server. This requires superuser rights."
+    tags = listOf("Repositories")
+
+    request {
+        standardListQueryParameters()
+        queryParameter<String>("filter") {
+            description = "A regular expression to filter repositories by name or URL."
+        }
+    }
+
+    response {
+        HttpStatusCode.OK to {
+            description = "Success"
+            jsonBody<PagedResponse<Repository>> {
+                example("List all repositories") {
+                    value = PagedResponse(
+                        listOf(
+                            Repository(
+                                id = 1,
+                                organizationId = 1,
+                                productId = 1,
+                                type = RepositoryType.GIT,
+                                url = "https://example.com/org/first.git",
+                                name = "first",
+                                description = "Description"
+                            ),
+                            Repository(
+                                id = 2,
+                                organizationId = 2,
+                                productId = 3,
+                                type = RepositoryType.GIT,
+                                url = "https://example.com/org/second.git"
+                            )
+                        ),
+                        PagingData(
+                            limit = 20,
+                            offset = 0,
+                            totalCount = 2,
+                            sortProperties = listOf(SortProperty("url", SortDirection.ASCENDING))
+                        )
+                    )
+                }
+            }
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The filter is not a valid regular expression."
+        }
+    }
 }
 
 val getRepository: RouteConfig.() -> Unit = {
@@ -242,6 +316,10 @@ val getRepository: RouteConfig.() -> Unit = {
                 }
             }
         }
+
+        HttpStatusCode.NotFound to {
+            description = "The repository does not exist."
+        }
     }
 }
 
@@ -255,7 +333,8 @@ val patchRepository: RouteConfig.() -> Unit = {
             description = "The repository's ID."
         }
         jsonBody<PatchRepository> {
-            description = "Set the values that should be updated. To delete a value, set it explicitly to null. " +
+            description = "Set the values that should be updated. Omitted values are not changed. To delete the name " +
+                    "or the description, set it explicitly to null. " +
                     "To move the repository to another product, set the productId field."
             example("Update Repository") {
                 value = PatchRepository(
@@ -277,7 +356,7 @@ val patchRepository: RouteConfig.() -> Unit = {
                     value = Repository(
                         id = 1,
                         organizationId = 2,
-                        productId = 3,
+                        productId = 42,
                         type = RepositoryType.GIT_REPO,
                         url = "https://example.com/org/updated-repo.git",
                         name = "updated-repo",
@@ -285,6 +364,10 @@ val patchRepository: RouteConfig.() -> Unit = {
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The repository does not exist."
         }
     }
 }
@@ -303,6 +386,10 @@ val deleteRepository: RouteConfig.() -> Unit = {
     response {
         HttpStatusCode.NoContent to {
             description = "Success"
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The repository does not exist."
         }
     }
 }
@@ -376,11 +463,15 @@ val getRepositoryRuns: RouteConfig.() -> Unit = {
                             limit = 20,
                             offset = 0,
                             totalCount = 2,
-                            sortProperties = listOf(SortProperty("createdAt", SortDirection.DESCENDING))
+                            sortProperties = listOf(SortProperty("index", SortDirection.ASCENDING))
                         )
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The repository does not exist."
         }
     }
 }
@@ -409,14 +500,16 @@ val postRepositoryRun: RouteConfig.() -> Unit = {
                     jobConfigs = fullJobConfigurations,
                     labels = mapOf("label key" to "label value"),
                     path = "optional VCS sub-path",
-                    jobConfigContext = "optional context"
+                    jobConfigContext = "optional context",
+                    paths = examplePathIncludesExcludes,
+                    scopes = exampleScopeIncludesExcludes
                 )
             }
         }
     }
 
     response {
-        HttpStatusCode.OK to {
+        HttpStatusCode.Created to {
             description = "Success"
             jsonBody<OrtRun> {
                 example("Create ORT run") {
@@ -429,18 +522,32 @@ val postRepositoryRun: RouteConfig.() -> Unit = {
                         revision = "main",
                         createdAt = CREATED_AT,
                         jobConfigs = fullJobConfigurations,
-                        resolvedJobConfigs = fullJobConfigurations,
-                        jobs = jobs,
+                        resolvedJobConfigs = null,
+                        jobs = Jobs(),
                         status = OrtRunStatus.CREATED,
                         finishedAt = null,
                         labels = mapOf("label key" to "label value"),
                         issues = emptyList(),
                         jobConfigContext = null,
-                        resolvedJobConfigContext = null,
-                        traceId = "35b67724-a85b-4cc3-b2a4-60fd914634e7"
+                        resolvedJobConfigContext = "32f955941e94d0a318e1c985903f42af924e9050",
+                        traceId = "35b67724-a85b-4cc3-b2a4-60fd914634e7",
+                        paths = examplePathIncludesExcludes,
+                        scopes = exampleScopeIncludesExcludes
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The repository does not exist."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The plugin configuration is invalid or the config context cannot be resolved."
+        }
+
+        HttpStatusCode.Forbidden to {
+            description = "The 'keepAliveWorker' flag was set, which is only allowed for superusers."
         }
     }
 }
@@ -483,10 +590,16 @@ val getRepositoryRun: RouteConfig.() -> Unit = {
                         jobConfigContext = null,
                         resolvedJobConfigContext = "32f955941e94d0a318e1c985903f42af924e9050",
                         traceId = "35b67725-a85b-4cc3-b2a4-60fd914634e7",
-                        environmentConfigPath = null
+                        environmentConfigPath = null,
+                        paths = examplePathIncludesExcludes,
+                        scopes = exampleScopeIncludesExcludes
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The repository or the ORT run does not exist."
         }
     }
 }
@@ -546,7 +659,11 @@ val putRepositoryRoleToUser: RouteConfig.() -> Unit = {
         }
 
         HttpStatusCode.NotFound to {
-            description = "Repository or role not found."
+            description = "The repository or the user does not exist."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The role is invalid."
         }
     }
 }
@@ -554,6 +671,8 @@ val putRepositoryRoleToUser: RouteConfig.() -> Unit = {
 val deleteRepositoryRoleFromUser: RouteConfig.() -> Unit = {
     operationId = "deleteRepositoryRoleFromUser"
     summary = "Remove a repository role from a user"
+    description = "Remove the role that the user has on the repository. The role in the path must be " +
+            "a valid role, but it is not compared with the role that is actually assigned."
     tags = listOf("Repositories")
 
     request {
@@ -566,6 +685,7 @@ val deleteRepositoryRoleFromUser: RouteConfig.() -> Unit = {
 
         queryParameter<String>("username") {
             description = "The username of the user."
+            required = true
         }
     }
 
@@ -575,7 +695,11 @@ val deleteRepositoryRoleFromUser: RouteConfig.() -> Unit = {
         }
 
         HttpStatusCode.NotFound to {
-            description = "Repository or role not found."
+            description = "The repository or the user does not exist."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The role is invalid."
         }
     }
 }
@@ -583,10 +707,10 @@ val deleteRepositoryRoleFromUser: RouteConfig.() -> Unit = {
 val getRepositoryUsers: RouteConfig.() -> Unit = {
     operationId = "getRepositoryUsers"
     summary = "Get all users for a repository"
-    description = "Get all users that have access rights for a repository, including the user privileges (groups) " +
-            "the user has within the repository. Fields available for sorting: 'username', 'firstName', " +
-            "'lastName', 'email', 'group'. NOTE: This endpoint supports only one sort field. All fields other than " +
-            " the first one are ignored."
+    description = "Get all users that have a role assigned directly on a repository, including their role. " +
+            "Users that only inherit access from a higher level are not included. Fields available for " +
+            "sorting: 'username', 'firstName', 'lastName', 'email', 'role'. NOTE: This endpoint supports " +
+            "exactly one sort field."
     tags = listOf("Repositories")
 
     request {
@@ -600,21 +724,18 @@ val getRepositoryUsers: RouteConfig.() -> Unit = {
     response {
         HttpStatusCode.OK to {
             description = "Success"
-            jsonBody<PagedResponse<UserWithGroups>> {
+            jsonBody<PagedResponse<UserWithRepositoryRole>> {
                 example("Get users for repository") {
                     value = PagedResponse(
                         listOf(
-                            UserWithGroups(
+                            UserWithRepositoryRole(
                                 User(
                                     username = "jdoe",
                                     firstName = "John",
                                     lastName = "Doe",
                                     email = "johndoe@example.com"
                                 ),
-                                listOf(
-                                    UserGroup.READERS,
-                                    UserGroup.WRITERS
-                                )
+                                RepositoryRole.WRITER
                             )
                         ),
                         PagingData(
@@ -626,6 +747,14 @@ val getRepositoryUsers: RouteConfig.() -> Unit = {
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The repository does not exist."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "Not exactly one sort field or an unsupported sort field was provided."
         }
     }
 }

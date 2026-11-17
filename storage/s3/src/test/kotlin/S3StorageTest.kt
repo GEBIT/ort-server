@@ -42,16 +42,21 @@ import io.kotest.extensions.testcontainers.TestContainerSpecExtension
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 
+import io.mockk.mockk
+
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
 import org.eclipse.apoapsis.ortserver.storage.Key
 import org.eclipse.apoapsis.ortserver.storage.Storage
 import org.eclipse.apoapsis.ortserver.storage.Storage.Companion.dataString
 import org.eclipse.apoapsis.ortserver.storage.StorageException
 import org.eclipse.apoapsis.ortserver.utils.test.Images
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.testcontainers.utility.DockerImageName
 
 class S3StorageTest : WordSpec({
+    tags(Integration)
+
     val floci = install(TestContainerSpecExtension(FlociContainer(DockerImageName.parse(Images.FLOCI))))
 
     val s3Client: S3Client by lazy {
@@ -273,9 +278,7 @@ class S3StorageTest : WordSpec({
 internal const val S3_REGION = "eu-central-1"
 internal const val TEST_BUCKET_NAME = "test-bucket"
 
-/**
- * Create a [Storage] that is configured to use the [S3StorageProvider] implementation.
- */
+/** Create a [Storage] that is configured to use the [S3StorageProvider] implementation. */
 private fun FlociContainer.createStorage(
     region: String = S3_REGION,
     bucket: String = TEST_BUCKET_NAME,
@@ -300,5 +303,5 @@ private fun FlociContainer.createStorage(
         )
     )
 
-    return Storage.create(bucket, ConfigManager.create(config))
+    return Storage.create(bucket, ConfigManager.create(config), mockk())
 }

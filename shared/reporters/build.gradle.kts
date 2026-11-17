@@ -34,6 +34,8 @@ dependencies {
     api(ortLibs.reporter)
 
     implementation(libs.kotlinx.serialization.json)
+    implementation(projects.shared.coroutines)
+
     implementation(libs.slf4j)
     implementation(ortLibs.ortPlugins.reporters.cyclonedx)
     implementation(ortLibs.utils.common)

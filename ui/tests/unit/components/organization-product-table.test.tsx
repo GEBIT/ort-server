@@ -1,0 +1,281 @@
+/*
+ * Copyright (C) 2026 The ORT Server Authors (See <https://github.com/eclipse-apoapsis/ort-server/blob/main/NOTICE>)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ * License-Filename: LICENSE
+ */
+
+// @vitest-environment jsdom
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { render, screen, waitFor } from '@testing-library/react';
+import type { ComponentType } from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { Organization, Product } from '@/api';
+import { getOrganizationProductsQueryKey } from '@/api/@tanstack/react-query.gen';
+import {
+  OrganizationProductTable,
+  ProductJobStatusCell,
+  ProductLastRunDateCell,
+  ProductRunStatusCell,
+  ProductTotalRunsCell,
+} from '@/routes/organizations/$orgId/-components/organization-product-table';
+import { createDeferred } from '../fixtures/loader-test-utils';
+import { renderInteractiveWithRouter } from '../fixtures/render-interactive';
+import { pageOf } from '../fixtures/table';
+
+const mocks = vi.hoisted(() => ({
+  organization: vi.fn(),
+  products: vi.fn(),
+  repositories: vi.fn(),
+}));
+
+vi.mock('@/api/sdk.gen', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/sdk.gen')>()),
+  getOrganization: mocks.organization,
+  getOrganizationProducts: mocks.products,
+  getProductRepositories: mocks.repositories,
+}));
+
+vi.mock('@/components/favorite-button', () => ({
+  ProductFavoriteButton: ({ product }: { product: Product }) => (
+    <button type='button'>Add to favorites: {product.name}</button>
+  ),
+}));
+
+vi.mock(
+  '@/routes/organizations/$orgId/products/$productId/-components/total-runs',
+  () => ({
+    TotalRuns: ({ repoId }: { repoId: number }) => (
+      <span>Total runs of {repoId}</span>
+    ),
+  })
+);
+
+vi.mock(
+  '@/routes/organizations/$orgId/products/$productId/-components/last-run-status',
+  () => ({
+    LastRunStatus: ({ repoId }: { repoId: number }) => (
+      <span>Run status of {repoId}</span>
+    ),
+  })
+);
+
+vi.mock(
+  '@/routes/organizations/$orgId/products/$productId/-components/last-run-date',
+  () => ({
+    LastRunDate: ({ repoId }: { repoId: number }) => (
+      <span>Run date of {repoId}</span>
+    ),
+  })
+);
+
+vi.mock(
+  '@/routes/organizations/$orgId/products/$productId/-components/last-job-status',
+  () => ({
+    LastJobStatus: ({ repoId }: { repoId: number }) => (
+      <span>Job status of {repoId}</span>
+    ),
+  })
+);
+
+vi.mock(
+  '@/routes/organizations/$orgId/-components/product-item-counts',
+  () => ({
+    ProductItemCounts: ({ productId }: { productId: number }) => (
+      <span>Item counts of {productId}</span>
+    ),
+  })
+);
+
+type CellComponent = ComponentType<{ product: Product }>;
+
+const product: Product = { id: 2, organizationId: 1, name: 'product' };
+
+const repositories = (totalCount: number) =>
+  pageOf([{ id: 7 }], { limit: 1, totalCount });
+
+const renderCell = (Cell: CellComponent) => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <Cell product={product} />
+    </QueryClientProvider>
+  );
+};
+
+const cells: {
+  name: string;
+  Cell: CellComponent;
+  oneRepository: string[];
+  severalRepositories: string[];
+}[] = [
+  {
+    name: 'ProductTotalRunsCell',
+    Cell: ProductTotalRunsCell,
+    oneRepository: ['Total runs of 7'],
+    severalRepositories: ['-'],
+  },
+  {
+    name: 'ProductRunStatusCell',
+    Cell: ProductRunStatusCell,
+    oneRepository: ['Run status of 7', 'Item counts of 2'],
+    severalRepositories: ['Contains 3 repositories', 'Item counts of 2'],
+  },
+  {
+    name: 'ProductLastRunDateCell',
+    Cell: ProductLastRunDateCell,
+    oneRepository: ['Run date of 7'],
+    severalRepositories: [],
+  },
+  {
+    name: 'ProductJobStatusCell',
+    Cell: ProductJobStatusCell,
+    oneRepository: ['Job status of 7'],
+    severalRepositories: [],
+  },
+];
+
+describe.each(cells)(
+  '$name',
+  ({ Cell, oneRepository, severalRepositories }) => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it('shows a spinner while the repositories are loading', () => {
+      mocks.repositories.mockReturnValue(new Promise(() => undefined));
+
+      renderCell(Cell);
+
+      expect(screen.getByText('Loading...')).toBeInTheDocument();
+    });
+
+    it('shows an error when the repositories cannot be loaded', async () => {
+      mocks.repositories.mockRejectedValue(new Error('failed'));
+
+      renderCell(Cell);
+
+      expect(await screen.findByText('Error loading data.')).toBeVisible();
+    });
+
+    it('shows the details of the only repository', async () => {
+      mocks.repositories.mockResolvedValue(repositories(1));
+
+      const { container } = renderCell(Cell);
+
+      for (const text of oneRepository) {
+        expect(await screen.findByText(text)).toBeVisible();
+      }
+      expect(container).toHaveTextContent(
+        new RegExp(`^${oneRepository.join('')}$`)
+      );
+      expect(mocks.repositories.mock.calls[0]?.[0]).toMatchObject({
+        path: { productId: 2 },
+        query: { limit: 1 },
+      });
+    });
+
+    it('shows no repository details for several repositories', async () => {
+      mocks.repositories.mockResolvedValue(repositories(3));
+
+      const { container } = renderCell(Cell);
+
+      for (const text of severalRepositories) {
+        expect(await screen.findByText(text)).toBeVisible();
+      }
+      await vi.waitFor(() =>
+        expect(container).toHaveTextContent(
+          new RegExp(`^${severalRepositories.join('')}$`)
+        )
+      );
+    });
+  }
+);
+
+describe('OrganizationProductTable', () => {
+  const organization: Organization = { id: 1, name: 'organization' };
+
+  const products = (...names: string[]) =>
+    pageOf(
+      names.map((name, index): Product => ({
+        id: index + 2,
+        organizationId: 1,
+        name,
+      }))
+    );
+
+  const renderTable = () =>
+    renderInteractiveWithRouter(<OrganizationProductTable />, {
+      path: '/organizations/1/',
+      routes: [{ path: '/organizations/$orgId/' }],
+      withQueryClient: true,
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.organization.mockResolvedValue({ data: organization });
+    mocks.products.mockResolvedValue(products('first', 'second'));
+    mocks.repositories.mockResolvedValue(repositories(1));
+  });
+
+  it('shows the favorite buttons once the organization is loaded', async () => {
+    const loadedOrganization = createDeferred<{ data: Organization }>();
+    mocks.organization.mockReturnValue(loadedOrganization.promise);
+
+    renderTable();
+
+    expect(await screen.findByRole('link', { name: 'first' })).toBeVisible();
+    expect(
+      screen.queryByRole('button', { name: 'Add to favorites: first' })
+    ).not.toBeInTheDocument();
+
+    loadedOrganization.resolve({ data: organization });
+
+    expect(
+      await screen.findByRole('button', { name: 'Add to favorites: first' })
+    ).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: 'Add to favorites: second' })
+    ).toBeVisible();
+    expect(mocks.products).toHaveBeenCalledOnce();
+  });
+
+  it('replaces the rows when the query data is refreshed', async () => {
+    const { queryClient, router } = renderTable();
+
+    expect(await screen.findByRole('link', { name: 'first' })).toBeVisible();
+    const initialHref = router.state.location.href;
+
+    mocks.products.mockResolvedValue(products('renamed'));
+    await queryClient!.invalidateQueries({
+      queryKey: getOrganizationProductsQueryKey({
+        path: { organizationId: 1 },
+      }),
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole('link', { name: 'renamed' })).toBeVisible()
+    );
+    expect(
+      screen.queryByRole('link', { name: 'first' })
+    ).not.toBeInTheDocument();
+    expect(router.state.location.href).toBe(initialHref);
+  });
+});

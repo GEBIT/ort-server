@@ -43,7 +43,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.standardListQueryParameters
 
 internal fun Route.getOrganizationSecrets(secretService: SecretService) =
-    get("/organizations/{organizationId}/secrets", {
+    get("organizations/{organizationId}/secrets", {
         operationId = "getOrganizationSecrets"
         summary = "Get all secrets of an organization"
         tags = listOf("Organizations")
@@ -64,8 +64,8 @@ internal fun Route.getOrganizationSecrets(secretService: SecretService) =
                     example("Get all secrets of an organization") {
                         value = PagedResponse(
                             listOf(
-                                Secret(name = "token_npm_repo_1", description = "Access token for NPM Repo 1"),
-                                Secret(name = "token_maven_repo_1", description = "Access token for Maven Repo 1")
+                                Secret(name = "token-npm-repo-1", description = "Access token for NPM Repo 1"),
+                                Secret(name = "token-maven-repo-1", description = "Access token for Maven Repo 1")
                             ),
                             PagingData(
                                 limit = 20,

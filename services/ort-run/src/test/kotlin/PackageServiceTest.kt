@@ -20,6 +20,7 @@
 package org.eclipse.apoapsis.ortserver.services.ortrun
 
 import io.kotest.core.spec.style.WordSpec
+import io.kotest.inspectors.forAll
 import io.kotest.matchers.collections.beEmpty
 import io.kotest.matchers.collections.containExactly
 import io.kotest.matchers.collections.containExactlyInAnyOrder
@@ -33,8 +34,10 @@ import io.kotest.matchers.shouldBe
 
 import io.mockk.mockk
 
+import kotlin.time.Instant
+import kotlin.time.toKotlinInstant
+
 import org.eclipse.apoapsis.ortserver.api.v1.mapping.mapToApi
-import org.eclipse.apoapsis.ortserver.api.v1.mapping.mapToModel
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
 import org.eclipse.apoapsis.ortserver.dao.test.Fixtures
 import org.eclipse.apoapsis.ortserver.model.AnalyzerJobConfiguration
@@ -59,8 +62,14 @@ import org.eclipse.apoapsis.ortserver.model.util.OrderDirection
 import org.eclipse.apoapsis.ortserver.model.util.OrderField
 import org.eclipse.apoapsis.ortserver.shared.apimappings.mapToApi
 import org.eclipse.apoapsis.ortserver.shared.apimappings.mapToModel
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.Database
+
+import org.ossreviewtoolkit.model.AnalyzerResult as OrtAnalyzerResult
+import org.ossreviewtoolkit.model.AnalyzerRun as OrtAnalyzerRun
+import org.ossreviewtoolkit.model.OrtResult
+import org.ossreviewtoolkit.model.ResolvedConfiguration as OrtResolvedConfiguration
 
 @Suppress("LargeClass")
 class PackageServiceTest : WordSpec() {
@@ -71,6 +80,8 @@ class PackageServiceTest : WordSpec() {
     private lateinit var service: PackageService
 
     init {
+        tags(Integration)
+
         beforeEach {
             db = dbExtension.db
             fixtures = dbExtension.fixtures
@@ -264,6 +275,114 @@ class PackageServiceTest : WordSpec() {
                 results.data[2].processedDeclaredLicense.spdxExpression shouldBe "MIT"
             }
 
+            "allow sorting by publication date in both directions with unknown dates last" {
+                val curated = createPackageWithPublicationDate("curated", null)
+                val overridden = createPackageWithPublicationDate("overridden", "2024-12-01T00:00:00Z")
+                val highPriority = createPackageWithPublicationDate("highPriority", null)
+                val lowPriority = createPackageWithPublicationDate("lowPriority", null)
+                val ortRunId = createAnalyzerRunWithPackages(
+                    setOf(
+                        createPackageWithPublicationDate("march", "2024-03-01T00:00:00Z"),
+                        createPackageWithPublicationDate("unknown", null),
+                        createPackageWithPublicationDate("january", "2024-01-01T00:00:00Z"),
+                        createPackageWithPublicationDate("february", "2024-02-01T00:00:00Z"),
+                        curated,
+                        overridden,
+                        highPriority,
+                        lowPriority
+                    )
+                ).id
+
+                // Packages are sorted by the date of the curation with the highest priority that has one.
+                addPublicationDateCurations(
+                    ortRunId,
+                    "high" to mapOf(
+                        curated.identifier to "2024-02-15T00:00:00Z",
+                        overridden.identifier to "2023-12-01T00:00:00Z",
+                        highPriority.identifier to "2024-01-15T00:00:00Z",
+                        lowPriority.identifier to null
+                    ),
+                    "low" to mapOf(
+                        highPriority.identifier to "2024-05-01T00:00:00Z",
+                        lowPriority.identifier to "2024-03-15T00:00:00Z"
+                    )
+                )
+
+                suspend fun sortedNames(direction: OrderDirection) = service.listForOrtRunId(
+                    ortRunId,
+                    ListQueryParameters(listOf(OrderField("publishedAt", direction)))
+                ).data.map { it.identifier.name }
+
+                val namesByAscendingDate =
+                    listOf("overridden", "january", "highPriority", "february", "curated", "march", "lowPriority")
+
+                sortedNames(OrderDirection.ASCENDING) should containExactly(namesByAscendingDate + "unknown")
+                sortedNames(OrderDirection.DESCENDING) should
+                        containExactly(namesByAscendingDate.reversed() + "unknown")
+            }
+
+            "sort by curated publication dates only in the ORT run the curations were applied in" {
+                val early = createPackageWithPublicationDate("early", "2024-01-01T00:00:00Z")
+                val late = createPackageWithPublicationDate("late", "2024-02-01T00:00:00Z")
+                val repositoryId = fixtures.createRepository().id
+                val curatedRunId = createAnalyzerRunWithPackages(setOf(early, late), repositoryId).id
+                val otherRunId = createAnalyzerRunWithPackages(setOf(early, late), repositoryId).id
+
+                addPublicationDateCurations(
+                    curatedRunId,
+                    "provider" to mapOf(early.identifier to "2024-03-01T00:00:00Z")
+                )
+
+                suspend fun sortedNames(ortRunId: Long) = service.listForOrtRunId(
+                    ortRunId,
+                    ListQueryParameters(listOf(OrderField("publishedAt", OrderDirection.ASCENDING)))
+                ).data.map { it.identifier.name }
+
+                sortedNames(curatedRunId) should containExactly("late", "early")
+                sortedNames(otherRunId) should containExactly("early", "late")
+            }
+
+            "keep the precedence of sort fields following the publication date" {
+                val ortRunId = createAnalyzerRunWithPackages(
+                    setOf(
+                        createPackageWithPublicationDate("a", "2024-01-01T00:00:00Z"),
+                        createPackageWithPublicationDate("b", "2024-01-01T00:00:00Z"),
+                        createPackageWithPublicationDate("c", "2023-01-01T00:00:00Z")
+                    )
+                ).id
+
+                val results = service.listForOrtRunId(
+                    ortRunId,
+                    ListQueryParameters(
+                        listOf(
+                            OrderField("publishedAt", OrderDirection.DESCENDING),
+                            OrderField("identifier", OrderDirection.DESCENDING)
+                        )
+                    )
+                )
+
+                results.data.map { it.identifier.name } should containExactly("b", "a", "c")
+            }
+
+            "page through equal publication dates in a stable order" {
+                val names = (1..5).map { "package$it" }
+                val ortRunId = createAnalyzerRunWithPackages(
+                    names.mapIndexedTo(mutableSetOf()) { index, name ->
+                        createPackageWithPublicationDate(name, "2024-01-01T00:00:00Z".takeIf { index < 4 })
+                    }
+                ).id
+
+                suspend fun page(direction: OrderDirection, offset: Long) = service.listForOrtRunId(
+                    ortRunId,
+                    ListQueryParameters(listOf(OrderField("publishedAt", direction)), limit = 2, offset = offset)
+                ).data.map { it.identifier.name }
+
+                // Equal dates are ordered by the package ID, which follows the insertion order, in both directions.
+                OrderDirection.entries.forAll { direction ->
+                    listOf(0L, 2L, 4L).flatMap { page(direction, it) } should containExactly(names)
+                }
+            }
+
             "return an empty list if no packages were found in an ORT run" {
                 val ortRun = createAnalyzerRunWithPackages(emptySet())
 
@@ -395,6 +514,30 @@ class PackageServiceTest : WordSpec() {
                 results.data.shouldBeSingleton {
                     it.identifier shouldBe Identifier("NPM", "", "example", "1.0").mapToApi()
                 }
+            }
+
+            "only match the full identifier when filtering by an exact identifier" {
+                val target = Identifier("Maven", "com.example", "core", "1.0")
+                val ortRunId = createAnalyzerRunWithPackages(
+                    setOf(
+                        fixtures.generatePackage(target),
+                        fixtures.generatePackage(target.copy(version = "1.0.1")),
+                        fixtures.generatePackage(target.copy(version = "1.0-SNAPSHOT"))
+                    )
+                ).id
+
+                val results = service.listForOrtRunId(
+                    ortRunId,
+                    filters = PackageFilters(
+                        identifier = FilterOperatorAndValue(
+                            ComparisonOperator.EQUALS,
+                            "Maven:com.example:core:1.0"
+                        )
+                    )
+                )
+
+                results.data.shouldBeSingleton { it.identifier shouldBe target.mapToApi() }
+                results.totalCount shouldBe 1
             }
 
             "use case insensitive filtering for purl and identifier filtering" {
@@ -721,15 +864,17 @@ class PackageServiceTest : WordSpec() {
                 )
             }
 
-            "apply curations and include applied curations" {
+            "apply curations lowest priority first and include them highest priority first" {
+                val ownPublishedAt = Instant.parse("2024-01-01T00:00:00Z")
+
                 val pkg1 = fixtures.generatePackage(
                     Identifier("Maven", "com.example", "example1", "1.0")
-                )
+                ).copy(publishedAt = ownPublishedAt)
 
                 val pkg2 = fixtures.generatePackage(
                     Identifier("Maven", "com.example", "example2", "1.0"),
                     declaredLicenses = setOf("LicenseRef-declared1", "invalid-license")
-                )
+                ).copy(publishedAt = ownPublishedAt)
 
                 val ortRunId = createAnalyzerRunWithPackages(setOf(pkg1, pkg2)).id
 
@@ -737,8 +882,10 @@ class PackageServiceTest : WordSpec() {
                     id = pkg1.identifier,
                     data = PackageCurationData(
                         comment = "comment1",
+                        homepageUrl = "https://high.example.org",
                         authors = setOf("author1", "author2"),
-                        concludedLicense = "LicenseRef-concluded1"
+                        concludedLicense = "LicenseRef-concluded1",
+                        publishedAt = Instant.parse("2024-03-01T00:00:00Z")
                     )
                 )
 
@@ -751,17 +898,27 @@ class PackageServiceTest : WordSpec() {
                     )
                 )
 
-                val resolvedPackageCurations = ResolvedPackageCurations(
-                    provider = PackageCurationProviderConfig("test"),
-                    curations = listOf(curation1, curation2)
+                val lowPriorityCuration = PackageCuration(
+                    pkg1.identifier,
+                    PackageCurationData(
+                        homepageUrl = "https://low.example.org",
+                        publishedAt = Instant.parse("2024-04-01T00:00:00Z")
+                    )
                 )
 
-                fixtures.resolvedConfigurationRepository.addPackageCurations(ortRunId, listOf(resolvedPackageCurations))
+                // The analyzer stores the providers in priority order, highest first.
+                val resolvedPackageCurations = listOf(
+                    ResolvedPackageCurations(PackageCurationProviderConfig("test"), listOf(curation1, curation2)),
+                    ResolvedPackageCurations(PackageCurationProviderConfig("low"), listOf(lowPriorityCuration))
+                )
+
+                fixtures.resolvedConfigurationRepository.addPackageCurations(ortRunId, resolvedPackageCurations)
 
                 fixtures.resolvedConfigurationRepository.addPackageCurationAssociations(
                     ortRunId,
                     mapOf(
                         pkg1.identifier to listOf(
+                            AppliedPackageCurationRef(providerName = "low", curationRank = 0),
                             AppliedPackageCurationRef(providerName = "test", curationRank = 0)
                         ),
                         pkg2.identifier to listOf(
@@ -770,21 +927,40 @@ class PackageServiceTest : WordSpec() {
                     )
                 )
 
+                val ortResult = OrtResult.EMPTY.copy(
+                    analyzer = OrtAnalyzerRun.EMPTY.copy(
+                        result = OrtAnalyzerResult.EMPTY.copy(packages = setOf(pkg1.mapToOrt()))
+                    ),
+                    resolvedConfiguration = OrtResolvedConfiguration(
+                        packageCurations = resolvedPackageCurations.map { it.mapToOrt() }
+                    )
+                )
+
+                val ortHomepageUrl = ortResult.getPackages().single().metadata.homepageUrl
+                ortHomepageUrl shouldBe "https://high.example.org"
+
+                val ortPublishedAt = ortResult.getPackages().single().metadata.publishedAt?.toKotlinInstant()
+                ortPublishedAt shouldBe curation1.data.publishedAt
+
                 val packages = service.listForOrtRunId(ortRunId)
                 packages.data shouldHaveSize 2
 
                 with(packages.data.single { it.identifier == pkg1.identifier.mapToApi() }) {
                     authors should containExactly(curation1.data.authors.orEmpty())
-                    curations.shouldBeSingleton {
-                        it.providerName shouldBe "test"
-                        it.data shouldBe curation1.data.mapToApi()
-                    }
+                    homepageUrl shouldBe ortHomepageUrl
+                    publishedAt shouldBe ortPublishedAt
+                    curations.map { it.providerName to it.data } should containExactly(
+                        "test" to curation1.data.mapToApi(),
+                        "low" to lowPriorityCuration.data.mapToApi()
+                    )
                 }
 
                 with(packages.data.single { it.identifier == pkg2.identifier.mapToApi() }) {
                     processedDeclaredLicense.spdxExpression shouldBe "LicenseRef-declared1 AND LicenseRef-mapped"
                     processedDeclaredLicense.mappedLicenses should
                             containExactlyEntries("invalid-license" to "LicenseRef-mapped")
+                    // A curation without a publication date keeps the date of the package.
+                    publishedAt shouldBe ownPublishedAt
                     curations.shouldBeSingleton {
                         it.providerName shouldBe "test"
                         it.data shouldBe curation2.data.mapToApi()
@@ -991,7 +1167,7 @@ class PackageServiceTest : WordSpec() {
         }
     }
 
-    private fun addLicenseMappingCuration(
+    private suspend fun addLicenseMappingCuration(
         ortRunId: Long,
         identifier: Identifier,
         mapping: Map<String, String>
@@ -1011,9 +1187,41 @@ class PackageServiceTest : WordSpec() {
         )
     }
 
-    private fun createAnalyzerRunWithPackages(
+    /**
+     * Add curations of the publication dates of packages to the ORT run with the given [ortRunId] and mark them as
+     * applied. Each of the [providers] maps package identifiers to the curated date; a `null` date creates a curation
+     * that does not change the date. The providers are given in the order of their priority, highest first.
+     */
+    private suspend fun addPublicationDateCurations(
+        ortRunId: Long,
+        vararg providers: Pair<String, Map<Identifier, String?>>
+    ) {
+        val associations = mutableMapOf<Identifier, MutableList<AppliedPackageCurationRef>>()
+
+        val resolvedPackageCurations = providers.map { (providerName, publicationDates) ->
+            val curations = publicationDates.entries.mapIndexed { rank, (identifier, publishedAt) ->
+                associations.getOrPut(identifier) { mutableListOf() } += AppliedPackageCurationRef(providerName, rank)
+
+                PackageCuration(
+                    identifier,
+                    PackageCurationData(comment = "curation", publishedAt = publishedAt?.let(Instant::parse))
+                )
+            }
+
+            ResolvedPackageCurations(PackageCurationProviderConfig(providerName), curations)
+        }
+
+        fixtures.resolvedConfigurationRepository.addPackageCurations(ortRunId, resolvedPackageCurations)
+        fixtures.resolvedConfigurationRepository.addPackageCurationAssociations(ortRunId, associations)
+    }
+
+    private fun createPackageWithPublicationDate(name: String, publishedAt: String?) =
+        fixtures.generatePackage(Identifier("Maven", "com.example", name, "1.0"))
+            .copy(publishedAt = publishedAt?.let(Instant::parse))
+
+    private suspend fun createAnalyzerRunWithPackages(
         packages: Set<Package>,
-        repositoryId: Long = fixtures.createRepository().id,
+        repositoryId: Long = fixtures.repository.id,
         projects: Set<Project> = emptySet(),
         shortestPaths: Map<Identifier, List<ShortestDependencyPath>> = emptyMap()
     ): OrtRun {

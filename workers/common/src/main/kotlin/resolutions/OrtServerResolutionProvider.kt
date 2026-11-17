@@ -85,7 +85,7 @@ class OrtServerResolutionProvider(
          * does not add issues to the run. The [ruleViolationResolutionService] is optional because only the evaluator
          * worker adds rule violations to the run.
          */
-        fun create(
+        suspend fun create(
             context: WorkerContext,
             adminConfigService: AdminConfigService,
             repositoryConfigurationResolutions: Resolutions,
@@ -110,10 +110,8 @@ class OrtServerResolutionProvider(
             )
         }
 
-        /**
-         * Return the global [Resolutions] loaded from the resolutions file.
-         */
-        private fun WorkerContext.loadGlobalResolutions(adminConfigService: AdminConfigService): Resolutions {
+        /** Return the global [Resolutions] loaded from the resolutions file. */
+        private suspend fun WorkerContext.loadGlobalResolutions(adminConfigService: AdminConfigService): Resolutions {
             val adminConfig = adminConfigService.loadAdminConfig(resolvedConfigurationContext)
             val ruleSet = adminConfig.getRuleSet(ortRun.resolvedJobConfigs?.ruleSet)
 

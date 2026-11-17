@@ -32,9 +32,9 @@ import io.mockk.every
 import io.mockk.mockkObject
 
 import org.eclipse.apoapsis.ortserver.model.Secret
-import org.eclipse.apoapsis.ortserver.workers.common.auth.SecretResolverFun
-import org.eclipse.apoapsis.ortserver.workers.common.auth.undefinedInfraSecretResolver
-import org.eclipse.apoapsis.ortserver.workers.common.auth.undefinedSecretResolver
+import org.eclipse.apoapsis.ortserver.shared.authenticator.SecretResolverFun
+import org.eclipse.apoapsis.ortserver.shared.authenticator.undefinedInfraSecretResolver
+import org.eclipse.apoapsis.ortserver.shared.authenticator.undefinedSecretResolver
 import org.eclipse.apoapsis.ortserver.workers.common.env.ConfigFileBuilder.Companion.printLines
 import org.eclipse.apoapsis.ortserver.workers.common.env.ConfigFileBuilder.Companion.printProxySettings
 
@@ -248,8 +248,6 @@ private suspend fun withSecretResolverFun(
     capturedSecrets shouldContainExactlyInAnyOrder secretValues.keys
 }
 
-/**
- * Create a test [Secret] based on the given [index].
- */
+/** Create a test [Secret] based on the given [index]. */
 private fun createSecret(index: Int): Secret =
     Secret(index.toLong(), "p$index", "secret$index", null, null, null, null)

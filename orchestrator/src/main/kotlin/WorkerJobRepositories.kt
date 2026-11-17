@@ -72,9 +72,7 @@ class WorkerJobRepositories(
         NotifierEndpoint.configPrefix to notifierJobRepository
     )
 
-    /**
-     * Return the [WorkerJobRepository] for the given [endpoint] or *null* if there is no such repository.
-     */
+    /** Return the [WorkerJobRepository] for the given [endpoint] or *null* if there is no such repository. */
     operator fun get(endpoint: Endpoint<*>): WorkerJobRepository<*>? = get(endpoint.configPrefix)
 
     /**
@@ -87,7 +85,7 @@ class WorkerJobRepositories(
      * Update the status for a job for the given [endpoint] and [jobId] in the database to the provided [status].
      * If [finished] is *true*, also set the finished time.
      */
-    fun updateJobStatus(
+    suspend fun updateJobStatus(
         endpoint: Endpoint<*>,
         jobId: Long,
         status: JobStatus,

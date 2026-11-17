@@ -22,9 +22,8 @@ package org.eclipse.apoapsis.ortserver.workers.common.env
 import java.io.PrintWriter
 
 import kotlin.io.encoding.Base64
-import kotlin.io.encoding.ExperimentalEncodingApi
 
-import org.eclipse.apoapsis.ortserver.workers.common.auth.resolveSecrets
+import org.eclipse.apoapsis.ortserver.shared.authenticator.resolveSecrets
 import org.eclipse.apoapsis.ortserver.workers.common.env.ConfigFileBuilder.Companion.printLines
 import org.eclipse.apoapsis.ortserver.workers.common.env.ConfigFileBuilder.Companion.printProxySettings
 import org.eclipse.apoapsis.ortserver.workers.common.env.definition.NpmAuthMode
@@ -49,10 +48,7 @@ class NpmRcGenerator : EnvironmentConfigGenerator<NpmDefinition> {
         /** The NPM configuration option to define the no proxy setting. */
         private const val NO_PROXY_SETTING = "noproxy"
 
-        /**
-         * Return the value of this string base64 encoded.
-         */
-        @OptIn(ExperimentalEncodingApi::class)
+        /** Return the value of this string base64 encoded. */
         private fun String.base64(): String =
             Base64.encode(toByteArray())
 

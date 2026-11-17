@@ -29,6 +29,7 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.ComparisonOperator
 import org.eclipse.apoapsis.ortserver.api.v1.model.EcosystemStats
 import org.eclipse.apoapsis.ortserver.api.v1.model.FilterOperatorAndValue
 import org.eclipse.apoapsis.ortserver.api.v1.model.JobConfigurations
+import org.eclipse.apoapsis.ortserver.api.v1.model.Jobs
 import org.eclipse.apoapsis.ortserver.api.v1.model.OrtRun
 import org.eclipse.apoapsis.ortserver.api.v1.model.OrtRunStatistics
 import org.eclipse.apoapsis.ortserver.api.v1.model.OrtRunStatus
@@ -40,8 +41,7 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.Repository
 import org.eclipse.apoapsis.ortserver.api.v1.model.RepositoryType
 import org.eclipse.apoapsis.ortserver.api.v1.model.Severity
 import org.eclipse.apoapsis.ortserver.api.v1.model.User
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserGroup
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithGroups
+import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithProductRole
 import org.eclipse.apoapsis.ortserver.api.v1.model.Username
 import org.eclipse.apoapsis.ortserver.api.v1.model.Vulnerability
 import org.eclipse.apoapsis.ortserver.api.v1.model.VulnerabilityForRunsFilters
@@ -59,6 +59,46 @@ import org.eclipse.apoapsis.ortserver.shared.apimodel.asPresent
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.jsonBody
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.standardListQueryParameters
 
+val getProducts: RouteConfig.() -> Unit = {
+    operationId = "getProducts"
+    summary = "Get all products"
+    description = "Get the products of all organizations on the server. This requires superuser rights."
+    tags = listOf("Products")
+
+    request {
+        standardListQueryParameters()
+        queryParameter<String>("filter") {
+            description = "A regular expression to filter products by name."
+        }
+    }
+
+    response {
+        HttpStatusCode.OK to {
+            description = "Success"
+            jsonBody<PagedResponse<Product>> {
+                example("List all products") {
+                    value = PagedResponse(
+                        listOf(
+                            Product(id = 1, organizationId = 1, name = "First Product", description = "Description"),
+                            Product(id = 2, organizationId = 2, name = "Second Product")
+                        ),
+                        PagingData(
+                            limit = 20,
+                            offset = 0,
+                            totalCount = 2,
+                            sortProperties = listOf(SortProperty("name", SortDirection.ASCENDING))
+                        )
+                    )
+                }
+            }
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The filter is not a valid regular expression."
+        }
+    }
+}
+
 val getProduct: RouteConfig.() -> Unit = {
     operationId = "getProduct"
     summary = "Get details of a product"
@@ -74,10 +114,14 @@ val getProduct: RouteConfig.() -> Unit = {
         HttpStatusCode.OK to {
             description = "Success"
             jsonBody<Product> {
-                example("Create Product") {
+                example("Get Product") {
                     value = Product(id = 1, organizationId = 2, name = "My Product", description = "Description")
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The product does not exist."
         }
     }
 }
@@ -92,7 +136,8 @@ val patchProduct: RouteConfig.() -> Unit = {
             description = "The product's ID."
         }
         jsonBody<PatchProduct> {
-            description = "Set the values that should be updated. To delete a value, set it explicitly to null."
+            description = "Set the values that should be updated. Omitted values are not changed. To delete the " +
+                    "description, set it explicitly to null."
             example("Update Product") {
                 value = PatchProduct(name = "Update Product".asPresent(), description = "Updated product".asPresent())
             }
@@ -113,6 +158,10 @@ val patchProduct: RouteConfig.() -> Unit = {
                 }
             }
         }
+
+        HttpStatusCode.NotFound to {
+            description = "The product does not exist."
+        }
     }
 }
 
@@ -130,6 +179,10 @@ val deleteProduct: RouteConfig.() -> Unit = {
     response {
         HttpStatusCode.NoContent to {
             description = "Success"
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The product does not exist."
         }
     }
 }
@@ -168,8 +221,8 @@ val getProductRepositories: RouteConfig.() -> Unit = {
                             ),
                             Repository(
                                 id = 2,
-                                organizationId = 3,
-                                productId = 4,
+                                organizationId = 2,
+                                productId = 3,
                                 type = RepositoryType.SUBVERSION,
                                 url = "https://example.com/second/repo",
                                 name = "second-repo"
@@ -184,6 +237,14 @@ val getProductRepositories: RouteConfig.() -> Unit = {
                     )
                 }
             }
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The filter is not a valid regular expression."
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The product does not exist."
         }
     }
 }
@@ -224,6 +285,14 @@ val postRepository: RouteConfig.() -> Unit = {
                 }
             }
         }
+
+        HttpStatusCode.NotFound to {
+            description = "The product does not exist."
+        }
+
+        HttpStatusCode.Conflict to {
+            description = "A repository with the same URL and name already exists in the product."
+        }
     }
 }
 
@@ -255,7 +324,11 @@ val putProductRoleToUser: RouteConfig.() -> Unit = {
         }
 
         HttpStatusCode.NotFound to {
-            description = "Product or role not found."
+            description = "The product or the user does not exist."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The role is invalid."
         }
     }
 }
@@ -263,6 +336,8 @@ val putProductRoleToUser: RouteConfig.() -> Unit = {
 val deleteProductRoleFromUser: RouteConfig.() -> Unit = {
     operationId = "deleteProductRoleFromUser"
     summary = "Remove a product role from a user"
+    description = "Remove the role that the user has on the product. The role in the path must be " +
+            "a valid role, but it is not compared with the role that is actually assigned."
     tags = listOf("Products")
 
     request {
@@ -275,6 +350,7 @@ val deleteProductRoleFromUser: RouteConfig.() -> Unit = {
 
         queryParameter<String>("username") {
             description = "The username of the user."
+            required = true
         }
     }
 
@@ -284,7 +360,11 @@ val deleteProductRoleFromUser: RouteConfig.() -> Unit = {
         }
 
         HttpStatusCode.NotFound to {
-            description = "Product or role not found."
+            description = "The product or the user does not exist."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "The role is invalid."
         }
     }
 }
@@ -304,8 +384,9 @@ val getProductVulnerabilities: RouteConfig.() -> Unit = {
 
         queryParameter<String>("rating") {
             description = "Defines the ratings to filter the results by. This is a comma-separated string with the" +
-                    " following allowed ratings: " + VulnerabilityRating.entries.joinToString { "'$it" } + ". Add a " +
-                    "minus as the first item to exclude packages with the specified ratings, e.g. '-,HIGH'."
+                    " following allowed ratings: " + VulnerabilityRating.entries.joinToString { "'$it'" } +
+                    " (ignoring case). Add a minus as the first item to exclude vulnerabilities with the specified " +
+                    "ratings, e.g. '-,HIGH'."
         }
 
         queryParameter<String>("identifier") {
@@ -329,6 +410,7 @@ val getProductVulnerabilities: RouteConfig.() -> Unit = {
 
     response {
         HttpStatusCode.OK to {
+            description = "Success"
             jsonBody<PagedSearchResponse<VulnerabilityWithStats, VulnerabilityForRunsFilters>> {
                 example("Get vulnerabilities for product") {
                     value = PagedSearchResponse(
@@ -371,6 +453,10 @@ val getProductVulnerabilities: RouteConfig.() -> Unit = {
                 }
             }
         }
+
+        HttpStatusCode.NotFound to {
+            description = "The product does not exist."
+        }
     }
 }
 
@@ -396,6 +482,10 @@ val getProductVulnerabilityAdvisors: RouteConfig.() -> Unit = {
                 }
             }
         }
+
+        HttpStatusCode.NotFound to {
+            description = "The product does not exist."
+        }
     }
 }
 
@@ -420,6 +510,7 @@ val getProductRunStatistics: RouteConfig.() -> Unit = {
 
     response {
         HttpStatusCode.OK to {
+            description = "Success"
             jsonBody<OrtRunStatistics> {
                 example("Get run statistics across repositories of a product") {
                     value = OrtRunStatistics(
@@ -473,16 +564,20 @@ val getProductRunStatistics: RouteConfig.() -> Unit = {
                 }
             }
         }
+
+        HttpStatusCode.NotFound to {
+            description = "The product does not exist."
+        }
     }
 }
 
 val getProductUsers: RouteConfig.() -> Unit = {
     operationId = "getProductUsers"
     summary = "Get all users for a product"
-    description = "Get all users that have access rights for a product, including the user privileges (groups) " +
-            "the user has within the product. Fields available for sorting: 'username', 'firstName', " +
-            "'lastName', 'email', 'group'. NOTE: This endpoint supports only one sort field. All fields other than " +
-            " the first one are ignored."
+    description = "Get all users that have a role assigned directly on a product, including their role. " +
+            "Users that only inherit access from a higher level are not included. Fields available for " +
+            "sorting: 'username', 'firstName', 'lastName', 'email', 'role'. NOTE: This endpoint supports " +
+            "exactly one sort field."
     tags = listOf("Products")
 
     request {
@@ -496,21 +591,18 @@ val getProductUsers: RouteConfig.() -> Unit = {
     response {
         HttpStatusCode.OK to {
             description = "Success"
-            jsonBody<PagedResponse<UserWithGroups>> {
+            jsonBody<PagedResponse<UserWithProductRole>> {
                 example("Get users for product") {
                     value = PagedResponse(
                         listOf(
-                            UserWithGroups(
+                            UserWithProductRole(
                                 User(
                                     username = "jdoe",
                                     firstName = "John",
                                     lastName = "Doe",
                                     email = "johndoe@example.com"
                                 ),
-                                listOf(
-                                    UserGroup.READERS,
-                                    UserGroup.WRITERS
-                                )
+                                ProductRole.WRITER
                             )
                         ),
                         PagingData(
@@ -522,6 +614,14 @@ val getProductUsers: RouteConfig.() -> Unit = {
                     )
                 }
             }
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The product does not exist."
+        }
+
+        HttpStatusCode.BadRequest to {
+            description = "Not exactly one sort field or an unsupported sort field was provided."
         }
     }
 }
@@ -538,7 +638,9 @@ private val minimalJobConfigurations = JobConfigurations(
 val postProductRuns: RouteConfig.() -> Unit = {
     operationId = "postProductRuns"
     summary = "Create ORT runs for repositories under a product"
-    description = "Create ORT runs for all repositories under a product or specific repositories"
+    description = "Create ORT runs for all repositories under a product. To create runs only for specific " +
+            "repositories, set 'repositoryIds'. To rerun only the repositories whose latest ORT run failed, set " +
+            "'repositoryFailedIds'."
     tags = listOf("Products")
 
     request {
@@ -561,6 +663,23 @@ val postProductRuns: RouteConfig.() -> Unit = {
                     repositoryIds = listOf(1, 2)
                 )
             }
+
+            example("Create ORT runs for all repositories with includes and excludes") {
+                value = PostRepositoryRun(
+                    revision = "main",
+                    jobConfigs = minimalJobConfigurations,
+                    paths = examplePathIncludesExcludes,
+                    scopes = exampleScopeIncludesExcludes
+                )
+            }
+
+            example("Rerun ORT runs for repositories whose latest run failed") {
+                value = PostRepositoryRun(
+                    revision = "main",
+                    jobConfigs = minimalJobConfigurations,
+                    repositoryFailedIds = listOf(1, 2)
+                )
+            }
         }
     }
 
@@ -579,14 +698,14 @@ val postProductRuns: RouteConfig.() -> Unit = {
                             revision = "main",
                             createdAt = CREATED_AT,
                             jobConfigs = fullJobConfigurations,
-                            resolvedJobConfigs = fullJobConfigurations,
-                            jobs = jobs,
+                            resolvedJobConfigs = null,
+                            jobs = Jobs(),
                             status = OrtRunStatus.CREATED,
                             finishedAt = null,
                             labels = mapOf("label key" to "label value"),
                             issues = emptyList(),
                             jobConfigContext = null,
-                            resolvedJobConfigContext = null,
+                            resolvedJobConfigContext = "32f955941e94d0a318e1c985903f42af924e9050",
                             traceId = "35b67724-a85b-4cc3-b2a4-60fd914634e7"
                         ),
                         OrtRun(
@@ -598,14 +717,14 @@ val postProductRuns: RouteConfig.() -> Unit = {
                             revision = "main",
                             createdAt = CREATED_AT,
                             jobConfigs = fullJobConfigurations,
-                            resolvedJobConfigs = fullJobConfigurations,
-                            jobs = jobs,
+                            resolvedJobConfigs = null,
+                            jobs = Jobs(),
                             status = OrtRunStatus.CREATED,
                             finishedAt = null,
                             labels = mapOf("label key" to "label value"),
                             issues = emptyList(),
                             jobConfigContext = null,
-                            resolvedJobConfigContext = null,
+                            resolvedJobConfigContext = "32f955941e94d0a318e1c985903f42af924e9050",
                             traceId = "35b67724-a85b-4cc3-b2a4-60fd914634e7"
                         )
                     )
@@ -614,7 +733,21 @@ val postProductRuns: RouteConfig.() -> Unit = {
         }
 
         HttpStatusCode.BadRequest to {
-            description = "Invalid request, e.g., provided repository IDs do not belong to the product."
+            description = "Invalid request, e.g., provided repository IDs do not belong to the product, the " +
+                    "plugin configuration is invalid, or the config context cannot be resolved."
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The product does not exist."
+        }
+
+        HttpStatusCode.Forbidden to {
+            description = "The 'keepAliveWorker' flag was set, which is only allowed for superusers."
+        }
+
+        HttpStatusCode.Conflict to {
+            description = "Some of the repositories in 'repositoryFailedIds' do not have a latest ORT run with " +
+                    "status FAILED."
         }
     }
 }

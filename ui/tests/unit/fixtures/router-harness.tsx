@@ -21,7 +21,7 @@
 
 import {
   createMemoryHistory,
-  createRootRoute,
+  createRootRouteWithContext,
   createRoute,
   createRouter,
   Outlet,
@@ -34,14 +34,21 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach } from 'vitest';
 
 export interface TestRouteDefinition {
-  path: string;
+  // A route without a path, such as a layout route, has an ID instead.
+  path?: string;
+  id?: string;
   component?: RouteComponent;
+  // A loader of the application, such as the one of a layout route that writes the breadcrumb.
+  loader?: AnyRoute['options']['loader'];
+  validateSearch?: (search: Record<string, unknown>) => Record<string, unknown>;
   children?: ReadonlyArray<TestRouteDefinition>;
 }
 
 export interface CreateTestRouterOptions {
   path: string;
   routes?: ReadonlyArray<TestRouteDefinition>;
+  // The context the loaders receive, as the application passes it to its router.
+  context?: Record<string, unknown>;
 }
 
 const testRouters = new Set<TestRouter>();
@@ -49,8 +56,9 @@ const testRouters = new Set<TestRouter>();
 export const createTestRouter = ({
   path,
   routes = [{ path: '/' }],
+  context = {},
 }: CreateTestRouterOptions) => {
-  const rootRoute = createRootRoute({
+  const rootRoute = createRootRouteWithContext<Record<string, unknown>>()({
     component: Outlet,
   });
 
@@ -61,8 +69,12 @@ export const createTestRouter = ({
     definitions.map((definition) => {
       const route = createRoute({
         getParentRoute: () => parentRoute,
-        path: definition.path,
+        ...(definition.id
+          ? { id: definition.id }
+          : { path: definition.path ?? '/' }),
         component: definition.component,
+        loader: definition.loader,
+        validateSearch: definition.validateSearch,
       });
 
       return definition.children
@@ -75,6 +87,7 @@ export const createTestRouter = ({
   const router = createRouter({
     history: createMemoryHistory({ initialEntries: [path] }),
     routeTree: rootRoute.addChildren(childRoutes),
+    context,
     scrollRestoration: false,
   });
 

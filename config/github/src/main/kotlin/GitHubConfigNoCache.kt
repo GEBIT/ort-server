@@ -53,10 +53,8 @@ internal class GitHubConfigNoCache : GitHubConfigCache {
         load: suspend () -> Set<String>
     ): Set<String> = load()
 
-    /**
-     * This implementation is just a noop. There is no need to clean up anything.
-     */
-    override fun cleanup(currentRevision: String) {
+    /** This implementation is just a noop. There is no need to clean up anything. */
+    override suspend fun cleanup(currentRevision: String) {
         // Do nothing.
     }
 }

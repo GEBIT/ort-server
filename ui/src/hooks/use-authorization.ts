@@ -109,35 +109,38 @@ const useEntityPermission = (
 export const useOrganizationPermission = (
   organizationId: number,
   requiredPermission: OrganizationPermission
-): PermissionResult =>
-  useEntityPermission({
+): PermissionResult => {
+  return useEntityPermission({
     scopeType: 'organization',
     scope: {
       organizationId,
     },
     requiredPermission,
   });
+};
 
 export const useProductPermission = (
   productId: number,
   requiredPermission: ProductPermission
-): PermissionResult =>
-  useEntityPermission({
+): PermissionResult => {
+  return useEntityPermission({
     scopeType: 'product',
     scope: {
       productId,
     },
     requiredPermission,
   });
+};
 
 export const useRepositoryPermission = (
   repositoryId: number,
   requiredPermission: RepositoryPermission
-): PermissionResult =>
-  useEntityPermission({
+): PermissionResult => {
+  return useEntityPermission({
     scopeType: 'repository',
     scope: {
       repositoryId,
     },
     requiredPermission,
   });
+};

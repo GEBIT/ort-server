@@ -47,6 +47,7 @@ internal fun Route.getRunDetectedLicenses(
     get("runs/{runId}/detected-licenses", {
         operationId = "getRunDetectedLicenses"
         summary = "Get detected licenses for an ORT run with package counts"
+        description = "Supported sort fields are 'license' and 'packageCount'."
         tags = listOf("Runs")
 
         request {
@@ -83,11 +84,17 @@ internal fun Route.getRunDetectedLicenses(
                     }
                 }
             }
+
+            HttpStatusCode.BadRequest to {
+                description = "An unsupported sort field was provided."
+            }
+
+            HttpStatusCode.NotFound to {
+                description = "The ORT run does not exist."
+            }
         }
     }, requireRunReadPermission(ortRunRepository)) {
         val runId = call.requireIdParameter("runId")
-
-        ortRunRepository.get(runId) ?: return@get call.respond(HttpStatusCode.NotFound)
 
         val result = service.getDetectedLicensesForRun(
             ortRunId = runId,

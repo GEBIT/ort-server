@@ -267,39 +267,33 @@ const MultipleSelector = React.forwardRef<
       }
     };
 
-    const handleUnselect = React.useCallback(
-      (option: Option) => {
-        const newOptions = selected.filter((s) => s.value !== option.value);
-        setSelected(newOptions);
-        onChange?.(newOptions);
-      },
-      [onChange, selected]
-    );
+    const handleUnselect = (option: Option) => {
+      const newOptions = selected.filter((s) => s.value !== option.value);
+      setSelected(newOptions);
+      onChange?.(newOptions);
+    };
 
-    const handleKeyDown = React.useCallback(
-      (e: React.KeyboardEvent<HTMLDivElement>) => {
-        const input = inputRef.current;
-        if (input) {
-          if (e.key === 'Delete' || e.key === 'Backspace') {
-            if (input.value === '' && selected.length > 0) {
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const input = inputRef.current;
+      if (input) {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          if (input.value === '' && selected.length > 0) {
+            const lastSelectOption = selected[selected.length - 1];
+            // If last item is fixed, we should not remove it.
+            if (lastSelectOption && !lastSelectOption.fixed) {
               const lastSelectOption = selected[selected.length - 1];
-              // If last item is fixed, we should not remove it.
-              if (lastSelectOption && !lastSelectOption.fixed) {
-                const lastSelectOption = selected[selected.length - 1];
-                if (lastSelectOption) {
-                  handleUnselect(lastSelectOption);
-                }
+              if (lastSelectOption) {
+                handleUnselect(lastSelectOption);
               }
             }
           }
-          // This is not a default behavior of the <input /> field
-          if (e.key === 'Escape') {
-            input.blur();
-          }
         }
-      },
-      [handleUnselect, selected]
-    );
+        // This is not a default behavior of the <input /> field
+        if (e.key === 'Escape') {
+          input.blur();
+        }
+      }
+    };
 
     useEffect(() => {
       if (open) {
@@ -354,8 +348,13 @@ const MultipleSelector = React.forwardRef<
       };
 
       void exec();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [debouncedSearchTerm, groupBy, open, triggerSearchOnFocus]);
+    }, [
+      debouncedSearchTerm,
+      groupBy,
+      onSearchSync,
+      open,
+      triggerSearchOnFocus,
+    ]);
 
     useEffect(() => {
       /** async search */
@@ -380,8 +379,7 @@ const MultipleSelector = React.forwardRef<
       };
 
       void exec();
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [debouncedSearchTerm, groupBy, open, triggerSearchOnFocus]);
+    }, [debouncedSearchTerm, groupBy, onSearch, open, triggerSearchOnFocus]);
 
     const CreatableItem = () => {
       if (!creatable) return undefined;
@@ -428,7 +426,7 @@ const MultipleSelector = React.forwardRef<
       return undefined;
     };
 
-    const EmptyItem = React.useCallback(() => {
+    const EmptyItem = () => {
       if (!emptyIndicator) return undefined;
 
       // For async search that showing emptyIndicator
@@ -441,17 +439,22 @@ const MultipleSelector = React.forwardRef<
       }
 
       return <CommandEmpty>{emptyIndicator}</CommandEmpty>;
-    }, [creatable, emptyIndicator, onSearch, options]);
+    };
 
+    // Without `useMemo`, React Compiler would compute the selectable options
+    // again on every keystroke, not only when the options or the selection
+    // change.
     const selectables = React.useMemo<GroupOption>(
       () => removePickedOption(options, selected),
       [options, selected]
     );
 
+    const commandPropsFilter = commandProps?.filter;
+
     /** Avoid Creatable Selector freezing or lagging when paste a long string. */
-    const commandFilter = React.useCallback(() => {
-      if (commandProps?.filter) {
-        return commandProps.filter;
+    const commandFilter = () => {
+      if (commandPropsFilter) {
+        return commandPropsFilter;
       }
 
       if (creatable) {
@@ -461,7 +464,7 @@ const MultipleSelector = React.forwardRef<
       }
       // Using default filter in `cmdk`. We don't have to provide it.
       return undefined;
-    }, [creatable, commandProps?.filter]);
+    };
 
     return (
       <Command

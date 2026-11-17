@@ -28,6 +28,7 @@ import {
   getOrganizationInfrastructureServiceOptions,
   patchOrganizationInfrastructureServiceMutation,
 } from '@/api/@tanstack/react-query.gen';
+import { withOrganizationPermission } from '@/components/authorization';
 import { MultiSelectField } from '@/components/form/multi-select-field';
 import { LoadingIndicator } from '@/components/loading-indicator';
 import { SecretSelect } from '@/components/secret-select';
@@ -150,12 +151,12 @@ const EditInfrastructureServicePage = () => {
               name='url'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Url</FormLabel>
+                  <FormLabel>URL Prefix</FormLabel>
                   <FormControl autoFocus>
                     <Input {...field} type='url' />
                   </FormControl>
                   <FormDescription>
-                    The URL of the infrastructure service.
+                    The URL prefix to match against the service's URL
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -191,10 +192,10 @@ const EditInfrastructureServicePage = () => {
                     permissions={permissions}
                   />
                   <FormDescription>
-                    The name of the organization secret that contains the
-                    username of the credentials for the infrastructure service.
-                    Please note that the secret first needs to be created in
-                    order to use it here.
+                    The name of the secret that contains the username of the
+                    credentials for the infrastructure service. Please note that
+                    the secret first needs to be created in order to use it
+                    here.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -214,10 +215,10 @@ const EditInfrastructureServicePage = () => {
                     permissions={permissions}
                   />
                   <FormDescription>
-                    The name of the organization secret that contains the
-                    password of the credentials for the infrastructure service.
-                    Please note that the secret first needs to be created in
-                    order to use it here.
+                    The name of the secret that contains the password of the
+                    credentials for the infrastructure service. Please note that
+                    the secret first needs to be created in order to use it
+                    here.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -309,6 +310,8 @@ export const Route = createFileRoute(
       }),
     });
   },
-  component: EditInfrastructureServicePage,
+  // Editing an infrastructure service needs write permission, while the list needs only read
+  // permission.
+  component: withOrganizationPermission('WRITE', EditInfrastructureServicePage),
   pendingComponent: LoadingIndicator,
 });

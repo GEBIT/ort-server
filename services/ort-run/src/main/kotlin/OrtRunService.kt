@@ -22,12 +22,13 @@ package org.eclipse.apoapsis.ortserver.services.ortrun
 import kotlin.time.Clock
 import kotlin.time.Instant
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
+import org.eclipse.apoapsis.ortserver.components.reportstorage.ReportNotFoundException
+import org.eclipse.apoapsis.ortserver.components.reportstorage.ReportStorageService
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.AnalyzerRunDao
 import org.eclipse.apoapsis.ortserver.dao.repositories.ortrun.OrtRunDao
 import org.eclipse.apoapsis.ortserver.dao.tables.NestedRepositoriesTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.VcsInfoDao
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.AdvisorJob
 import org.eclipse.apoapsis.ortserver.model.AnalyzerJob
 import org.eclipse.apoapsis.ortserver.model.EvaluatorJob
@@ -71,8 +72,6 @@ import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryResult
 import org.eclipse.apoapsis.ortserver.model.util.ProcessingResult
 import org.eclipse.apoapsis.ortserver.model.util.asPresent
-import org.eclipse.apoapsis.ortserver.services.ReportNotFoundException
-import org.eclipse.apoapsis.ortserver.services.ReportStorageService
 import org.eclipse.apoapsis.ortserver.services.ResourceNotFoundException
 
 import org.jetbrains.exposed.v1.jdbc.Database
@@ -92,9 +91,7 @@ import org.ossreviewtoolkit.scanner.utils.getVcsPathsForProvenances
 
 import org.slf4j.LoggerFactory
 
-/**
- * A service to interact with ORT runs.
- */
+/** A service to interact with ORT runs. */
 @Suppress("LongParameterList", "TooManyFunctions")
 class OrtRunService(
     private val db: Database,
@@ -126,7 +123,7 @@ class OrtRunService(
     suspend fun listOrtRuns(
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
         filters: OrtRunFilters? = null
-    ): ListQueryResult<OrtRun> = db.dbQuery {
+    ): ListQueryResult<OrtRun> = db.transaction {
         ortRunRepository.list(parameters, filters)
     }
 
@@ -169,7 +166,10 @@ class OrtRunService(
         runIds.forEach { runId ->
             runCatching {
                 deleteOrtRun(runId)
-            }.onFailure { failureCount++ }
+            }.onFailure { e ->
+                logger.error("Could not delete ORT run $runId.", e)
+                failureCount++
+            }
         }
 
         logger.info("Deleted ${runIds.size - failureCount} old ORT runs successfully.")
@@ -184,7 +184,7 @@ class OrtRunService(
      * Create an empty [ScannerRun]. This function is supposed to be called before the ORT scanner is invoked, so that
      * data can be associated to the scanner run while the ORT scanner is running.
      */
-    fun createScannerRun(scannerJobId: Long) = db.blockingQuery { scannerRunRepository.create(scannerJobId) }
+    suspend fun createScannerRun(scannerJobId: Long) = db.transaction { scannerRunRepository.create(scannerJobId) }
 
     /**
      * Finalize the provided scanner run by storing the [ScannerRun.startTime], [ScannerRun.endTime],
@@ -192,7 +192,7 @@ class OrtRunService(
      * This function can be called only once for a scanner run and throws an exception if it is called multiple times
      * for the same scanner run.
      */
-    fun finalizeScannerRun(scannerRun: ScannerRun, issues: Collection<Issue>) {
+    suspend fun finalizeScannerRun(scannerRun: ScannerRun, issues: Collection<Issue>) {
         val startTime = requireNotNull(scannerRun.startTime)
         val endTime = requireNotNull(scannerRun.endTime)
         val environment = requireNotNull(scannerRun.environment)
@@ -213,68 +213,48 @@ class OrtRunService(
         }
     }
 
-    /**
-     * Return the [AdvisorJob] with the provided [id] or `null` if the job does not exist.
-     */
-    fun getAdvisorJob(id: Long) = db.blockingQuery { advisorJobRepository.get(id) }
+    /** Return the [AdvisorJob] with the provided [id] or `null` if the job does not exist. */
+    suspend fun getAdvisorJob(id: Long) = db.transaction { advisorJobRepository.get(id) }
 
-    /**
-     * Return the [AdvisorJob] for the provided [ortRunId] or `null` if the job does not exist.
-     */
-    fun getAdvisorJobForOrtRun(ortRunId: Long) = db.blockingQuery { advisorJobRepository.getForOrtRun(ortRunId) }
+    /** Return the [AdvisorJob] for the provided [ortRunId] or `null` if the job does not exist. */
+    suspend fun getAdvisorJobForOrtRun(ortRunId: Long) = db.transaction { advisorJobRepository.getForOrtRun(ortRunId) }
 
-    /**
-     * Return the [AdvisorRun] for the provided [ortRunId] or `null` if the run does not exist.
-     */
-    fun getAdvisorRunForOrtRun(ortRunId: Long) = db.blockingQuery {
+    /** Return the [AdvisorRun] for the provided [ortRunId] or `null` if the run does not exist. */
+    suspend fun getAdvisorRunForOrtRun(ortRunId: Long) = db.transaction {
         getAdvisorJobForOrtRun(ortRunId)?.let { advisorRunRepository.getByJobId(it.id) }
     }
 
-    /**
-     * Return the [AnalyzerJob] with the provided [id] or `null` if the job does not exist.
-     */
-    fun getAnalyzerJob(id: Long) = db.blockingQuery { analyzerJobRepository.get(id) }
+    /** Return the [AnalyzerJob] with the provided [id] or `null` if the job does not exist. */
+    suspend fun getAnalyzerJob(id: Long) = db.transaction { analyzerJobRepository.get(id) }
 
-    /**
-     * Return the [AnalyzerJob] for the provided [ortRunId] or `null` if the job does not exist.
-     */
-    fun getAnalyzerJobForOrtRun(ortRunId: Long) = db.blockingQuery { analyzerJobRepository.getForOrtRun(ortRunId) }
+    /** Return the [AnalyzerJob] for the provided [ortRunId] or `null` if the job does not exist. */
+    suspend fun getAnalyzerJobForOrtRun(ortRunId: Long) =
+        db.transaction { analyzerJobRepository.getForOrtRun(ortRunId) }
 
-    /**
-     * Return the [AnalyzerRun] for the provided [ortRunId] or `null` if the run does not exist.
-     */
-    fun getAnalyzerRunForOrtRun(ortRunId: Long) = db.blockingQuery {
+    /** Return the [AnalyzerRun] for the provided [ortRunId] or `null` if the run does not exist. */
+    suspend fun getAnalyzerRunForOrtRun(ortRunId: Long) = db.transaction {
         getAnalyzerJobForOrtRun(ortRunId)?.let { analyzerRunRepository.getByJobId(it.id) }
     }
 
-    /**
-     * Return the [EvaluatorJob] with the provided [id] or `null` if the job does not exist.
-     */
-    fun getEvaluatorJob(id: Long) = db.blockingQuery { evaluatorJobRepository.get(id) }
+    /** Return the [EvaluatorJob] with the provided [id] or `null` if the job does not exist. */
+    suspend fun getEvaluatorJob(id: Long) = db.transaction { evaluatorJobRepository.get(id) }
 
-    /**
-     * Return the [EvaluatorJob] for the provided [ortRunId] or `null` if the job does not exist.
-     */
-    fun getEvaluatorJobForOrtRun(ortRunId: Long) = db.blockingQuery { evaluatorJobRepository.getForOrtRun(ortRunId) }
+    /** Return the [EvaluatorJob] for the provided [ortRunId] or `null` if the job does not exist. */
+    suspend fun getEvaluatorJobForOrtRun(ortRunId: Long) =
+        db.transaction { evaluatorJobRepository.getForOrtRun(ortRunId) }
 
-    /**
-     * Return the [EvaluatorRun] for the provided [ortRunId] or `null` if the run does not exist.
-     */
-    fun getEvaluatorRunForOrtRun(ortRunId: Long) = db.blockingQuery {
+    /** Return the [EvaluatorRun] for the provided [ortRunId] or `null` if the run does not exist. */
+    suspend fun getEvaluatorRunForOrtRun(ortRunId: Long) = db.transaction {
         getEvaluatorJobForOrtRun(ortRunId)?.let { evaluatorRunRepository.getByJobId(it.id) }
     }
 
-    /**
-     * Return the download links for the reports of the ORT run with the given [ortRunId].
-     */
-    fun getDownloadLinksForOrtRun(ortRunId: Long) = db.blockingQuery {
+    /** Return the download links for the reports of the ORT run with the given [ortRunId]. */
+    suspend fun getDownloadLinksForOrtRun(ortRunId: Long) = db.transaction {
         reporterJobRepository.getNonExpiredReports(ortRunId)
     }
 
-    /**
-     * Return the [Hierarchy] for the provided [ortRunId] or `null` if the run does not exist.
-     */
-    fun getHierarchyForOrtRun(ortRunId: Long) = db.blockingQuery {
+    /** Return the [Hierarchy] for the provided [ortRunId] or `null` if the run does not exist. */
+    suspend fun getHierarchyForOrtRun(ortRunId: Long) = db.transaction {
         getOrtRun(ortRunId)?.let { repositoryRepository.getHierarchy(it.repositoryId) }
     }
 
@@ -283,14 +263,14 @@ class OrtRunService(
      * accordingly based on the [failIfMissing] flag: If it is *true*, throw an exception; otherwise, return an
      * empty [Repository] object.
      */
-    fun getOrtRepositoryInformation(ortRun: OrtRun, failIfMissing: Boolean = true) = db.blockingQuery {
+    suspend fun getOrtRepositoryInformation(ortRun: OrtRun, failIfMissing: Boolean = true) = db.transaction {
         val vcsId = ortRun.vcsId
         val vcsProcessedId = ortRun.vcsProcessedId
         val nestedRepositoryIds = ortRun.nestedRepositoryIds
 
         @Suppress("ComplexCondition")
         if ((vcsId == null || vcsProcessedId == null || nestedRepositoryIds == null) && !failIfMissing) {
-            return@blockingQuery Repository.EMPTY
+            return@transaction Repository.EMPTY
         }
 
         requireNotNull(vcsId) {
@@ -322,55 +302,40 @@ class OrtRunService(
         )
     }
 
-    /**
-     * Return the [OrtRun] with the provided [id] or `null` if the ORT run does not exist.
-     */
-    fun getOrtRun(id: Long) = db.blockingQuery { ortRunRepository.get(id) }
+    /** Return the [OrtRun] with the provided [id] or `null` if the ORT run does not exist. */
+    suspend fun getOrtRun(id: Long) = db.transaction { ortRunRepository.get(id) }
 
-    /**
-     * Return the [ReporterJob] with the provided [id] or `null` if the job does not exist.
-     */
-    fun getReporterJob(id: Long) = db.blockingQuery { reporterJobRepository.get(id) }
+    /** Return the [ReporterJob] with the provided [id] or `null` if the job does not exist. */
+    suspend fun getReporterJob(id: Long) = db.transaction { reporterJobRepository.get(id) }
 
-    /**
-     * Return the [ReporterJob] for the provided [ortRunId] or `null` if the job does not exist.
-     */
-    fun getReporterJobForOrtRun(ortRunId: Long) = db.blockingQuery { reporterJobRepository.getForOrtRun(ortRunId) }
+    /** Return the [ReporterJob] for the provided [ortRunId] or `null` if the job does not exist. */
+    suspend fun getReporterJobForOrtRun(ortRunId: Long) =
+        db.transaction { reporterJobRepository.getForOrtRun(ortRunId) }
 
-    /**
-     * Return the [ReporterRun] for the provided [ortRunId] or `null` if the run does not exist.
-     */
-    fun getReporterRunForOrtRun(ortRunId: Long) = db.blockingQuery {
+    /** Return the [ReporterRun] for the provided [ortRunId] or `null` if the run does not exist. */
+    suspend fun getReporterRunForOrtRun(ortRunId: Long) = db.transaction {
         getReporterJobForOrtRun(ortRunId)?.let { reporterRunRepository.getByJobId(it.id) }
     }
 
-    /**
-     * Return the [NotifierJob] for the provided [id] or `null` if the run does not exist.
-     */
-    fun getNotifierJob(id: Long) = db.blockingQuery { notifierJobRepository.get(id) }
+    /** Return the [NotifierJob] for the provided [id] or `null` if the run does not exist. */
+    suspend fun getNotifierJob(id: Long) = db.transaction { notifierJobRepository.get(id) }
 
     /**
      * Return the resolved configuration for the provided [ortRun]. If no resolved configuration is stored, an empty
      * resolved configuration is returned.
      */
-    fun getResolvedConfiguration(ortRun: OrtRun) = db.blockingQuery {
+    suspend fun getResolvedConfiguration(ortRun: OrtRun) = db.transaction {
         resolvedConfigurationRepository.getForOrtRun(ortRun.id) ?: ResolvedConfiguration()
     }
 
-    /**
-     * Return the [ScannerJob] with the provided [id] or `null` if the job does not exist.
-     */
-    fun getScannerJob(id: Long) = db.blockingQuery { scannerJobRepository.get(id) }
+    /** Return the [ScannerJob] with the provided [id] or `null` if the job does not exist. */
+    suspend fun getScannerJob(id: Long) = db.transaction { scannerJobRepository.get(id) }
 
-    /**
-     * Return the [ScannerJob] for the provided [ortRunId] or `null` if the job does not exist.
-     */
-    fun getScannerJobForOrtRun(ortRunId: Long) = db.blockingQuery { scannerJobRepository.getForOrtRun(ortRunId) }
+    /** Return the [ScannerJob] for the provided [ortRunId] or `null` if the job does not exist. */
+    suspend fun getScannerJobForOrtRun(ortRunId: Long) = db.transaction { scannerJobRepository.getForOrtRun(ortRunId) }
 
-    /**
-     * Return the [ScannerRun] for the provided [ortRunId] or `null` if the run does not exist.
-     */
-    fun getScannerRunForOrtRun(ortRunId: Long) = db.blockingQuery {
+    /** Return the [ScannerRun] for the provided [ortRunId] or `null` if the run does not exist. */
+    suspend fun getScannerRunForOrtRun(ortRunId: Long) = db.transaction {
         getScannerJobForOrtRun(ortRunId)?.let { scannerRunRepository.getByJobId(it.id) }
     }
 
@@ -389,7 +354,7 @@ class OrtRunService(
      * Setting [loadFileLists] to false allows to load the scanner run only partially. This can be useful when needing
      * to access certain scan related items in the result, but loading the file lists is unnecessary.
      */
-    fun generateOrtResult(
+    suspend fun generateOrtResult(
         ortRun: OrtRun,
         loadAdvisorRun: Boolean = true,
         loadScannerRun: Boolean = true,
@@ -447,40 +412,34 @@ class OrtRunService(
         )
     }
 
-    /**
-     * Start the [AdvisorJob] with the provided [id] and return the updated job or `null` if the job does not exist.
-     */
-    fun startAdvisorJob(id: Long) = advisorJobRepository.tryStart(id, Clock.System.now())
+    /** Start the [AdvisorJob] with the provided [id] and return the updated job or `null` if the job does not exist. */
+    suspend fun startAdvisorJob(id: Long) = advisorJobRepository.tryStart(id, Clock.System.now())
 
     /**
      * Start the [AnalyzerJob] with the provided [id] and return the updated job or `null` if the job does not exist.
      */
-    fun startAnalyzerJob(id: Long) = analyzerJobRepository.tryStart(id, Clock.System.now())
+    suspend fun startAnalyzerJob(id: Long) = analyzerJobRepository.tryStart(id, Clock.System.now())
 
     /**
      * Start the [EvaluatorJob] with the provided [id] and return the updated job or `null` if the job does not exist.
      */
-    fun startEvaluatorJob(id: Long) = evaluatorJobRepository.tryStart(id, Clock.System.now())
+    suspend fun startEvaluatorJob(id: Long) = evaluatorJobRepository.tryStart(id, Clock.System.now())
 
     /**
      * Start the [ReporterJob] with the provided [id] and return the updated job or `null` if the job does not exist.
      */
-    fun startReporterJob(id: Long) = reporterJobRepository.tryStart(id, Clock.System.now())
+    suspend fun startReporterJob(id: Long) = reporterJobRepository.tryStart(id, Clock.System.now())
 
     /**
      * Start the [NotifierJob] with the provided [id] and return the updated job or `null` if the job does not exist.
      */
-    fun startNotifierJob(id: Long) = notifierJobRepository.tryStart(id, Clock.System.now())
+    suspend fun startNotifierJob(id: Long) = notifierJobRepository.tryStart(id, Clock.System.now())
 
-    /**
-     * Start the [ScannerJob] with the provided [id] and return the updated job or `null` if the job does not exist.
-     */
-    fun startScannerJob(id: Long) = scannerJobRepository.tryStart(id, Clock.System.now())
+    /** Start the [ScannerJob] with the provided [id] and return the updated job or `null` if the job does not exist. */
+    suspend fun startScannerJob(id: Long) = scannerJobRepository.tryStart(id, Clock.System.now())
 
-    /**
-     * Store the provided [advisorRun].
-     */
-    fun storeAdvisorRun(advisorRun: AdvisorRun) {
+    /** Store the provided [advisorRun]. */
+    suspend fun storeAdvisorRun(advisorRun: AdvisorRun) {
         advisorRunRepository.create(
             advisorJobId = advisorRun.advisorJobId,
             startTime = advisorRun.startTime,
@@ -492,10 +451,8 @@ class OrtRunService(
         )
     }
 
-    /**
-     * Store the provided [analyzerRun].
-     */
-    fun storeAnalyzerRun(
+    /** Store the provided [analyzerRun]. */
+    suspend fun storeAnalyzerRun(
         analyzerRun: AnalyzerRun,
         shortestDependencyPaths: Map<Identifier, List<ShortestDependencyPath>> = emptyMap(),
         excludedPackageIds: Set<Identifier> = emptySet(),
@@ -517,10 +474,8 @@ class OrtRunService(
         )
     }
 
-    /**
-     * Store the provided [evaluatorRun].
-     */
-    fun storeEvaluatorRun(evaluatorRun: EvaluatorRun) {
+    /** Store the provided [evaluatorRun]. */
+    suspend fun storeEvaluatorRun(evaluatorRun: EvaluatorRun) {
         evaluatorRunRepository.create(
             evaluatorRun.evaluatorJobId,
             evaluatorRun.startTime,
@@ -530,10 +485,8 @@ class OrtRunService(
         )
     }
 
-    /**
-     * Store the provided [reporterRun].
-     */
-    fun storeReporterRun(reporterRun: ReporterRun) {
+    /** Store the provided [reporterRun]. */
+    suspend fun storeReporterRun(reporterRun: ReporterRun) {
         reporterRunRepository.create(
             reporterRun.reporterJobId,
             reporterRun.startTime,
@@ -542,7 +495,7 @@ class OrtRunService(
         )
     }
 
-    fun storeNotifierRun(notifierRun: NotifierRun) {
+    suspend fun storeNotifierRun(notifierRun: NotifierRun) {
         notifierRunRepository.create(
             notifierRun.notifierJobId,
             notifierRun.startTime,
@@ -550,11 +503,9 @@ class OrtRunService(
         )
     }
 
-    /**
-     * Store the provided [repositoryInformation] associated with the [ortRunId].
-     */
-    fun storeRepositoryInformation(ortRunId: Long, repositoryInformation: Repository) {
-        db.blockingQuery {
+    /** Store the provided [repositoryInformation] associated with the [ortRunId]. */
+    suspend fun storeRepositoryInformation(ortRunId: Long, repositoryInformation: Repository) {
+        db.transaction {
             val vcsInfoDao = VcsInfoDao.getOrPut(repositoryInformation.vcs.mapToModel())
 
             val processedVcsInfoDao = VcsInfoDao.getOrPut(repositoryInformation.vcsProcessed.mapToModel())
@@ -589,11 +540,9 @@ class OrtRunService(
         }
     }
 
-    /**
-     * Store the provided resolved [packageConfigurations] associated with the [ortRunId].
-     */
-    fun storeResolvedPackageConfigurations(ortRunId: Long, packageConfigurations: List<PackageConfiguration>) {
-        db.blockingQuery {
+    /** Store the provided resolved [packageConfigurations] associated with the [ortRunId]. */
+    suspend fun storeResolvedPackageConfigurations(ortRunId: Long, packageConfigurations: List<PackageConfiguration>) {
+        db.transaction {
             resolvedConfigurationRepository.addPackageConfigurations(
                 ortRunId,
                 packageConfigurations.map { it.mapToModel() }
@@ -601,23 +550,19 @@ class OrtRunService(
         }
     }
 
-    /**
-     * Store the provided resolved [packageCurations] associated with the [ortRunId].
-     */
-    fun storeResolvedPackageCurations(ortRunId: Long, packageCurations: List<ResolvedPackageCurations>) {
-        db.blockingQuery {
+    /** Store the provided resolved [packageCurations] associated with the [ortRunId]. */
+    suspend fun storeResolvedPackageCurations(ortRunId: Long, packageCurations: List<ResolvedPackageCurations>) {
+        db.transaction {
             resolvedConfigurationRepository.addPackageCurations(ortRunId, packageCurations.map { it.mapToModel() })
         }
     }
 
-    /**
-     * Store package curation associations for the provided [ortRunId].
-     */
-    fun storePackageCurationAssociations(
+    /** Store package curation associations for the provided [ortRunId]. */
+    suspend fun storePackageCurationAssociations(
         ortRunId: Long,
         packageCurationAssociations: Map<Identifier, List<AppliedPackageCurationRef>>
     ) {
-        db.blockingQuery {
+        db.transaction {
             resolvedConfigurationRepository.addPackageCurationAssociations(ortRunId, packageCurationAssociations)
         }
     }
@@ -627,8 +572,8 @@ class OrtRunService(
      * This stores both the unique resolutions to the resolved configuration and the mappings
      * between items and their matching resolutions for efficient statistics queries.
      */
-    fun storeResolvedItems(ortRunId: Long, resolvedItems: ResolvedItemsResult) {
-        db.blockingQuery {
+    suspend fun storeResolvedItems(ortRunId: Long, resolvedItems: ResolvedItemsResult) {
+        db.transaction {
             resolvedConfigurationRepository.addResolutions(ortRunId, resolvedItems)
         }
     }
@@ -637,20 +582,30 @@ class OrtRunService(
      * Store the provided [issues] for the ORT run with the given [ortRunId]. This can be used for issues associated
      * with the run itself, not with any specific job.
      */
-    fun storeIssues(ortRunId: Long, issues: List<Issue>) {
-        db.blockingQuery {
+    suspend fun storeIssues(ortRunId: Long, issues: List<Issue>) {
+        db.transaction {
             ortRunRepository.update(ortRunId, issues = issues.asPresent())
         }
     }
 
-    fun updateRevision(ortRunId: Long, revision: String) {
-        db.blockingQuery {
+    /**
+     * Set the how-to-fix text of all issue occurrences in the ORT run with [ortRunId] that match the content and
+     * timestamp of the given [issues], regardless of their identifier. Return the number of updated occurrences.
+     */
+    suspend fun updateIssueHowToFixTexts(ortRunId: Long, issues: Collection<Issue>): Int {
+        val updatedOccurrences = ortRunRepository.updateIssueHowToFixTexts(ortRunId, issues)
+        logger.debug("Updated how-to-fix text for {} issues in ORT run {}.", updatedOccurrences, ortRunId)
+        return updatedOccurrences
+    }
+
+    suspend fun updateRevision(ortRunId: Long, revision: String) {
+        db.transaction {
             ortRunRepository.update(ortRunId, revision = revision.asPresent())
         }
     }
 
-    fun updateResolvedRevision(ortRunId: Long, resolvedRevision: String) {
-        db.blockingQuery {
+    suspend fun updateResolvedRevision(ortRunId: Long, resolvedRevision: String) {
+        db.transaction {
             ortRunRepository.update(ortRunId, resolvedRevision = resolvedRevision.asPresent())
         }
     }
@@ -671,9 +626,7 @@ class OrtRunService(
     }
 }
 
-/**
- * Filter the [files][FileList.files] in this [FileList] to only contain files matching the provided [paths].
- */
+/** Filter the [files][FileList.files] in this [FileList] to only contain files matching the provided [paths]. */
 private fun FileList.filterByVcsPaths(paths: Collection<String>): FileList {
     if (paths.any { it.isBlank() }) return this
 

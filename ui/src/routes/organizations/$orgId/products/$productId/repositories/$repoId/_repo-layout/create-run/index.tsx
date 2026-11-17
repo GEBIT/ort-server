@@ -19,6 +19,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { useEffect, useState } from 'react';
 import { z } from 'zod';
 
 import type { PostRepositoryRun } from '@/api';
@@ -28,27 +29,72 @@ import {
   getRepositoryOptions,
   postRepositoryRunMutation,
 } from '@/api/@tanstack/react-query.gen';
-import {
-  getAvailableRepositorySecrets,
-  getPluginsForRepository,
-  getRepositoryRun,
-} from '@/api/sdk.gen';
+import { getAvailableRepositorySecrets, getRepositoryRun } from '@/api/sdk.gen';
+import { withRepositoryPermission } from '@/components/authorization';
 import { LoadingIndicator } from '@/components/loading-indicator';
+import {
+  createRunDefaultPluginsOptions,
+  createRunPluginsOptions,
+  useCreateRunPlugins,
+} from '@/hooks/use-create-run-plugins';
 import { useUser } from '@/hooks/use-user.ts';
 import { ApiError } from '@/lib/api-error';
 import { runCreated } from '@/lib/entity-cache';
 import { toast, toastError } from '@/lib/toast';
 import { buildRecentRun, useHomeRecentRunActions } from '@/providers/home-data';
+import {
+  analyzedRunProjectsOptions,
+  type AnalyzedRunProjects,
+} from './-components/analyzed-run-projects';
 import { CreateRunForm } from './-components/create-run-form';
+import { getProjectSuggestions } from './-components/project-suggestions';
+
+const selectProjectSuggestions = (projects: AnalyzedRunProjects | null) =>
+  projects && getProjectSuggestions(projects);
 
 const CreateRunPage = () => {
   const navigate = useNavigate();
   const params = Route.useParams();
   const queryClient = useQueryClient();
-  const { ortRun, plugins, secrets } = Route.useLoaderData();
+  const { ortRun, secrets } = Route.useLoaderData();
   const { recordRecentRun } = useHomeRecentRunActions();
   const isSuperuser = useUser().isSuperuser || false;
   const permissions = Route.useRouteContext().permissions;
+
+  // The config context influences which plugins are available for the
+  // repository. It is initialized from the run being rerun (if any) and can be
+  // changed via the corresponding form field, which reloads the plugins.
+  const [configContext, setConfigContext] = useState(
+    ortRun?.data?.jobConfigContext ?? ''
+  );
+
+  const {
+    plugins,
+    defaultPlugins,
+    pluginsLoading,
+    pluginsLoadFailed,
+    pluginsError,
+    defaultPluginsError,
+  } = useCreateRunPlugins(Number.parseInt(params.repoId), configContext);
+
+  // The suggestions for includes and excludes work without the projects, so a failure to load
+  // them only leaves out the suggestions based on them.
+  const projectSuggestions = useQuery({
+    ...analyzedRunProjectsOptions(
+      Number.parseInt(params.repoId),
+      ortRun?.data ?? null
+    ),
+    select: selectProjectSuggestions,
+  });
+
+  useEffect(() => {
+    if (pluginsError) toastError('Unable to load plugins', pluginsError);
+  }, [pluginsError]);
+
+  useEffect(() => {
+    if (defaultPluginsError)
+      toastError('Unable to load default plugins', defaultPluginsError);
+  }, [defaultPluginsError]);
 
   const {
     data: organization,
@@ -134,11 +180,17 @@ const CreateRunPage = () => {
 
   return (
     <CreateRunForm
+      defaultPlugins={defaultPlugins}
       isSubmitting={isPending}
       isSuperuser={isSuperuser}
+      onConfigContextChange={setConfigContext}
       onSubmit={submitRun}
       permissions={permissions}
-      plugins={plugins.data ?? []}
+      plugins={plugins}
+      pluginsLoading={pluginsLoading}
+      pluginsLoadFailed={pluginsLoadFailed}
+      projectSuggestions={projectSuggestions.data}
+      projectSuggestionsLoading={projectSuggestions.isPending}
       rerun={ortRun?.data ?? null}
       secrets={secrets.data ?? []}
     />
@@ -159,34 +211,36 @@ export const Route = createFileRoute(
   // It is important to notice that if no rerunIndex is provided to this route,
   // the query will not be run. This corresponds to the "New run" case, where a new
   // ORT Run is created from scratch, using all defaults.
-  loader: async ({ params, deps: { rerunIndex } }) => {
-    const [ortRun, plugins, secrets] = await Promise.all([
+  loader: async ({ params, deps: { rerunIndex }, context }) => {
+    const repositoryId = Number.parseInt(params.repoId);
+    const ortRun =
       rerunIndex !== undefined
-        ? getRepositoryRun({
-            path: {
-              repositoryId: Number.parseInt(params.repoId),
-              ortRunIndex: rerunIndex,
-            },
+        ? await getRepositoryRun({
+            path: { repositoryId, ortRunIndex: rerunIndex },
           })
-        : Promise.resolve(null as null),
-      getPluginsForRepository({
-        path: {
-          repositoryId: Number.parseInt(params.repoId),
-        },
-      }),
-      getAvailableRepositorySecrets({
-        path: {
-          repositoryId: Number.parseInt(params.repoId),
-        },
-      }),
-    ]);
+        : null;
 
-    return {
-      ortRun,
-      plugins,
-      secrets,
-    };
+    // Start loading the plugins and the default plugins without blocking the
+    // page. For reruns, use the original run's config context for the initial
+    // fetch.
+    const configContext = ortRun?.data?.jobConfigContext || undefined;
+    void context.queryClient.prefetchQuery(
+      createRunPluginsOptions(repositoryId, configContext)
+    );
+    void context.queryClient.prefetchQuery(
+      createRunDefaultPluginsOptions(repositoryId, configContext)
+    );
+    // Also start loading the projects that the suggestions for includes and excludes are based on.
+    void context.queryClient.prefetchQuery(
+      analyzedRunProjectsOptions(repositoryId, ortRun?.data ?? null)
+    );
+
+    const secrets = await getAvailableRepositorySecrets({
+      path: { repositoryId },
+    });
+
+    return { ortRun, secrets };
   },
-  component: CreateRunPage,
+  component: withRepositoryPermission('TRIGGER_ORT_RUN', CreateRunPage),
   validateSearch: rerunIndexSchema,
 });

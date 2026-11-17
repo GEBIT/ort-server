@@ -20,11 +20,11 @@
 package org.eclipse.apoapsis.ortserver.services
 
 import org.eclipse.apoapsis.ortserver.components.authorization.service.AuthorizationService
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.repositories.advisorjob.AdvisorJobsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerjob.AnalyzerJobsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.evaluatorjob.EvaluatorJobsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.ortrun.OrtRunsTable
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.Hierarchy
 import org.eclipse.apoapsis.ortserver.model.JobStatus
 import org.eclipse.apoapsis.ortserver.model.Jobs
@@ -41,10 +41,10 @@ import org.eclipse.apoapsis.ortserver.model.repositories.OrtRunRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.ReporterJobRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.RepositoryRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.ScannerJobRepository
+import org.eclipse.apoapsis.ortserver.model.util.FilterParameter
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryResult
 import org.eclipse.apoapsis.ortserver.model.util.OptionalValue
-import org.eclipse.apoapsis.ortserver.utils.logging.runBlocking
 
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
@@ -53,9 +53,7 @@ import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.select
 
-/**
- * A service providing functions for working with [repositories][Repository].
- */
+/** A service providing functions for working with [repositories][Repository]. */
 @Suppress("LongParameterList")
 class RepositoryService(
     private val db: Database,
@@ -69,20 +67,16 @@ class RepositoryService(
     private val notifierJobRepository: NotifierJobRepository,
     private val authorizationService: AuthorizationService
 ) {
-    /**
-     * Delete the [Repository] by its [repositoryId] and all [OrtRun]s that are associated with it.
-     */
-    suspend fun deleteRepository(repositoryId: Long): Unit = db.dbQuery {
+    /** Delete the [Repository] by its [repositoryId] and all [OrtRun]s that are associated with it. */
+    suspend fun deleteRepository(repositoryId: Long): Unit = db.transaction {
         ortRunRepository.deleteByRepository(repositoryId)
 
         repositoryRepository.delete(repositoryId)
     }
 
-    /**
-     * Get all [Jobs] for the [OrtRun] with the provided [ortRunIndex] and [repositoryId].
-     */
-    suspend fun getJobs(repositoryId: Long, ortRunIndex: Long): Jobs? = db.dbQuery {
-        val ortRun = ortRunRepository.getByIndex(repositoryId, ortRunIndex) ?: return@dbQuery null
+    /** Get all [Jobs] for the [OrtRun] with the provided [ortRunIndex] and [repositoryId]. */
+    suspend fun getJobs(repositoryId: Long, ortRunIndex: Long): Jobs? = db.transaction {
+        val ortRun = ortRunRepository.getByIndex(repositoryId, ortRunIndex) ?: return@transaction null
 
         val analyzerJob = analyzerJobRepository.getForOrtRun(ortRun.id)
         val advisorJob = advisorJobRepository.getForOrtRun(ortRun.id)
@@ -94,11 +88,11 @@ class RepositoryService(
     }
 
     /** Get the [Hierarchy] for the provided [repository][repositoryId]. */
-    suspend fun getHierarchy(repositoryId: Long): Hierarchy = db.dbQuery {
+    suspend fun getHierarchy(repositoryId: Long): Hierarchy = db.transaction {
         repositoryRepository.getHierarchy(repositoryId)
     }
 
-    suspend fun getOrtRun(repositoryId: Long, ortRunIndex: Long): OrtRun? = db.dbQuery {
+    suspend fun getOrtRun(repositoryId: Long, ortRunIndex: Long): OrtRun? = db.transaction {
         ortRunRepository.getByIndex(repositoryId, ortRunIndex)
     }
 
@@ -107,7 +101,7 @@ class RepositoryService(
      * This function is more efficient than [getOrtRun], as it only retrieves the ID of the ORT run or
      * returns null if the ORT run is not found.
      */
-    suspend fun getOrtRunId(repositoryId: Long, ortRunIndex: Long): Long? = db.dbQuery {
+    suspend fun getOrtRunId(repositoryId: Long, ortRunIndex: Long): Long? = db.transaction {
         ortRunRepository.getIdByIndex(repositoryId, ortRunIndex)
     }
 
@@ -118,20 +112,27 @@ class RepositoryService(
     suspend fun getOrtRunSummaries(
         repositoryId: Long,
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT
-    ): ListQueryResult<OrtRunSummary> = db.dbQuery {
+    ): ListQueryResult<OrtRunSummary> = db.transaction {
         ortRunRepository.listSummariesForRepository(repositoryId, parameters)
     }
 
-    /**
-     * Get a repository by [repositoryId]. Returns null if the repository is not found.
-     */
-    suspend fun getRepository(repositoryId: Long): Repository? = db.dbQuery {
+    /** Get a repository by [repositoryId]. Returns null if the repository is not found. */
+    suspend fun getRepository(repositoryId: Long): Repository? = db.transaction {
         repositoryRepository.get(repositoryId)
     }
 
     /**
-     * Update a repository by [repositoryId] with the [present][OptionalValue.Present] values.
+     * List all repositories on the server according to the given [parameters] and an optional [filter] on the
+     * repository name or URL. No hierarchy filter is applied, so this function is meant for server administrators.
      */
+    suspend fun listRepositories(
+        parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
+        filter: FilterParameter? = null
+    ): ListQueryResult<Repository> = db.transaction {
+        repositoryRepository.list(parameters, filter)
+    }
+
+    /** Update a repository by [repositoryId] with the [present][OptionalValue.Present] values. */
     suspend fun updateRepository(
         repositoryId: Long,
         type: OptionalValue<RepositoryType> = OptionalValue.Absent,
@@ -139,7 +140,7 @@ class RepositoryService(
         description: OptionalValue<String?> = OptionalValue.Absent,
         productId: OptionalValue<Long> = OptionalValue.Absent,
         name: OptionalValue<String?> = OptionalValue.Absent
-    ): Repository = db.dbQuery {
+    ): Repository = db.transaction {
         var isMove = false
         productId.ifPresent { newProductId ->
             if (repositoryRepository.get(repositoryId)?.productId != newProductId) {
@@ -156,19 +157,15 @@ class RepositoryService(
             productId = productId
         ).also {
             if (isMove) {
-                runBlocking {
-                    // Because of the change in the hierarchical structure, role assignments may now be inconsistent.
-                    // Therefore, remove all direct role assignments for the repository.
-                    authorizationService.removeAssignments(RepositoryId(repositoryId), recursively = true)
-                }
+                // Because of the change in the hierarchical structure, role assignments may now be inconsistent.
+                // Therefore, remove all direct role assignments for the repository.
+                authorizationService.removeAssignments(RepositoryId(repositoryId), recursively = true)
             }
         }
     }
 
-    /**
-     * Get the ID of the latest ORT run of the repository where the analyzer job is in a final state.
-     */
-    suspend fun getLatestOrtRunIdWithAnalyzerJobInFinalState(repositoryId: Long): Long? = db.dbQuery {
+    /** Get the ID of the latest ORT run of the repository where the analyzer job is in a final state. */
+    suspend fun getLatestOrtRunIdWithAnalyzerJobInFinalState(repositoryId: Long): Long? = db.transaction {
         AnalyzerJobsTable
             .innerJoin(OrtRunsTable)
             .select(AnalyzerJobsTable.ortRunId)
@@ -183,10 +180,8 @@ class RepositoryService(
             ?.value
     }
 
-    /**
-     * Get the ID of the latest ORT run of the repository where the analyzer job has succeeded.
-     */
-    suspend fun getLatestOrtRunIdWithSuccessfulAnalyzerJob(repositoryId: Long): Long? = db.dbQuery {
+    /** Get the ID of the latest ORT run of the repository where the analyzer job has succeeded. */
+    suspend fun getLatestOrtRunIdWithSuccessfulAnalyzerJob(repositoryId: Long): Long? = db.transaction {
         AnalyzerJobsTable
             .innerJoin(OrtRunsTable)
             .select(AnalyzerJobsTable.ortRunId)
@@ -201,10 +196,8 @@ class RepositoryService(
             ?.value
     }
 
-    /**
-     * Get the ID of the latest ORT run of the repository where the advisor job has succeeded.
-     */
-    suspend fun getLatestOrtRunIdWithSuccessfulAdvisorJob(repositoryId: Long): Long? = db.dbQuery {
+    /** Get the ID of the latest ORT run of the repository where the advisor job has succeeded. */
+    suspend fun getLatestOrtRunIdWithSuccessfulAdvisorJob(repositoryId: Long): Long? = db.transaction {
         AdvisorJobsTable
             .innerJoin(OrtRunsTable)
             .select(AdvisorJobsTable.ortRunId)
@@ -219,10 +212,8 @@ class RepositoryService(
             ?.value
     }
 
-    /**
-     * Get the ID of the latest ORT run of the repository where the evaluator job has succeeded.
-     */
-    suspend fun getLatestOrtRunIdWithSuccessfulEvaluatorJob(repositoryId: Long): Long? = db.dbQuery {
+    /** Get the ID of the latest ORT run of the repository where the evaluator job has succeeded. */
+    suspend fun getLatestOrtRunIdWithSuccessfulEvaluatorJob(repositoryId: Long): Long? = db.transaction {
         EvaluatorJobsTable
             .innerJoin(OrtRunsTable)
             .select(EvaluatorJobsTable.ortRunId)

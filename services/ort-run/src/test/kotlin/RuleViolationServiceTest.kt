@@ -34,7 +34,7 @@ import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 
-import io.mockk.every
+import io.mockk.coEvery
 import io.mockk.mockk
 
 import kotlin.time.Clock
@@ -68,6 +68,7 @@ import org.eclipse.apoapsis.ortserver.model.util.FilterOperatorAndValue
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
 import org.eclipse.apoapsis.ortserver.model.util.OrderDirection
 import org.eclipse.apoapsis.ortserver.model.util.OrderField
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.Database
 
@@ -81,6 +82,8 @@ class RuleViolationServiceTest : WordSpec() {
     private lateinit var service: RuleViolationService
 
     init {
+        tags(Integration)
+
         beforeEach {
             db = dbExtension.db
             fixtures = dbExtension.fixtures
@@ -108,7 +111,7 @@ class RuleViolationServiceTest : WordSpec() {
             )
 
             ruleViolationResolutionService = mockk {
-                every { getResolutionsForRepository(any()) } returns Ok(emptyList())
+                coEvery { getResolutionsForRepository(any()) } returns Ok(emptyList())
             }
 
             service = RuleViolationService(db, ortRunService, ruleViolationResolutionService)
@@ -395,7 +398,7 @@ class RuleViolationServiceTest : WordSpec() {
             "sort identifier, severity, and rule in both directions" {
                 val ortRun = createRuleViolationEntries()
 
-                fun sorted(field: String, direction: OrderDirection) = service.listForOrtRunId(
+                suspend fun sorted(field: String, direction: OrderDirection) = service.listForOrtRunId(
                     ortRun.id,
                     ListQueryParameters(sortFields = listOf(OrderField(field, direction)))
                 ).data.map { it.rule }
@@ -471,7 +474,7 @@ class RuleViolationServiceTest : WordSpec() {
                     )
                 )
 
-                every {
+                coEvery {
                     ruleViolationResolutionService.getResolutionsForRepository(RepositoryId(repositoryId))
                 } returns Ok(
                     listOf(
@@ -542,7 +545,7 @@ class RuleViolationServiceTest : WordSpec() {
                     )
                 )
 
-                every {
+                coEvery {
                     ruleViolationResolutionService.getResolutionsForRepository(RepositoryId(repositoryId))
                 } returns Ok(emptyList())
 
@@ -1015,8 +1018,8 @@ class RuleViolationServiceTest : WordSpec() {
             )
         )
 
-    private fun createRuleViolationEntries(
-        repositoryId: Long = fixtures.createRepository().id,
+    private suspend fun createRuleViolationEntries(
+        repositoryId: Long = fixtures.repository.id,
         ruleViolations: List<RuleViolation> = generateRuleViolations()
     ): OrtRun {
         val ortRun = fixtures.createOrtRun(

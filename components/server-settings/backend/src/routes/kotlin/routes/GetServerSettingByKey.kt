@@ -29,18 +29,19 @@ import org.eclipse.apoapsis.ortserver.components.authorization.routes.OrtServerP
 import org.eclipse.apoapsis.ortserver.components.serversettings.ServerSetting
 import org.eclipse.apoapsis.ortserver.components.serversettings.ServerSettingKey
 import org.eclipse.apoapsis.ortserver.components.serversettings.ServerSettingsTable
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.jsonBody
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.respondError
 
 import org.jetbrains.exposed.v1.jdbc.Database
-import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 
 internal fun Route.getServerSettingByKey(db: Database) = get("settings/server/{key}", {
-    operationId = "GetServerSettingByKey"
+    operationId = "getServerSettingByKey"
     summary = "Get the server setting for the provided key"
-    description = "Get the value and isEnabled properties for a server setting. " +
-            "If no value was set before or the setting is disabled, the default value is returned."
+    description = "Get the value and isEnabled properties for a server setting. If the setting was never stored, " +
+            "the default value is returned and the setting is disabled. A disabled setting that was stored before " +
+            "returns its stored value."
     tags = listOf("Settings")
 
     request {
@@ -56,8 +57,8 @@ internal fun Route.getServerSettingByKey(db: Database) = get("settings/server/{k
             jsonBody<ServerSetting> {
                 example("Server setting") {
                     value = ServerSetting(
-                        isEnabled = false,
-                        value = "http://example.com/icon.png"
+                        isEnabled = true,
+                        value = "https://example.com/custom-icon.png"
                     )
                 }
             }
@@ -83,7 +84,7 @@ internal fun Route.getServerSettingByKey(db: Database) = get("settings/server/{k
         return@get
     }
 
-    val serverSetting = transaction(db) { ServerSettingsTable.get(key) }
+    val serverSetting = db.transaction { ServerSettingsTable.get(key) }
 
     call.respond(HttpStatusCode.OK, serverSetting)
 }

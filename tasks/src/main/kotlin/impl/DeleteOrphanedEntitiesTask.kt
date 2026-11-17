@@ -44,15 +44,17 @@ class DeleteOrphanedEntitiesTask(
         /** The section containing configuration for orphaned entity deletion. */
         private val ORPHAN_SECTION = Path("orphanHandlers")
 
-        /**
-         * Create a new instance of [DeleteOldOrtRunsTask].
-         */
+        /** Create a new instance of [DeleteOldOrtRunsTask]. */
         fun create(config: ConfigManager, orphanRemovalService: OrphanRemovalService): DeleteOrphanedEntitiesTask =
             DeleteOrphanedEntitiesTask(config, orphanRemovalService)
     }
 
     override suspend fun execute() {
         logger.info("Deleting orphaned ORT run entities.")
-        orphanRemovalService.deleteRunsOrphanedEntities(config.subConfig(ORPHAN_SECTION))
+        val result = orphanRemovalService.deleteRunsOrphanedEntities(config.subConfig(ORPHAN_SECTION))
+
+        check(result.failedCount == 0) {
+            "Could not delete ${result.failedCount} of ${result.totalCount} orphaned entities."
+        }
     }
 }

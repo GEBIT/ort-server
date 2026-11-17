@@ -17,123 +17,127 @@
  * License-Filename: LICENSE
  */
 
-import { useQuery } from '@tanstack/react-query';
-import { createFileRoute, Link } from '@tanstack/react-router';
-import { AudioWaveform, List, ListVideo, Loader2 } from 'lucide-react';
+import { createFileRoute, linkOptions } from '@tanstack/react-router';
+import { Blocks, ListVideo, Network, User } from 'lucide-react';
 
+import { DefaultPluginsNote } from './-components/default-plugins-note';
+import { HierarchyFigures } from './-components/hierarchy-figures';
+import { InstalledPluginsNote } from './-components/installed-plugins-note';
+import { defaultPluginsCount, totalCount } from './-components/overview-format';
 import {
-  getOrganizationsOptions,
-  getRunsOptions,
-} from '@/api/@tanstack/react-query.gen';
-import { zOrtRunStatus } from '@/api/zod.gen';
-import { StatisticsCard } from '@/components/statistics-card';
-import { toastError } from '@/lib/toast';
+  defaultPluginsOptions,
+  installedPluginsOptions,
+  prefetchOverview,
+  runsCountOptions,
+  runStatusCountOptions,
+  usersCountOptions,
+} from './-components/overview-queries';
+import {
+  OverviewFigure,
+  OverviewRow,
+  QueryCount,
+} from './-components/overview-row';
+import { RunStatusSummary } from './-components/run-status-summary';
+import { WaitingRunsNote } from './-components/waiting-runs-note';
 
-const OverviewContent = () => {
-  const {
-    data: orgs,
-    isLoading: orgsIsLoading,
-    error: orgIsError,
-  } = useQuery({
-    ...getOrganizationsOptions({ query: { limit: 1 } }),
-  });
-
-  const {
-    data: runs,
-    isLoading: runsIsLoading,
-    error: runsIsError,
-  } = useQuery({
-    ...getRunsOptions({ query: { limit: 1 } }),
-  });
-
-  const {
-    data: activeRuns,
-    isLoading: activeRunsIsLoading,
-    error: activeRunsIsError,
-  } = useQuery({
-    ...getRunsOptions({
-      query: { limit: 1, status: 'active' },
-    }),
-  });
-
-  if (orgIsError || runsIsError || activeRunsIsError) {
-    toastError(
-      'Unable to load data',
-      orgIsError || runsIsError || activeRunsIsError
-    );
-  }
-
-  return (
-    <div className='space-y-4'>
-      <div className='grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4'>
-        <Link to='/organizations'>
-          <StatisticsCard
-            title='Organizations'
-            icon={() => <List className='h-4 w-4' />}
-            value={
-              orgsIsLoading ? (
-                <>
-                  <span className='sr-only'>Loading...</span>
-                  <Loader2 size={16} className='animate-spin' />
-                </>
-              ) : orgIsError ? (
-                <span className='text-sm text-red-500'>
-                  Error fetching data
-                </span>
-              ) : (
-                orgs?.pagination.totalCount
-              )
-            }
-            className='hover:bg-muted/50 h-full'
-          />
-        </Link>
-        <Link to='/admin/runs'>
-          <StatisticsCard
-            title='Runs'
-            icon={() => <ListVideo className='h-4 w-4' />}
-            value={
-              runsIsLoading ? (
-                <>
-                  <span className='sr-only'>Loading...</span>
-                  <Loader2 size={16} className='animate-spin' />
-                </>
-              ) : runsIsError ? (
-                <span className='text-sm text-red-500'>
-                  Error fetching data
-                </span>
-              ) : (
-                runs?.pagination.totalCount
-              )
-            }
-            className='hover:bg-muted/50 h-full'
-          />
-        </Link>
-        <Link to='/admin/runs' search={{ status: [zOrtRunStatus.enum.ACTIVE] }}>
-          <StatisticsCard
-            title='Active runs'
-            icon={() => <AudioWaveform className='h-4 w-4' />}
-            value={
-              activeRunsIsLoading ? (
-                <>
-                  <span className='sr-only'>Loading...</span>
-                  <Loader2 size={16} className='animate-spin' />
-                </>
-              ) : activeRunsIsError ? (
-                <span className='text-sm text-red-500'>
-                  Error fetching data
-                </span>
-              ) : (
-                activeRuns?.pagination.totalCount
-              )
-            }
-            className='hover:bg-muted/50 h-full'
-          />
-        </Link>
-      </div>
+const OverviewContent = () => (
+  <div className='flex flex-col gap-4'>
+    <div className='flex flex-col gap-1'>
+      <h1 className='text-2xl font-semibold tracking-tight'>Overview</h1>
+      <p className='text-muted-foreground text-sm'>
+        The runs, hierarchy, users and plugins of this server.
+      </p>
     </div>
-  );
-};
+    <div className='bg-card text-card-foreground divide-y rounded-xl border shadow-sm'>
+      <OverviewRow
+        title='Runs'
+        description='See how many runs are active and waiting, and catch the ones that fail.'
+        icon={ListVideo}
+        figures={
+          <>
+            <OverviewFigure
+              label='Active'
+              link={linkOptions({
+                to: '/admin/runs',
+                search: { status: ['ACTIVE'] },
+              })}
+              note={<WaitingRunsNote />}
+              value={
+                <QueryCount
+                  options={runStatusCountOptions('ACTIVE')}
+                  count={totalCount}
+                />
+              }
+            />
+            <OverviewFigure
+              label='Runs in total'
+              link={linkOptions({ to: '/admin/runs' })}
+              value={
+                <QueryCount options={runsCountOptions()} count={totalCount} />
+              }
+            />
+            <RunStatusSummary />
+          </>
+        }
+      />
+      <OverviewRow
+        title='Hierarchy'
+        description='See how many organizations, products and repositories the server holds, and open their lists.'
+        icon={Network}
+        figures={<HierarchyFigures />}
+      />
+      <OverviewRow
+        title='Users'
+        description='Manage who can sign in, and their roles in organizations, products and repositories.'
+        icon={User}
+        figures={
+          <OverviewFigure
+            label='Users'
+            link={linkOptions({ to: '/admin/users' })}
+            value={
+              <QueryCount options={usersCountOptions()} count={totalCount} />
+            }
+          />
+        }
+      />
+      <OverviewRow
+        title='Plugins'
+        description='Choose the plugins the workers run, and the defaults for new runs.'
+        icon={Blocks}
+        figures={
+          <>
+            <OverviewFigure
+              label='Installed plugins'
+              link={linkOptions({ to: '/admin/plugins' })}
+              note={<InstalledPluginsNote />}
+              value={
+                <QueryCount
+                  options={installedPluginsOptions()}
+                  count={(plugins) => plugins.length}
+                />
+              }
+            />
+            <OverviewFigure
+              label='Default plugins'
+              link={linkOptions({ to: '/admin/plugins/defaults' })}
+              note={<DefaultPluginsNote />}
+              value={
+                <QueryCount
+                  options={defaultPluginsOptions()}
+                  count={defaultPluginsCount}
+                />
+              }
+            />
+          </>
+        }
+      />
+    </div>
+  </div>
+);
 
 export const Route = createFileRoute('/admin/')({
+  // Start all queries without waiting for them, so that the page shows at once and every number
+  // appears as soon as its own query has loaded.
+  loader: ({ context: { queryClient } }) => prefetchOverview(queryClient),
   component: OverviewContent,
 });

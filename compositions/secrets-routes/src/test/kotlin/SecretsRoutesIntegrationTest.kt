@@ -25,7 +25,6 @@ import io.ktor.server.testing.ApplicationTestBuilder
 import org.eclipse.apoapsis.ortserver.components.infrastructureservices.InfrastructureServiceService
 import org.eclipse.apoapsis.ortserver.components.secrets.SecretService
 import org.eclipse.apoapsis.ortserver.components.secrets.secretsValidations
-import org.eclipse.apoapsis.ortserver.model.repositories.SecretRepository
 import org.eclipse.apoapsis.ortserver.secrets.SecretStorage
 import org.eclipse.apoapsis.ortserver.secrets.SecretsProviderFactoryForTesting
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.AbstractIntegrationTest
@@ -36,18 +35,13 @@ abstract class SecretsRoutesIntegrationTest(
     body: SecretsRoutesIntegrationTest.() -> Unit
 ) : AbstractIntegrationTest({}) {
     lateinit var infrastructureServiceService: InfrastructureServiceService
-    lateinit var secretRepository: SecretRepository
     lateinit var secretService: SecretService
-
-    val secretErrorPath = "error-path"
 
     init {
         beforeEach {
-            secretRepository = dbExtension.fixtures.secretRepository
             secretService = SecretService(
                 dbExtension.db,
-                dbExtension.fixtures.secretRepository,
-                SecretStorage(SecretsProviderFactoryForTesting().createProvider(secretErrorPath))
+                SecretStorage(SecretsProviderFactoryForTesting().createProvider())
             )
             infrastructureServiceService = InfrastructureServiceService(dbExtension.db)
         }

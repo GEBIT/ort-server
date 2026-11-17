@@ -40,7 +40,6 @@ import io.mockk.Runs
 import io.mockk.andThenJust
 import io.mockk.coEvery
 import io.mockk.coVerify
-import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
 import io.mockk.runs
@@ -53,9 +52,9 @@ import kotlin.time.Instant
 
 import kotlinx.coroutines.delay
 
+import org.eclipse.apoapsis.ortserver.components.reportstorage.ReportNotFoundException
+import org.eclipse.apoapsis.ortserver.components.reportstorage.ReportStorageService
 import org.eclipse.apoapsis.ortserver.components.resolutions.issues.IssueResolutionService
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerjob.AnalyzerJobsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.AnalyzerRunDao
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.AnalyzerRunsTable
@@ -75,6 +74,7 @@ import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifiersTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.VcsInfoDao
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
 import org.eclipse.apoapsis.ortserver.dao.test.Fixtures
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.dao.utils.toDatabasePrecision
 import org.eclipse.apoapsis.ortserver.model.Hierarchy
 import org.eclipse.apoapsis.ortserver.model.JobStatus
@@ -127,10 +127,9 @@ import org.eclipse.apoapsis.ortserver.model.util.ComparisonOperator
 import org.eclipse.apoapsis.ortserver.model.util.FilterOperatorAndValue
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
 import org.eclipse.apoapsis.ortserver.model.util.asPresent
-import org.eclipse.apoapsis.ortserver.services.ReportNotFoundException
-import org.eclipse.apoapsis.ortserver.services.ReportStorageService
 import org.eclipse.apoapsis.ortserver.shared.orttestdata.OrtTestData
 import org.eclipse.apoapsis.ortserver.storage.StorageException
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.exceptions.ExposedSQLException
@@ -154,6 +153,8 @@ import org.ossreviewtoolkit.model.config.LicenseFindingCurationReason
 import org.ossreviewtoolkit.model.config.PackageConfiguration as OrtPackageConfiguration
 import org.ossreviewtoolkit.model.config.PathInclude
 import org.ossreviewtoolkit.model.config.PathIncludeReason
+import org.ossreviewtoolkit.model.config.ScopeInclude
+import org.ossreviewtoolkit.model.config.ScopeIncludeReason
 import org.ossreviewtoolkit.model.config.VcsMatcher
 import org.ossreviewtoolkit.utils.common.gibibytes
 import org.ossreviewtoolkit.utils.spdxexpression.SpdxExpression
@@ -161,6 +162,8 @@ import org.ossreviewtoolkit.utils.spdxexpression.toSpdx
 
 @Suppress("LargeClass")
 class OrtRunServiceTest : WordSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     lateinit var db: Database
@@ -191,7 +194,7 @@ class OrtRunServiceTest : WordSpec({
             reportStorageService
         )
 
-    fun createRepository(organizationName: String): Long {
+    suspend fun createRepository(organizationName: String): Long {
         val organizationId = fixtures.createOrganization(organizationName).id
         val productId = fixtures.createProduct(organizationId = organizationId).id
         val repositoryId = fixtures.createRepository(productId = productId).id
@@ -199,14 +202,14 @@ class OrtRunServiceTest : WordSpec({
         return repositoryId
     }
 
-    fun createOrtRun(): Long {
+    suspend fun createOrtRun(): Long {
         val repositoryId = createRepository("org3")
         val ortRunId = fixtures.createOrtRun(repositoryId).id
 
         return ortRunId
     }
 
-    fun createOrtRuns(): List<Long> {
+    suspend fun createOrtRuns(): List<Long> {
         val repository1Id = createRepository("org1")
         val repository2Id = createRepository("org2")
 
@@ -222,7 +225,7 @@ class OrtRunServiceTest : WordSpec({
         return listOf(ortRunId1, ortRunId2, ortRunId3)
     }
 
-    fun createReporterJob(ortRunId: Long): Long {
+    suspend fun createReporterJob(ortRunId: Long): Long {
         val reporterJobId = fixtures.createReporterJob(ortRunId, ReporterJobConfiguration()).id
         val reports = listOf(
             Report("abc123", "https://example.com/report/abc123", Clock.System.now(), sizeInBytes = 100L),
@@ -1129,7 +1132,7 @@ class OrtRunServiceTest : WordSpec({
                 db,
                 service,
                 mockk<IssueResolutionService> {
-                    every { getResolutionsForRepository(any()) } returns Ok(emptyList())
+                    coEvery { getResolutionsForRepository(any()) } returns Ok(emptyList())
                 }
             )
             issuesService.listForOrtRunId(fixtures.ortRun.id).data should containExactlyInAnyOrder(
@@ -1158,7 +1161,7 @@ class OrtRunServiceTest : WordSpec({
                 excludedProjectIds = setOf(excludedProject.identifier)
             )
 
-            db.dbQuery {
+            db.transaction {
                 val storedPackages = PackagesAnalyzerRunsTable
                     .innerJoin(PackagesTable)
                     .innerJoin(IdentifiersTable)
@@ -1297,7 +1300,7 @@ class OrtRunServiceTest : WordSpec({
 
     "storeRepositoryInformation" should {
         "store repository information correctly" {
-            val repository = db.blockingQuery {
+            val repository = db.transaction {
                 val vcsInfo = VcsInfoDao.getOrPut(createVcsInfo("https://example.org/repo.git"))
                 val processedVcsInfo = VcsInfoDao.getOrPut(createVcsInfo("https://example.org/processed-repo.git"))
                 val nestedVcsInfo = VcsInfoDao.getOrPut(createVcsInfo("https://example.org/nested-repo.git"))
@@ -1477,7 +1480,7 @@ class OrtRunServiceTest : WordSpec({
                 )
             )
 
-            val packageIds = dbExtension.db.dbQuery {
+            val packageIds = dbExtension.db.transaction {
                 PackagesTable
                     .innerJoin(IdentifiersTable)
                     .innerJoin(PackagesAnalyzerRunsTable)
@@ -1501,7 +1504,7 @@ class OrtRunServiceTest : WordSpec({
                     }
             }
 
-            val curationIds = dbExtension.db.dbQuery {
+            val curationIds = dbExtension.db.transaction {
                 ResolvedPackageCurationsTable
                     .innerJoin(ResolvedPackageCurationProvidersTable)
                     .innerJoin(PackageCurationProviderConfigsTable)
@@ -1518,7 +1521,7 @@ class OrtRunServiceTest : WordSpec({
                     }
             }
 
-            val storedRows = dbExtension.db.dbQuery {
+            val storedRows = dbExtension.db.transaction {
                 CuratedPackagesTable.selectAll()
                     .where { CuratedPackagesTable.ortRunId eq fixtures.ortRun.id }
                     .toList()
@@ -1583,6 +1586,26 @@ class OrtRunServiceTest : WordSpec({
             val storedIssues = fixtures.ortRunRepository.get(fixtures.ortRun.id)?.issues
 
             storedIssues shouldBe issues
+        }
+    }
+
+    "updateIssueHowToFixTexts" should {
+        "store the text and return the number of updated occurrences" {
+            val ortRunId = fixtures.ortRun.id
+            val issue = Issue(
+                timestamp = Instant.parse("2026-01-01T12:00:00Z"),
+                source = "Analyzer",
+                message = "A test issue",
+                severity = Severity.WARNING
+            )
+            service.storeIssues(ortRunId, listOf(issue))
+            val updatedIssue = issue.copy(howToFix = "Upgrade to **2.0**.")
+
+            service.updateIssueHowToFixTexts(ortRunId, listOf(updatedIssue)) shouldBe 1
+
+            fixtures.ortRunRepository.get(ortRunId).shouldNotBeNull().issues.shouldBeSingleton {
+                it shouldBe updatedIssue
+            }
         }
     }
 
@@ -1814,14 +1837,14 @@ class OrtRunServiceTest : WordSpec({
     }
 })
 
-private fun createOrtRun(
+private suspend fun createOrtRun(
     db: Database,
     vcsInfo: VcsInfo?,
     processedVcsInfo: VcsInfo?,
     nestedVcsInfo1: VcsInfo,
     nestedVcsInfo2: VcsInfo,
     fixtures: Fixtures
-) = db.blockingQuery {
+) = db.transaction {
     val vcs = vcsInfo?.let(VcsInfoDao::getOrPut)
     val vcsProcessed = processedVcsInfo?.let(VcsInfoDao::getOrPut)
     val vcsNested = mapOf(
@@ -1964,11 +1987,16 @@ private val pathInclude = PathInclude(
     reason = PathIncludeReason.OTHER,
     comment = "Test path include."
 )
-private val includes = Includes(listOf(pathInclude))
+private val scopeInclude = ScopeInclude(
+    pattern = "compile",
+    reason = ScopeIncludeReason.SOURCE_OF,
+    comment = "Test scope include."
+)
+private val includes = Includes(listOf(pathInclude), listOf(scopeInclude))
 
 /**
- * A repository configuration that contains path includes to test that the includes are correctly processed by the
- * service under test.
+ * A repository configuration that contains path and scope includes to test that the includes are correctly processed
+ * by the service under test.
  */
 private val repositoryConfigurationWithIncludes = OrtTestData.repository.config.copy(includes = includes)
 

@@ -21,7 +21,7 @@ package org.eclipse.apoapsis.ortserver.workers.notifier
 
 import kotlin.time.Clock
 
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.runs.notifier.NotifierRun
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrtRunService
 import org.eclipse.apoapsis.ortserver.transport.EndpointComponent
@@ -78,7 +78,7 @@ internal class NotifierWorker(
                 endTime = endTime
             )
 
-            db.dbQuery {
+            db.transaction {
                 ortRunService.storeNotifierRun(notifierRun)
             }
 
@@ -87,17 +87,17 @@ internal class NotifierWorker(
     }.getOrElse {
         when (it) {
             is JobIgnoredException -> {
-                logger.warn("Message with traceId '$traceId' ignored: ${it.message}")
+                logger.warn("Not running the notifier because message '$traceId' got ignored: ${it.message}")
                 RunResult.Ignored
             }
 
             else -> {
-                logger.error("Error while processing message with traceId '$traceId': ${it.message}")
+                logger.error("Error while running the notifier as instructed by message '$traceId': ${it.message}")
                 RunResult.Failed(it)
             }
         }
     }
 
-    private fun getValidNotifierJob(jobId: Long) =
+    private suspend fun getValidNotifierJob(jobId: Long) =
         ortRunService.getNotifierJob(jobId).validateForProcessing(jobId)
 }

@@ -44,6 +44,9 @@ export const HomeDataProvider = ({
 }: HomeDataProviderProps) => {
   const auth = useAuth();
   const userId = getHomeDataUserId(auth.user?.profile);
+  // Create the provider only when the user ID changes. Without `useMemo`,
+  // React Compiler would create a new one for every new profile object,
+  // which signing in again silently hands out for the same user.
   const localProvider = useMemo(
     () => createLocalHomeDataProvider(userId),
     [userId]

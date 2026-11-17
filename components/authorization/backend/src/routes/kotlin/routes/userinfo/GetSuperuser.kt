@@ -30,8 +30,9 @@ import org.eclipse.apoapsis.ortserver.components.authorization.routes.OrtServerP
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.get
 import org.eclipse.apoapsis.ortserver.components.authorization.service.AuthorizationService
 import org.eclipse.apoapsis.ortserver.model.CompoundHierarchyId
+import org.eclipse.apoapsis.ortserver.shared.ktorutils.jsonBody
 
-internal fun Route.getSuperuser() = get("/authorization/superuser", {
+internal fun Route.getSuperuser() = get("authorization/superuser", {
     operationId = "getSuperuser"
     summary = "Check if the current user is a superuser"
     tags = listOf("Authorization")
@@ -39,14 +40,14 @@ internal fun Route.getSuperuser() = get("/authorization/superuser", {
     response {
         HttpStatusCode.OK to {
             description = "Success"
-            body<Boolean> {
+            jsonBody<Boolean> {
                 description = "Whether the current user is a superuser."
             }
         }
     }
 }, superuserChecker()) {
     val isSuperuser = requirePrincipal().effectiveRole.isSuperuser
-    call.respond(HttpStatusCode.OK, isSuperuser.toString())
+    call.respond(HttpStatusCode.OK, isSuperuser)
 }
 
 /**
@@ -58,7 +59,8 @@ private fun superuserChecker(): AuthorizationChecker =
         override suspend fun loadEffectiveRole(
             service: AuthorizationService,
             userId: String,
+            userSub: String,
             call: ApplicationCall
         ): EffectiveRole =
-            service.getEffectiveRole(userId, CompoundHierarchyId.WILDCARD)
+            service.getEffectiveRole(userId, CompoundHierarchyId.WILDCARD, userSub)
     }

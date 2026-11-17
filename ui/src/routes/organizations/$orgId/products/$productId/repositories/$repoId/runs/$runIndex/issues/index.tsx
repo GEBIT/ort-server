@@ -18,10 +18,10 @@
  */
 
 import { useQuery, useSuspenseQuery } from '@tanstack/react-query';
-import { createFileRoute, Link } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { ExpandedState } from '@tanstack/react-table';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import z from 'zod';
 
 import { Issue, Severity } from '@/api';
@@ -30,8 +30,6 @@ import {
   getRunIssuesOptions,
 } from '@/api/@tanstack/react-query.gen';
 import { zSeverity } from '@/api/zod.gen';
-import { BreakableString } from '@/components/breakable-string';
-import { CopyToClipboard } from '@/components/copy-to-clipboard';
 import { DataTableCards } from '@/components/data-table-cards/data-table-cards';
 import { MarkItems } from '@/components/data-table/mark-items';
 import { FormattedValue } from '@/components/formatted-value';
@@ -53,11 +51,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 import { getIssueCategory } from '@/helpers/get-issue-category';
 import {
   getIssueSeverityBackgroundColor,
@@ -79,6 +72,7 @@ import {
   useAppTable,
 } from '@/hooks/use-app-table';
 import type { AppRow } from '@/hooks/use-app-table';
+import { useRepositoryPermission } from '@/hooks/use-authorization';
 import { ACTION_COLUMN_SIZE } from '@/lib/constants';
 import { toastError } from '@/lib/toast';
 import {
@@ -87,11 +81,14 @@ import {
   itemStatusSearchParameterSchema,
   markedSearchParameterSchema,
   packageIdentifierSearchParameterSchema,
+  packageIdTypeSchema,
   paginationSearchParameterSchema,
   severitySearchParameterSchema,
   sortingSearchParameterSchema,
 } from '@/schemas';
 import { useUserSettingsStore } from '@/store/user-settings.store';
+import { RunPackageLink } from '../-components/run-package-link';
+import { IssueDetails } from './-components/issue-details';
 
 const defaultPageSize = 10;
 const supportedSortColumns = new Set([
@@ -108,54 +105,18 @@ const columnHelper = createAppColumnHelper<Issue>();
 const IssueCard = ({ issue }: { issue: Issue }) => {
   const params = Route.useParams();
   const packageIdType = useUserSettingsStore((state) => state.packageIdType);
-  const id =
-    packageIdType === 'PURL' && issue.purl
-      ? issue.purl
-      : identifierToString(issue.identifier);
-
   return (
     <div className='flex flex-col gap-1'>
       <div className='flex items-center justify-between'>
         <div className='min-w-0 flex-1'>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              {issue.purl ? (
-                <Link
-                  className='text-left font-semibold text-blue-400 hover:underline'
-                  to='/organizations/$orgId/products/$productId/repositories/$repoId/runs/$runIndex/packages'
-                  params={{
-                    orgId: params.orgId,
-                    productId: params.productId,
-                    repoId: params.repoId,
-                    runIndex: params.runIndex,
-                  }}
-                  search={{ pkgId: id, marked: '0' }}
-                >
-                  <BreakableString text={id} />
-                </Link>
-              ) : (
-                <Link
-                  className='text-left font-semibold text-blue-400 hover:underline'
-                  to='/organizations/$orgId/products/$productId/repositories/$repoId/runs/$runIndex/projects'
-                  params={{
-                    orgId: params.orgId,
-                    productId: params.productId,
-                    repoId: params.repoId,
-                    runIndex: params.runIndex,
-                  }}
-                  search={{ projectId: id, marked: id }}
-                >
-                  <BreakableString text={id} />
-                </Link>
-              )}
-            </TooltipTrigger>
-            <TooltipContent>
-              {issue.purl
-                ? 'Inspect the package details in packages table'
-                : 'Inspect the project details in projects table'}
-            </TooltipContent>
-          </Tooltip>
-          <CopyToClipboard copyText={id} className='h-5 px-2 align-middle' />
+          <RunPackageLink
+            identifier={issue.identifier}
+            purl={issue.purl}
+            packageIdType={packageIdType}
+            params={params}
+            linkProjectWhenPurlIsNull
+            copyClassName='h-5 px-2 align-middle'
+          />
         </div>
         <Badge
           className='bg-blue-300 whitespace-nowrap text-black'
@@ -196,6 +157,10 @@ const IssueCard = ({ issue }: { issue: Issue }) => {
 
 const IssuesComponent = () => {
   const params = Route.useParams();
+  const { isAllowed: canManageResolutions } = useRepositoryPermission(
+    Number.parseInt(params.repoId),
+    'MANAGE_RESOLUTIONS'
+  );
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
   const packageIdType = useUserSettingsStore((state) => state.packageIdType);
@@ -250,14 +215,14 @@ const IssuesComponent = () => {
     columnHelper.accessor(
       (issue) => {
         // Return purl only if the issue has been reported for a package
-        if (packageIdType === 'PURL' && issue.purl) {
+        if (packageIdType === packageIdTypeSchema.enum.PURL && issue.purl) {
           return issue.purl;
         } else {
           return identifierToString(issue.identifier);
         }
       },
       {
-        id: `${packageIdType === 'PURL' ? 'purl' : 'identifier'}`,
+        id: `${packageIdType === packageIdTypeSchema.enum.PURL ? 'purl' : 'identifier'}`,
         header: 'Package ID',
         meta: {
           filter: {
@@ -335,7 +300,8 @@ const IssuesComponent = () => {
   const severity = search.severity;
   const itemStatus = search.itemResolved;
   const packageIdentifier = search.pkgId;
-  const columnId = packageIdType === 'ORT_ID' ? 'identifier' : 'purl';
+  const columnId =
+    packageIdType === packageIdTypeSchema.enum.ORT_ID ? 'identifier' : 'purl';
   const resolved =
     itemStatus?.length === 1 ? itemStatus[0] === 'Resolved' : undefined;
   const sortBy =
@@ -382,50 +348,43 @@ const IssuesComponent = () => {
         sort: convertToBackendSorting(sortBy),
         resolved,
         severity: severity?.join(','),
-        ...(packageIdType === 'ORT_ID'
+        ...(packageIdType === packageIdTypeSchema.enum.ORT_ID
           ? { identifier: packageIdentifier }
           : { purl: packageIdentifier }),
       },
     }),
   });
 
-  const renderSubComponent = useCallback(
-    ({ row }: { row: AppRow<Issue> }) => {
-      const issue = row.original;
+  const renderSubComponent = ({ row }: { row: AppRow<Issue> }) => {
+    const issue = row.original;
 
-      return (
-        <Accordion
-          type='multiple'
-          className='w-full'
-          defaultValue={getResolutionAccordionDefaultValue(issue)}
-        >
-          <AccordionItem value='resolutions'>
-            <AccordionTrigger className='font-semibold'>
-              {getResolutionAccordionLabel(issue)}
-            </AccordionTrigger>
-            <AccordionContent>
-              <Resolutions
-                item={issue}
-                repositoryId={params.repoId}
-                runId={ortRun.id}
-              />
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value='details'>
-            <AccordionTrigger className='font-semibold'>
-              Details
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className='text-muted-foreground break-all whitespace-pre-line italic'>
-                {issue.message || 'No details.'}
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      );
-    },
-    [params.repoId, ortRun.id]
-  );
+    return (
+      <Accordion
+        type='multiple'
+        className='w-full'
+        defaultValue={getResolutionAccordionDefaultValue(issue)}
+      >
+        <AccordionItem value='resolutions'>
+          <AccordionTrigger className='font-semibold'>
+            {getResolutionAccordionLabel(issue, canManageResolutions !== false)}
+          </AccordionTrigger>
+          <AccordionContent>
+            <Resolutions
+              item={issue}
+              repositoryId={params.repoId}
+              runId={ortRun.id}
+            />
+          </AccordionContent>
+        </AccordionItem>
+        <AccordionItem value='details'>
+          <AccordionTrigger className='font-semibold'>Details</AccordionTrigger>
+          <AccordionContent>
+            <IssueDetails issue={issue} />
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
+    );
+  };
 
   // Control the expanded state of the subrows manually, so that when
   // a user arrives at the table view via a URL link with search parameter

@@ -20,12 +20,25 @@
 import { z, ZodType } from 'zod';
 
 import {
+  PackageManagerConfiguration,
   PluginConfig,
   PluginOptionType,
+  PluginType,
   PreconfiguredPluginDescriptor,
   ProviderPluginConfiguration,
 } from '@/api';
-import { ADMIN_SECRET_VALUE } from '@/components/form/plugin-multi-select-field-utils';
+import { ADMIN_SECRET_VALUE } from '@/components/form/plugin-multi-select-field';
+import {
+  getMissingRequiredOptions,
+  optionValueDiffersFromDefault,
+  pluginOptionValueToFormValue,
+} from '@/helpers/plugin-options';
+
+/**
+ * The ID of the package manager which is always enabled and therefore neither selectable in the
+ * form nor part of the package manager plugins offered by it.
+ */
+export const UNMANAGED_PACKAGE_MANAGER_ID = 'Unmanaged';
 
 function isNonBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== '';
@@ -99,33 +112,24 @@ export function validateRequiredPluginOptions(
   for (const plugin of plugins) {
     if (!selectedPluginIds.includes(plugin.id)) continue;
 
-    const pluginConfig = config?.[plugin.id];
-
-    for (const option of plugin.options) {
-      if (!option.isRequired) continue;
-
+    for (const option of getMissingRequiredOptions(
+      plugin,
+      config?.[plugin.id]
+    )) {
       const section = option.type === 'SECRET' ? 'secrets' : 'options';
-      const value = pluginConfig?.[section]?.[option.name];
 
-      if (
-        value === undefined ||
-        value === null ||
-        value === '' ||
-        (Array.isArray(value) && value.length === 0)
-      ) {
-        ctx.addIssue({
-          code: 'invalid_type',
-          expected: 'string',
-          received: 'undefined',
-          path: [
-            ...(Array.isArray(configPath) ? configPath : [configPath]),
-            plugin.id,
-            section,
-            option.name,
-          ],
-          message: `Required option "${option.name}" is missing for "${plugin.displayName}".`,
-        });
-      }
+      ctx.addIssue({
+        code: 'invalid_type',
+        expected: 'string',
+        received: 'undefined',
+        path: [
+          ...(Array.isArray(configPath) ? configPath : [configPath]),
+          plugin.id,
+          section,
+          option.name,
+        ],
+        message: `Required option "${option.name}" is missing for "${plugin.displayName}".`,
+      });
     }
   }
 }
@@ -176,11 +180,24 @@ export function mergePluginConfigs(
     const defaultPlugin = defaultConfig[pluginId];
     const ortPlugin = lastRunConfig?.[pluginId];
     const pluginDescriptor = pluginById.get(pluginId);
+    const optionByName = new Map(
+      pluginDescriptor?.options.map((option) => [option.name, option])
+    );
+    const lastRunOptions = Object.fromEntries(
+      Object.entries(ortPlugin?.options ?? {}).map(([name, value]) => {
+        const option = optionByName.get(name);
+
+        return [
+          name,
+          option ? pluginOptionValueToFormValue(value, option.type) : value,
+        ];
+      })
+    ) as PluginConfig['options'];
 
     const mergedPlugin: PluginConfig = {
       options: {
         ...(defaultPlugin?.options ?? {}),
-        ...(ortPlugin?.options ?? {}),
+        ...lastRunOptions,
       },
       secrets: {
         ...(defaultPlugin?.secrets ?? {}),
@@ -221,9 +238,11 @@ export function mergePluginConfigs(
  * the API's `scanners` and `projectScanners` fields.
  *
  * API semantics:
- * - If `projectScanners` is null/empty, `scanners` scan both projects and packages.
+ * - If `projectScanners` is null, `scanners` scan both projects and packages.
  * - Otherwise `scanners` scan packages only, and `projectScanners` scan projects only.
- *   A scanner appearing in both lists scans both.
+ *   A scanner appearing in both lists scans both. An empty `projectScanners` disables
+ *   project scanning.
+ * - If `scanners` is null, the default package scanners are used.
  */
 export function reconstructScannerSelection(
   apiScanners: string[] | null | undefined,
@@ -236,8 +255,7 @@ export function reconstructScannerSelection(
   scanners: string[];
   scannerScopes: Record<string, 'both' | 'packages' | 'projects'>;
 } {
-  const hasProjectScannerOverride =
-    apiProjectScanners != null && apiProjectScanners.length > 0;
+  const hasProjectScannerOverride = apiProjectScanners != null;
 
   if (!apiScanners && !hasProjectScannerOverride) {
     return {
@@ -246,13 +264,19 @@ export function reconstructScannerSelection(
     };
   }
 
+  const packageScanners =
+    apiScanners ??
+    baseDefaults.scanners.filter(
+      (id) => baseDefaults.scannerScopes[id] !== 'projects'
+    );
+
   const allScannerIds = Array.from(
-    new Set([...(apiScanners ?? []), ...(apiProjectScanners ?? [])])
+    new Set([...packageScanners, ...(apiProjectScanners ?? [])])
   );
 
   const scannerScopes: Record<string, 'both' | 'packages' | 'projects'> = {};
   for (const id of allScannerIds) {
-    const inScanners = apiScanners?.includes(id) ?? false;
+    const inScanners = packageScanners.includes(id);
     const inProjectScanners = apiProjectScanners?.includes(id) ?? false;
     if (!hasProjectScannerOverride) {
       scannerScopes[id] = 'both';
@@ -289,27 +313,17 @@ export function getPluginDefaultValues(
               secrets[option.name] = ADMIN_SECRET_VALUE;
             }
             return;
-          } else if (option.type === 'BOOLEAN') {
-            options[option.name] = option.defaultValue === 'true';
-          } else if (
-            option.type === 'ENUM_LIST' ||
-            option.type === 'STRING_LIST'
-          ) {
-            options[option.name] =
-              typeof option.defaultValue === 'string'
-                ? option.defaultValue
-                    .split(',')
-                    .map((s) => s.trim())
-                    .filter(Boolean)
-                : [];
           } else {
-            options[option.name] = String(option.defaultValue);
+            options[option.name] = pluginOptionValueToFormValue(
+              option.defaultValue,
+              option.type
+            );
           }
         }
       });
 
-      // Cast to PluginConfig: the API type uses string maps, but the form
-      // schema and Zod preprocessing handle boolean/array values correctly.
+      // Cast to PluginConfig: the API type uses string maps, while the form representation
+      // uses booleans and arrays for the corresponding option types.
       acc[plugin.id] = {
         options: options as { [key: string]: string },
         secrets: secrets,
@@ -354,20 +368,30 @@ export function providerPluginConfigsToFormValues(
 
 /**
  * Convert the plugin config from form values to the payload format expected by the back-end. Configuration for plugins
- * which are not enabled is not included in the payload.
+ * which are not enabled is not included in the payload. Options matching their plugin defaults are omitted.
  */
 export function createPluginPayload(
   config: Record<string, unknown> | undefined,
-  enabledPlugins: string[]
+  enabledPlugins: string[],
+  plugins: PreconfiguredPluginDescriptor[],
+  pluginType: PluginType
 ): { [key: string]: PluginConfig } | undefined {
   if (!config) return undefined;
 
+  const pluginById = new Map(
+    plugins
+      .filter((plugin) => plugin.type === pluginType)
+      .map((plugin) => [plugin.id, plugin])
+  );
   const filtered = Object.fromEntries(
     Object.entries(config)
       .filter(([key]) => enabledPlugins.includes(key))
-      .map(([key, value]) => {
+      .flatMap(([key, value]) => {
         if (value && typeof value === 'object') {
           const pluginConfig = value as Record<string, unknown>;
+          const optionByName = new Map(
+            pluginById.get(key)?.options.map((option) => [option.name, option])
+          );
           const convertedConfig: PluginConfig = {
             options: {},
             secrets: {},
@@ -379,9 +403,15 @@ export function createPluginPayload(
           ) {
             convertedConfig.options = Object.fromEntries(
               Object.entries(pluginConfig.options as Record<string, unknown>)
-                .filter(
-                  ([, optValue]) => optValue !== undefined && optValue !== null
-                )
+                .filter(([, optValue]) => optValue != null)
+                .filter(([optKey, optValue]) => {
+                  const option = optionByName.get(optKey);
+
+                  return (
+                    option?.defaultValue == null ||
+                    optionValueDiffersFromDefault(option, optValue)
+                  );
+                })
                 .map(([optKey, optValue]) => [optKey, String(optValue)])
             );
           }
@@ -401,9 +431,12 @@ export function createPluginPayload(
             ) as { [key: string]: string };
           }
 
-          return [key, convertedConfig];
+          return Object.keys(convertedConfig.options).length > 0 ||
+            Object.keys(convertedConfig.secrets).length > 0
+            ? [[key, convertedConfig]]
+            : [];
         }
-        return [key, value];
+        return [];
       })
   );
 
@@ -414,14 +447,21 @@ export function createPluginPayload(
 
 /**
  * Convert selected provider plugins and their configuration to the payload format expected by the back-end.
+ * An empty selection results in an empty list, because the back-end applies the default providers if the list is
+ * absent.
  */
 export function createProviderPluginPayload(
   config: Record<string, unknown> | undefined,
-  enabledPlugins: string[]
-): ProviderPluginConfiguration[] | undefined {
-  if (enabledPlugins.length === 0) return undefined;
-
-  const pluginPayload = createPluginPayload(config, enabledPlugins);
+  enabledPlugins: string[],
+  plugins: PreconfiguredPluginDescriptor[],
+  pluginType: PluginType
+): ProviderPluginConfiguration[] {
+  const pluginPayload = createPluginPayload(
+    config,
+    enabledPlugins,
+    plugins,
+    pluginType
+  );
 
   return enabledPlugins.map((pluginId) => {
     const pluginConfig = pluginPayload?.[pluginId];
@@ -438,4 +478,80 @@ export function createProviderPluginPayload(
         : {}),
     };
   });
+}
+
+type PackageManagerFormValues = {
+  config: Record<string, PluginConfig>;
+  mustRunAfter: Record<string, string[]>;
+};
+
+/**
+ * Convert the package manager configurations from a previous run to the form representation.
+ * Package managers cannot have options of type secret, so only the options are converted.
+ */
+export function packageManagerConfigsToFormValues(
+  packageManagerOptions:
+    { [key: string]: PackageManagerConfiguration } | null | undefined
+): PackageManagerFormValues {
+  const result: PackageManagerFormValues = {
+    config: {},
+    mustRunAfter: {},
+  };
+
+  Object.entries(packageManagerOptions ?? {}).forEach(
+    ([packageManagerId, packageManagerConfig]) => {
+      result.config[packageManagerId] = {
+        options: packageManagerConfig.options ?? {},
+        secrets: {},
+      };
+
+      if (packageManagerConfig.mustRunAfter?.length) {
+        result.mustRunAfter[packageManagerId] =
+          packageManagerConfig.mustRunAfter;
+      }
+    }
+  );
+
+  return result;
+}
+
+/**
+ * Convert the configuration of the enabled package managers from form values to the payload format expected by the
+ * back-end. Package managers without any options and without a `mustRunAfter` entry are omitted, as are package
+ * managers which are not enabled.
+ */
+export function createPackageManagerPayload(
+  config: Record<string, unknown> | undefined,
+  mustRunAfter: Record<string, string[] | undefined> | undefined,
+  enabledPackageManagers: string[],
+  plugins: PreconfiguredPluginDescriptor[]
+): { [key: string]: PackageManagerConfiguration } | undefined {
+  const pluginPayload = createPluginPayload(
+    config,
+    enabledPackageManagers,
+    plugins,
+    'PACKAGE_MANAGER'
+  );
+
+  const result = enabledPackageManagers.reduce<{
+    [key: string]: PackageManagerConfiguration;
+  }>((acc, packageManagerId) => {
+    const options = pluginPayload?.[packageManagerId]?.options;
+    const packageManagerMustRunAfter = mustRunAfter?.[packageManagerId];
+
+    const packageManagerConfig: PackageManagerConfiguration = {
+      ...(packageManagerMustRunAfter?.length
+        ? { mustRunAfter: packageManagerMustRunAfter }
+        : {}),
+      ...(options && Object.keys(options).length > 0 ? { options } : {}),
+    };
+
+    if (Object.keys(packageManagerConfig).length > 0) {
+      acc[packageManagerId] = packageManagerConfig;
+    }
+
+    return acc;
+  }, {});
+
+  return Object.keys(result).length > 0 ? result : undefined;
 }

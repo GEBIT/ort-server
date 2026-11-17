@@ -26,7 +26,7 @@ import org.eclipse.apoapsis.ortserver.components.authorization.rights.Organizati
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.ProductRole
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.RepositoryRole
 import org.eclipse.apoapsis.ortserver.components.authorization.service.AuthorizationService
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.CompoundHierarchyId
 import org.eclipse.apoapsis.ortserver.model.Organization
 import org.eclipse.apoapsis.ortserver.model.OrganizationId
@@ -39,12 +39,11 @@ import org.eclipse.apoapsis.ortserver.model.util.FilterParameter
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryResult
 import org.eclipse.apoapsis.ortserver.model.util.OptionalValue
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 
 import org.jetbrains.exposed.v1.jdbc.Database
 
-/**
- * A service providing functions for working with [organizations][Organization].
- */
+/** A service providing functions for working with [organizations][Organization]. */
 class OrganizationService(
     private val db: Database,
     private val organizationRepository: OrganizationRepository,
@@ -52,23 +51,23 @@ class OrganizationService(
     private val repositoryRepository: RepositoryRepository,
     private val authorizationService: AuthorizationService
 ) {
-    /**
-     * Create an organization.
-     */
-    suspend fun createOrganization(name: String, description: String?): Organization = db.dbQuery {
+    /** Create an organization. */
+    suspend fun createOrganization(name: String, description: String?): Organization = db.transaction {
         organizationRepository.create(name, description)
     }
 
     /**
-     * Create a product inside an [organization][organizationId].
+     * Create a product inside an [organization][organizationId]. If [creatorId] is given, assign the ADMIN role on the
+     * product to the user with this username and the Keycloak ID [creatorSub].
      */
     suspend fun createProduct(
         name: String,
         description: String?,
         organizationId: Long,
-        creatorId: String? = null
+        creatorId: String? = null,
+        creatorSub: String? = null
     ): Product {
-        val product = db.dbQuery {
+        val product = db.transaction {
             productRepository.create(name, description, organizationId)
         }
 
@@ -77,17 +76,16 @@ class OrganizationService(
             authorizationService.assignRole(
                 creatorId,
                 ProductRole.ADMIN,
-                CompoundHierarchyId.forProduct(OrganizationId(organizationId), ProductId(product.id))
+                CompoundHierarchyId.forProduct(OrganizationId(organizationId), ProductId(product.id)),
+                creatorSub
             )
         }
 
         return product
     }
 
-    /**
-     * Delete an organization by [organizationId].
-     */
-    suspend fun deleteOrganization(organizationId: Long): Unit = db.dbQuery {
+    /** Delete an organization by [organizationId]. */
+    suspend fun deleteOrganization(organizationId: Long): Unit = db.transaction {
         if (productRepository.countForOrganization(organizationId) != 0L) {
             throw OrganizationNotEmptyException(
                 "Cannot delete organization '$organizationId', as it still contains products."
@@ -97,32 +95,30 @@ class OrganizationService(
         organizationRepository.delete(organizationId)
     }
 
-    /**
-     * Get an organization by [organizationId]. Returns null if the organization is not found.
-     */
-    suspend fun getOrganization(organizationId: Long): Organization? = db.dbQuery {
+    /** Get an organization by [organizationId]. Returns null if the organization is not found. */
+    suspend fun getOrganization(organizationId: Long): Organization? = db.transaction {
         organizationRepository.get(organizationId)
     }
 
-    /**
-     * List all organizations according to the given [parameters].
-     */
+    /** List all organizations according to the given [parameters]. */
     suspend fun listOrganizations(
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
         filter: FilterParameter? = null
-    ): ListQueryResult<Organization> = db.dbQuery {
+    ): ListQueryResult<Organization> = db.transaction {
         organizationRepository.list(parameters, filter)
     }
 
     /**
-     * List all organizations that are visible to the given [userId] according to the given [parameters] and [filter].
+     * List all organizations that are visible to the given [userId] with the Keycloak ID [userSub] according to the
+     * given [parameters] and [filter].
      */
     suspend fun listOrganizationsForUser(
         userId: String,
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
-        filter: FilterParameter? = null
+        filter: FilterParameter? = null,
+        userSub: String? = null
     ): ListQueryResult<Organization> {
-        val orgFilter = authorizationService.filterHierarchyIds(userId, OrganizationRole.READER)
+        val orgFilter = authorizationService.filterHierarchyIds(userId, OrganizationRole.READER, userSub = userSub)
 
         return organizationRepository.list(
             parameters = parameters,
@@ -131,56 +127,62 @@ class OrganizationService(
         )
     }
 
-    /**
-     * List all products for an [organization][organizationId].
-     */
+    /** List all products for an [organization][organizationId]. */
     suspend fun listProductsForOrganization(
         organizationId: Long,
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
         filter: FilterParameter? = null
-    ) = db.dbQuery {
+    ) = db.transaction {
         productRepository.listForOrganization(organizationId, parameters, filter)
     }
 
     /**
-     * List all products for an [organization][organizationId] that are visible to the user with the given [userId],
-     * applying the given [parameters] and optional [nameFilter].
+     * List all products for an [organization][organizationId] that are visible to the user with the given [userId]
+     * and the Keycloak ID [userSub], applying the given [parameters] and optional [nameFilter].
      */
     suspend fun listProductsForOrganizationAndUser(
         organizationId: Long,
         userId: String,
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
-        nameFilter: FilterParameter? = null
+        nameFilter: FilterParameter? = null,
+        userSub: String? = null
     ): ListQueryResult<Product> {
         val productFilter = authorizationService.filterHierarchyIds(
             userId,
             ProductRole.READER,
-            OrganizationId(organizationId)
+            OrganizationId(organizationId),
+            userSub
         )
 
         return productRepository.list(parameters, nameFilter, productFilter)
     }
 
-    /**
-     * Update an organization by [organizationId] with the [present][OptionalValue.Present] values.
-     */
+    /** Update an organization by [organizationId] with the [present][OptionalValue.Present] values. */
     suspend fun updateOrganization(
         organizationId: Long,
         name: OptionalValue<String> = OptionalValue.Absent,
         description: OptionalValue<String?> = OptionalValue.Absent
-    ): Organization = db.dbQuery {
+    ): Organization = db.transaction {
         organizationRepository.update(organizationId, name, description)
     }
 
-    /** Return the IDs of repositories in the organization that are readable by the given user. */
-    suspend fun getRepositoryIdsForOrganizationAndUser(organizationId: Long, userId: String): List<Long> {
+    /**
+     * Return the IDs of repositories in the organization that are readable by the user with the given [userId] and
+     * the Keycloak ID [userSub].
+     */
+    suspend fun getRepositoryIdsForOrganizationAndUser(
+        organizationId: Long,
+        userId: String,
+        userSub: String? = null
+    ): List<Long> {
         val hierarchyFilter = authorizationService.filterHierarchyIds(
             userId,
             RepositoryRole.READER,
-            OrganizationId(organizationId)
+            OrganizationId(organizationId),
+            userSub
         )
 
-        return withContext(Dispatchers.IO) {
+        return withContext(Dispatchers.Virtual) {
             repositoryRepository.list(ListQueryParameters.DEFAULT, null, hierarchyFilter).data.map { it.id }
         }
     }

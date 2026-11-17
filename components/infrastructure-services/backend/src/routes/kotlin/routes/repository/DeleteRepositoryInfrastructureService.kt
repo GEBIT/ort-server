@@ -33,7 +33,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 
 internal fun Route.deleteRepositoryInfrastructureService(
     infrastructureServiceService: InfrastructureServiceService
-) = delete("/repositories/{repositoryId}/infrastructure-services/{serviceName}", {
+) = delete("repositories/{repositoryId}/infrastructure-services/{serviceName}", {
     operationId = "deleteRepositoryInfrastructureService"
     summary = "Delete an infrastructure service from a repository"
     tags = listOf("Repositories")
@@ -50,6 +50,10 @@ internal fun Route.deleteRepositoryInfrastructureService(
     response {
         HttpStatusCode.NoContent to {
             description = "Success"
+        }
+
+        HttpStatusCode.NotFound to {
+            description = "The repository or the infrastructure service does not exist."
         }
     }
 }, requirePermission(RepositoryPermission.WRITE)) {

@@ -47,13 +47,19 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
  */
 interface AuthorizationChecker {
     /**
-     * Use the provided [service] to load the [EffectiveRole] of the user with the given [userId] for the current
-     * [call]. A typical implementation will figure out the ID of an element in the hierarchy (organization, product,
-     * or repository) based on current call parameters. Then it can invoke the [service] to query the permissions on
-     * this element. If the permission check is successful, return a properly initialized [EffectiveRole] instance.
-     * Otherwise, return *null*, which cause the request to fail with a 403 error.
+     * Use the provided [service] to load the [EffectiveRole] of the user with the given [userId], which is the username
+     * for now, and the Keycloak ID [userSub] for the current [call]. A typical implementation will figure out the ID of
+     * an element in the hierarchy (organization, product, or repository) based on current call parameters. Then it
+     * can invoke the [service] to query the permissions on this element. If the permission check is successful,
+     * return a properly initialized [EffectiveRole] instance. Otherwise, return *null*, which cause the request to fail
+     * with a 403 error.
      */
-    suspend fun loadEffectiveRole(service: AuthorizationService, userId: String, call: ApplicationCall): EffectiveRole?
+    suspend fun loadEffectiveRole(
+        service: AuthorizationService,
+        userId: String,
+        userSub: String,
+        call: ApplicationCall
+    ): EffectiveRole?
 }
 
 /** The name of the request parameter referring to the organization ID. */
@@ -65,70 +71,70 @@ private const val PRODUCT_ID_PARAM = "productId"
 /** The name of the request parameter referring to the repository ID. */
 private const val REPOSITORY_ID_PARAM = "repositoryId"
 
-/**
- * Create an [AuthorizationChecker] that checks for the presence of the given organization-level [permission].
- */
+/** Create an [AuthorizationChecker] that checks for the presence of the given organization-level [permission]. */
 fun requirePermission(permission: OrganizationPermission): AuthorizationChecker =
     object : AuthorizationChecker {
         override suspend fun loadEffectiveRole(
             service: AuthorizationService,
             userId: String,
+            userSub: String,
             call: ApplicationCall
         ): EffectiveRole? =
             service.checkPermissions(
                 userId,
                 OrganizationId(call.requireIdParameter(ORGANIZATION_ID_PARAM)),
-                HierarchyPermissions.permissions(permission)
+                HierarchyPermissions.permissions(permission),
+                userSub
             )
     }
 
-/**
- * Create an [AuthorizationChecker] that checks for the presence of the given product-level [permission].
- */
+/** Create an [AuthorizationChecker] that checks for the presence of the given product-level [permission]. */
 fun requirePermission(permission: ProductPermission): AuthorizationChecker =
     object : AuthorizationChecker {
         override suspend fun loadEffectiveRole(
             service: AuthorizationService,
             userId: String,
+            userSub: String,
             call: ApplicationCall
         ): EffectiveRole? =
             service.checkPermissions(
                 userId,
                 ProductId(call.requireIdParameter(PRODUCT_ID_PARAM)),
-                HierarchyPermissions.permissions(permission)
+                HierarchyPermissions.permissions(permission),
+                userSub
             )
     }
 
-/**
- * Create an [AuthorizationChecker] that checks for the presence of the given repository-level [permission].
- */
+/** Create an [AuthorizationChecker] that checks for the presence of the given repository-level [permission]. */
 fun requirePermission(permission: RepositoryPermission): AuthorizationChecker =
     object : AuthorizationChecker {
         override suspend fun loadEffectiveRole(
             service: AuthorizationService,
             userId: String,
+            userSub: String,
             call: ApplicationCall
         ): EffectiveRole? =
             service.checkPermissions(
                 userId,
                 RepositoryId(call.requireIdParameter(REPOSITORY_ID_PARAM)),
-                HierarchyPermissions.permissions(permission)
+                HierarchyPermissions.permissions(permission),
+                userSub
             )
     }
 
-/**
- * Create an [AuthorizationChecker] that checks whether the user is a superuser.
- */
+/** Create an [AuthorizationChecker] that checks whether the user is a superuser. */
 fun requireSuperuser(): AuthorizationChecker =
     object : AuthorizationChecker {
         override suspend fun loadEffectiveRole(
             service: AuthorizationService,
             userId: String,
+            userSub: String,
             call: ApplicationCall
         ): EffectiveRole? =
             service.checkPermissions(
                 userId,
                 CompoundHierarchyId.WILDCARD,
-                HierarchyPermissions.permissions(OrganizationRole.ADMIN)
+                HierarchyPermissions.permissions(OrganizationRole.ADMIN),
+                userSub
             )?.takeIf { it.isSuperuser }
     }

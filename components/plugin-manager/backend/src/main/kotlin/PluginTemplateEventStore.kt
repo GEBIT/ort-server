@@ -19,7 +19,7 @@
 
 package org.eclipse.apoapsis.ortserver.components.pluginmanager
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.dao.utils.enumerationByName
 import org.eclipse.apoapsis.ortserver.dao.utils.jsonb
 import org.eclipse.apoapsis.ortserver.model.OrganizationId
@@ -30,6 +30,8 @@ import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.longLiteral
+import org.jetbrains.exposed.v1.core.lowerCase
+import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.datetime.timestamp
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.andWhere
@@ -41,17 +43,18 @@ import org.jetbrains.exposed.v1.jdbc.upsert
 
 /** A store for [PluginTemplateEvent]s. */
 class PluginTemplateEventStore(private val db: Database) {
-    private fun loadEvents(name: String, pluginType: PluginType, pluginId: String): List<PluginTemplateEvent> =
-        db.blockingQuery {
+    private suspend fun loadEvents(name: String, pluginType: PluginType, pluginId: String): List<PluginTemplateEvent> =
+        db.transaction {
             PluginTemplateEvents.selectAll()
                 .where { PluginTemplateEvents.name eq name }
                 .andWhere { PluginTemplateEvents.pluginType eq pluginType }
-                .andWhere { PluginTemplateEvents.pluginId eq pluginId }
+                // Plugin IDs are case-insensitive, and their spelling can change between ORT versions.
+                .andWhere { PluginTemplateEvents.pluginId.lowerCase() eq pluginId.lowercase() }
                 .orderBy(PluginTemplateEvents.version)
                 .map { it.toPluginTemplateEvent() }
         }
 
-    internal fun appendEvent(pluginTemplateEvent: PluginTemplateEvent): Unit = db.blockingQuery {
+    internal suspend fun appendEvent(pluginTemplateEvent: PluginTemplateEvent): Unit = db.transaction {
         PluginTemplateEvents.insert {
             it[name] = pluginTemplateEvent.name
             it[pluginType] = pluginTemplateEvent.pluginType
@@ -61,6 +64,8 @@ class PluginTemplateEventStore(private val db: Database) {
             it[createdBy] = pluginTemplateEvent.createdBy
             it[createdAt] = pluginTemplateEvent.createdAt
         }
+
+        updatePluginIdSpelling(pluginTemplateEvent)
 
         when (pluginTemplateEvent.payload) {
             is Deleted -> {
@@ -99,10 +104,38 @@ class PluginTemplateEventStore(private val db: Database) {
      * Get the current state of the plugin with the given [pluginType] and [pluginId]. Returns `null` if no such plugin
      * exists.
      */
-    internal fun getPluginTemplate(name: String, pluginType: PluginType, pluginId: String) =
+    internal suspend fun getPluginTemplate(name: String, pluginType: PluginType, pluginId: String) =
         loadEvents(name, pluginType, pluginId).takeIf { it.isNotEmpty() }?.let {
             PluginTemplateState(name, pluginType, pluginId).applyAll(it)
         }
+
+    /**
+     * Update the stored organization assignments and the read model entries that use a different spelling of the
+     * plugin ID than the given [pluginTemplateEvent] to the spelling of the event. Plugin IDs are case-insensitive, and
+     * their spelling can change between ORT versions. Using the current spelling ensures that the following updates
+     * find the stored entries, and that the primary key of [PluginTemplateOrganizationAssignments] still prevents
+     * multiple templates for the same plugin per organization.
+     */
+    private fun updatePluginIdSpelling(pluginTemplateEvent: PluginTemplateEvent) {
+        val lowercasePluginId = pluginTemplateEvent.pluginId.lowercase()
+
+        PluginTemplateOrganizationAssignments.update(where = {
+            (PluginTemplateOrganizationAssignments.pluginType eq pluginTemplateEvent.pluginType) and
+                    (PluginTemplateOrganizationAssignments.pluginId.lowerCase() eq lowercasePluginId) and
+                    (PluginTemplateOrganizationAssignments.pluginId neq pluginTemplateEvent.pluginId)
+        }) {
+            it[pluginId] = pluginTemplateEvent.pluginId
+        }
+
+        PluginTemplatesReadModel.update(where = {
+            (PluginTemplatesReadModel.name eq pluginTemplateEvent.name) and
+                    (PluginTemplatesReadModel.pluginType eq pluginTemplateEvent.pluginType) and
+                    (PluginTemplatesReadModel.pluginId.lowerCase() eq lowercasePluginId) and
+                    (PluginTemplatesReadModel.pluginId neq pluginTemplateEvent.pluginId)
+        }) {
+            it[pluginId] = pluginTemplateEvent.pluginId
+        }
+    }
 
     private fun updateReadModel(pluginTemplateEvent: PluginTemplateEvent) {
         when (pluginTemplateEvent.payload) {

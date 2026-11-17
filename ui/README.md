@@ -6,6 +6,26 @@ This directory contains the web UI for ORT Server.
 
 The UI is a [React](https://react.dev/) application and uses [Vite](https://vitejs.dev/) as the build tool and [pnpm](https://pnpm.io/) as the package manager.
 
+### React Compiler
+
+The build runs [React Compiler](https://react.dev/learn/react-compiler) through `@rolldown/plugin-babel`, configured in `vite.config.ts`.
+It memoizes components and hooks, so new code usually does not need `useMemo`, `useCallback` or `memo()`.
+Keep a manual `useMemo` or `useCallback` where a value must keep its identity while the compiler would see a changed input, such as a new object with the same contents, and say why in a comment.
+
+- The compiler silently skips a component it cannot handle, and `pnpm lint` does not report every reason for a skip; unsupported syntax such as `try … finally` is not reported.
+  A skipped component also hides its other compiler lint findings.
+- The compiler reuses a value computed from an object for as long as the object stays the same.
+  A component that reads state through an object whose identity does not change when the state does, such as TanStack Table rows and columns, would show outdated content.
+  Either read the state through an API that re-renders the component, such as `table.Subscribe`, or leave the component out with a `'use no memo'` directive and a comment saying why.
+- With React Hook Form, a component that receives the result of `useForm` from its parent must subscribe to what it shows: read values with `useWatch` and form state with `useFormState`.
+  `watch()` is rejected by lint.
+  Leaving out only the child does not help, because the compiled parent keeps reusing the child's element.
+  If the child cannot subscribe, leave out the parent instead, with a comment saying why.
+  Call `getValues()` only in event handlers and effects.
+- Define components at module level.
+  For a component defined inside another function, the compiler can move callbacks out of the function, where they no longer see its variables.
+- Code is compiled only in tests that run in the jsdom environment (`// @vitest-environment jsdom`).
+
 ## Prerequisites
 
 By default, the UI expects ORT Server to be running locally.
@@ -51,6 +71,45 @@ $ docker compose up -d core
 $ ./gradlew :core:generateOpenApiSpec
 $ pnpm -C ui generate:api
 ```
+
+## Unit and component tests
+
+After completing the normal UI setup above, run the Vitest suite from the repository root:
+
+```shell
+$ pnpm -C ui test --run
+$ pnpm -C ui test:coverage
+```
+
+These tests use local fixtures and mocks and do not require running Docker services or installing Playwright browsers.
+Coverage is disabled for ordinary test runs. The coverage command prints statement, branch, function, and line totals and writes reports to `ui/coverage/`:
+
+- Open `ui/coverage/index.html` in a browser to inspect coverage by source file.
+- `ui/coverage/coverage-summary.json` contains machine-readable totals.
+- `ui/coverage/lcov.info` can be used by coverage reporting tools.
+
+Reports include untested TypeScript and TSX source files, but exclude generated API code, the generated route tree, and type declarations.
+Generated reports are ignored by version control, ESLint, and Prettier. No coverage threshold is enforced.
+
+### Coverage in pull requests
+
+The "UI Coverage" workflow measures UI test coverage for every pull request, and the "Report UI Coverage" workflow posts the result as a comment on it once "UI Coverage" has finished.
+This also works for pull requests from forks.
+Each new push updates the same comment.
+The comment shows the coverage of the pull request and, below each value, the change against the commit of the target branch the pull request is based on.
+The change is labelled `pp`, which means percentage points.
+The pull request is measured as GitHub merges it into the target branch for testing, so the change comes from the pull request only, even if the branch is behind the target branch.
+The footer names the last commit of the pull request.
+
+The status icon of each metric shows its coverage level: 🔴 below 50%, 🟠 from 50% and 🟢 from 80%.
+These thresholds are a trial and only colour the report.
+
+Coverage is for information only: a drop in coverage does not fail the build, and "UI Coverage" is not a required check.
+Measuring coverage makes the tests slower, so a test can occasionally hit its time limit and fail "UI Coverage" without blocking the merge.
+If measuring either coverage fails, the comment is not updated and still shows the numbers of an earlier commit, named in its footer.
+
+The full HTML and LCOV reports can be downloaded from the "UI Coverage" run.
+Small changes can come from code that depends on the current time, and the React Compiler can change function and branch counts, so look at the reports before reading too much into a change of a few hundredths.
 
 ## e2e tests
 

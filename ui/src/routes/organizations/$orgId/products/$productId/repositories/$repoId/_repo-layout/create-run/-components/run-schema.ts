@@ -23,11 +23,8 @@ import { z } from 'zod';
 import { PreconfiguredPluginDescriptor } from '@/api';
 import { zAnalyzerPhase } from '@/api/zod.gen';
 import { environmentDefinitionsSchema } from '@/lib/types';
-import {
-  environmentVariableSchema,
-  keyValueSchema,
-  packageManagerOptionsSchema,
-} from './form-primitives';
+import { environmentVariableSchema, keyValueSchema } from './form-primitives';
+import { createIncludesExcludesSchema } from './includes-excludes';
 import {
   createPluginConfigSchema,
   validateRequiredPluginOptions,
@@ -36,8 +33,10 @@ import {
 export const createRunFormSchema = (
   advisorPlugins: PreconfiguredPluginDescriptor[],
   scannerPlugins: PreconfiguredPluginDescriptor[],
+  reporterPlugins: PreconfiguredPluginDescriptor[],
   packageCurationProviderPlugins: PreconfiguredPluginDescriptor[],
-  packageConfigurationProviderPlugins: PreconfiguredPluginDescriptor[]
+  packageConfigurationProviderPlugins: PreconfiguredPluginDescriptor[],
+  packageManagerPlugins: PreconfiguredPluginDescriptor[]
 ) => {
   const advisorConfigSchema: Record<string, z.ZodTypeAny> = {};
 
@@ -48,6 +47,11 @@ export const createRunFormSchema = (
   const scannerConfigSchema: Record<string, z.ZodTypeAny> = {};
   scannerPlugins.forEach((plugin) => {
     scannerConfigSchema[plugin.id] = createPluginConfigSchema(plugin);
+  });
+
+  const reporterConfigSchema: Record<string, z.ZodTypeAny> = {};
+  reporterPlugins.forEach((plugin) => {
+    reporterConfigSchema[plugin.id] = createPluginConfigSchema(plugin);
   });
 
   const packageCurationProviderConfigSchema: Record<string, z.ZodTypeAny> = {};
@@ -63,9 +67,16 @@ export const createRunFormSchema = (
       createPluginConfigSchema(plugin);
   });
 
+  const packageManagerConfigSchema: Record<string, z.ZodTypeAny> = {};
+  packageManagerPlugins.forEach((plugin) => {
+    packageManagerConfigSchema[plugin.id] = createPluginConfigSchema(plugin);
+  });
+
   return z.object({
     revision: z.string(),
     path: z.string(),
+    scopes: createIncludesExcludesSchema('scopes'),
+    paths: createIncludesExcludesSchema('paths'),
     jobConfigs: z
       .object({
         analyzer: z
@@ -82,44 +93,14 @@ export const createRunFormSchema = (
             packageCurationProviderConfig: z
               .object(packageCurationProviderConfigSchema)
               .optional(),
-            packageManagers: z
-              .object({
-                Bazel: packageManagerOptionsSchema,
-                Bower: packageManagerOptionsSchema,
-                Bundler: packageManagerOptionsSchema,
-                Cargo: packageManagerOptionsSchema,
-                Carthage: packageManagerOptionsSchema,
-                CocoaPods: packageManagerOptionsSchema,
-                Composer: packageManagerOptionsSchema,
-                Conan: packageManagerOptionsSchema,
-                Gleam: packageManagerOptionsSchema,
-                GoMod: packageManagerOptionsSchema,
-                Gradle: packageManagerOptionsSchema,
-                GradleInspector: packageManagerOptionsSchema,
-                Maven: packageManagerOptionsSchema,
-                NPM: packageManagerOptionsSchema,
-                NuGet: packageManagerOptionsSchema,
-                OrtProjectFile: packageManagerOptionsSchema,
-                PIP: packageManagerOptionsSchema,
-                Pipenv: packageManagerOptionsSchema,
-                PNPM: packageManagerOptionsSchema,
-                Poetry: packageManagerOptionsSchema,
-                Pub: packageManagerOptionsSchema,
-                SBT: packageManagerOptionsSchema,
-                SPDX: packageManagerOptionsSchema,
-                SpdxDocumentFile: packageManagerOptionsSchema,
-                Stack: packageManagerOptionsSchema,
-                SwiftPM: packageManagerOptionsSchema,
-                Tycho: packageManagerOptionsSchema,
-                Yarn: packageManagerOptionsSchema,
-                Yarn2: packageManagerOptionsSchema,
-              })
-              .refine((schema) => {
-                // Ensure that not both Gradle and GradleInspector are enabled at the same time.
-                return !(
-                  schema.Gradle.enabled && schema.GradleInspector.enabled
-                );
-              }, '"Gradle Legacy" and "Gradle" cannot be enabled at the same time.'),
+            packageManagers: z.array(z.string()),
+            packageManagerConfig: z
+              .object(packageManagerConfigSchema)
+              .optional(),
+            packageManagerMustRunAfter: z.record(
+              z.string(),
+              z.array(z.string()).optional()
+            ),
           })
           .superRefine((data, ctx) => {
             validateRequiredPluginOptions(
@@ -134,6 +115,32 @@ export const createRunFormSchema = (
               ctx,
               'packageCurationProviderConfig'
             );
+
+            validateRequiredPluginOptions(
+              packageManagerPlugins,
+              data.packageManagers,
+              data.packageManagerConfig as
+                | Record<
+                    string,
+                    Record<string, Record<string, unknown>> | undefined
+                  >
+                | undefined,
+              ctx,
+              'packageManagerConfig'
+            );
+
+            // Ensure that not both Gradle and GradleInspector are enabled at the same time.
+            if (
+              data.packageManagers.includes('Gradle') &&
+              data.packageManagers.includes('GradleInspector')
+            ) {
+              ctx.addIssue({
+                code: 'custom',
+                path: ['packageManagers'],
+                message:
+                  '"Gradle Legacy" and "Gradle" cannot be enabled at the same time.',
+              });
+            }
           }),
         advisor: z
           .object({
@@ -194,16 +201,30 @@ export const createRunFormSchema = (
             .object(packageConfigurationProviderConfigSchema)
             .optional(),
         }),
-        reporter: z.object({
-          enabled: z.boolean(),
-          formats: z.array(z.string()),
-          deduplicateDependencyTree: z.boolean().optional(),
-          keepAliveWorker: z.boolean(),
-          packageConfigurationProviders: z.array(z.string()),
-          packageConfigurationProviderConfig: z
-            .object(packageConfigurationProviderConfigSchema)
-            .optional(),
-        }),
+        reporter: z
+          .object({
+            enabled: z.boolean(),
+            formats: z.array(z.string()),
+            config: z.object(reporterConfigSchema).optional(),
+            keepAliveWorker: z.boolean(),
+            packageConfigurationProviders: z.array(z.string()),
+            packageConfigurationProviderConfig: z
+              .object(packageConfigurationProviderConfigSchema)
+              .optional(),
+          })
+          .superRefine((data, ctx) => {
+            validateRequiredPluginOptions(
+              reporterPlugins,
+              data.formats,
+              data.config as
+                | Record<
+                    string,
+                    Record<string, Record<string, unknown>> | undefined
+                  >
+                | undefined,
+              ctx
+            );
+          }),
         notifier: z.object({
           enabled: z.boolean(),
           recipientAddresses: z

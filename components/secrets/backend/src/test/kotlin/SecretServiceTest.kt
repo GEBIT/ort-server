@@ -36,22 +36,26 @@ import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.secrets.SecretStorage
 import org.eclipse.apoapsis.ortserver.secrets.SecretValue
 import org.eclipse.apoapsis.ortserver.secrets.SecretsProviderFactoryForTesting
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.Database
 
 class SecretServiceTest : WordSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     lateinit var db: Database
     lateinit var fixtures: Fixtures
+    lateinit var secretRepository: SecretRepository
     lateinit var secretService: SecretService
 
     beforeEach {
         db = dbExtension.db
         fixtures = dbExtension.fixtures
+        secretRepository = SecretRepository(dbExtension.db)
         secretService = SecretService(
             db,
-            fixtures.secretRepository,
             SecretStorage(SecretsProviderFactoryForTesting().createProvider())
         )
     }
@@ -69,7 +73,7 @@ class SecretServiceTest : WordSpec({
         }
 
         "return null if the value is not found" {
-            val secret = fixtures.secretRepository.create(
+            val secret = secretRepository.create(
                 "path",
                 "name",
                 "description",

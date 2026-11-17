@@ -46,8 +46,11 @@ import io.kotest.matchers.string.shouldContain
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.isSuccess
 import io.ktor.utils.io.ByteReadChannel
@@ -64,6 +67,11 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
+
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 import org.eclipse.apoapsis.ortserver.api.v1.mapping.mapToApi
 import org.eclipse.apoapsis.ortserver.api.v1.mapping.mapToApiSummary
@@ -83,9 +91,19 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.OrtRunStatus as ApiOrtRunStat
 import org.eclipse.apoapsis.ortserver.api.v1.model.OrtRunSummary
 import org.eclipse.apoapsis.ortserver.api.v1.model.Package as ApiPackage
 import org.eclipse.apoapsis.ortserver.api.v1.model.PackageFilters
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathExclude as ApiPathExclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathExcludeReason as ApiPathExcludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathInclude as ApiPathInclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathIncludeReason as ApiPathIncludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathIncludesExcludes as ApiPathIncludesExcludes
 import org.eclipse.apoapsis.ortserver.api.v1.model.Project as ApiProject
 import org.eclipse.apoapsis.ortserver.api.v1.model.ProjectFilters
 import org.eclipse.apoapsis.ortserver.api.v1.model.RuleViolation as ApiRuleViolation
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeExclude as ApiScopeExclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeExcludeReason as ApiScopeExcludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeInclude as ApiScopeInclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeIncludeReason as ApiScopeIncludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeIncludesExcludes as ApiScopeIncludesExcludes
 import org.eclipse.apoapsis.ortserver.api.v1.model.Severity as ApiSeverity
 import org.eclipse.apoapsis.ortserver.api.v1.model.VulnerabilityRating
 import org.eclipse.apoapsis.ortserver.api.v1.model.VulnerabilityWithDetails
@@ -113,9 +131,12 @@ import org.eclipse.apoapsis.ortserver.model.ResolvablePluginConfig
 import org.eclipse.apoapsis.ortserver.model.ResolvableSecret
 import org.eclipse.apoapsis.ortserver.model.SecretSource
 import org.eclipse.apoapsis.ortserver.model.Severity
-import org.eclipse.apoapsis.ortserver.model.UserDisplayName
+import org.eclipse.apoapsis.ortserver.model.User
 import org.eclipse.apoapsis.ortserver.model.repositories.OrtRunRepository
+import org.eclipse.apoapsis.ortserver.model.resolvedconfiguration.AppliedPackageCurationRef
+import org.eclipse.apoapsis.ortserver.model.resolvedconfiguration.PackageCurationProviderConfig
 import org.eclipse.apoapsis.ortserver.model.resolvedconfiguration.ResolvedItemsResult
+import org.eclipse.apoapsis.ortserver.model.resolvedconfiguration.ResolvedPackageCurations
 import org.eclipse.apoapsis.ortserver.model.runs.AnalyzerConfiguration
 import org.eclipse.apoapsis.ortserver.model.runs.Environment
 import org.eclipse.apoapsis.ortserver.model.runs.Identifier
@@ -135,9 +156,18 @@ import org.eclipse.apoapsis.ortserver.model.runs.advisor.VulnerabilityReference
 import org.eclipse.apoapsis.ortserver.model.runs.reporter.Report
 import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.IssueResolutionReason
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCuration
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PackageCurationData
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathInclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathIncludesExcludes
 import org.eclipse.apoapsis.ortserver.model.runs.repository.ResolutionSource
 import org.eclipse.apoapsis.ortserver.model.runs.repository.RuleViolationResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.RuleViolationResolutionReason
+import org.eclipse.apoapsis.ortserver.model.runs.repository.RunIncludesExcludes
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeInclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeIncludesExcludes
 import org.eclipse.apoapsis.ortserver.model.runs.repository.VulnerabilityResolution
 import org.eclipse.apoapsis.ortserver.model.runs.repository.VulnerabilityResolutionReason
 import org.eclipse.apoapsis.ortserver.model.util.asPresent
@@ -213,7 +243,23 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
     val reportData = "Data of the report to download".toByteArray()
 
     /** Create an [OrtRun] containing the given [projects]. */
-    fun createRunWithProjects(projects: Set<Project>): OrtRun {
+    suspend fun createRunWithPackages(packages: Set<Package>): OrtRun {
+        val ortRun = dbExtension.fixtures.createOrtRun(
+            repositoryId = repositoryId,
+            revision = "revision",
+            jobConfigurations = JobConfigurations()
+        )
+        val analyzerJob = dbExtension.fixtures.createAnalyzerJob(
+            ortRunId = ortRun.id,
+            configuration = AnalyzerJobConfiguration()
+        )
+
+        dbExtension.fixtures.createAnalyzerRun(analyzerJob.id, packages = packages)
+
+        return ortRun
+    }
+
+    suspend fun createRunWithProjects(projects: Set<Project>): OrtRun {
         val ortRun = dbExtension.fixtures.createOrtRun(
             repositoryId = repositoryId,
             revision = "revision",
@@ -229,14 +275,16 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
         return ortRun
     }
 
-    /**
-     * Create an [OrtRun], store a report for the created run, and return the created run.
-     */
+    /** Create an [OrtRun], store a report for the created run, and return the created run. */
     suspend fun createReport(): OrtRun {
         val run = dbExtension.fixtures.createOrtRun(repositoryId)
         val key = Key("${run.id}|$reportFile")
 
-        val storage = Storage.create("reportStorage", ConfigManager.create(ConfigFactory.load("application-test.conf")))
+        val storage = Storage.create(
+            "reportStorage",
+            ConfigManager.create(ConfigFactory.load("application-test.conf")),
+            dbExtension.db
+        )
         storage.write(key, reportData, "application/pdf")
 
         val reporterJob = dbExtension.fixtures.createReporterJob(ortRunId = run.id)
@@ -256,7 +304,7 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
      * generated and added to the test log access provider expecting that they are queried for the given [levels].
      * By default, the run can be marked as [completed][complete].
      */
-    fun prepareLogTest(levels: Set<LogLevel>, complete: Boolean = true): OrtRun {
+    suspend fun prepareLogTest(levels: Set<LogLevel>, complete: Boolean = true): OrtRun {
         val logFileDir = tempdir()
         val run = dbExtension.fixtures.createOrtRun(repositoryId)
         val updatedRun = if (complete) {
@@ -316,7 +364,7 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
         val resolvedIssuePurl: String
     )
 
-    fun createIssueRouteScenario(): IssueRouteScenario {
+    suspend fun createIssueRouteScenario(): IssueRouteScenario {
         val ortRun = dbExtension.fixtures.createOrtRun(
             repositoryId = repositoryId,
             revision = "revision",
@@ -334,7 +382,8 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
             source = "Zulu",
             message = "resolved alpha issue",
             severity = Severity.ERROR,
-            identifier = resolvedPackage.identifier
+            identifier = resolvedPackage.identifier,
+            howToFix = "## How to fix\n\nUpgrade `alpha-lib` to **2.0**."
         )
         val unresolvedIssue = Issue(
             timestamp = now.plus(1.seconds).toDatabasePrecision(),
@@ -377,7 +426,7 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
         val resolvedViolationPurl: String
     )
 
-    fun createRuleViolationRouteScenario(includeDuplicateRule: Boolean = false): RuleViolationRouteScenario {
+    suspend fun createRuleViolationRouteScenario(includeDuplicateRule: Boolean = false): RuleViolationRouteScenario {
         val ortRun = dbExtension.fixtures.createOrtRun(
             repositoryId = repositoryId,
             revision = "revision",
@@ -496,6 +545,47 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
             }
         }
 
+        "return the includes and excludes requested for the run" {
+            integrationTestApplication {
+                val run = ortRunRepository.create(
+                    repositoryId,
+                    "revision",
+                    null,
+                    JobConfigurations(),
+                    null,
+                    labelsMap,
+                    traceId = "t1",
+                    null,
+                    includesExcludes = RunIncludesExcludes(
+                        paths = PathIncludesExcludes(
+                            includes = listOf(PathInclude("src/**", "SOURCE_OF", "Sources.")),
+                            excludes = listOf(PathExclude("docs/**", "DOCUMENTATION_OF", ""))
+                        ),
+                        scopes = ScopeIncludesExcludes(
+                            includes = listOf(ScopeInclude("compile", "SOURCE_OF", "")),
+                            excludes = listOf(ScopeExclude("test.*", "TEST_DEPENDENCY_OF", "Tests."))
+                        )
+                    )
+                )
+
+                val response = superuserClient.get("/api/v1/runs/${run.id}")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                with(response.body<ApiOrtRun>()) {
+                    paths shouldBe ApiPathIncludesExcludes(
+                        includes = listOf(ApiPathInclude("src/**", ApiPathIncludeReason.SOURCE_OF, "Sources.")),
+                        excludes = listOf(ApiPathExclude("docs/**", ApiPathExcludeReason.DOCUMENTATION_OF))
+                    )
+                    scopes shouldBe ApiScopeIncludesExcludes(
+                        includes = listOf(ApiScopeInclude("compile", ApiScopeIncludeReason.SOURCE_OF)),
+                        excludes = listOf(
+                            ApiScopeExclude("test.*", ApiScopeExcludeReason.TEST_DEPENDENCY_OF, "Tests.")
+                        )
+                    )
+                }
+            }
+        }
+
         "include job details" {
             integrationTestApplication {
                 val run = ortRunRepository.create(
@@ -536,7 +626,7 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
         }
 
         "include name of the user that triggered this run" {
-            val userDisplayName = UserDisplayName("user-id", "username", "full name")
+            val userDisplayName = User("user-id", "username", "full name")
             integrationTestApplication {
                 val run = ortRunRepository.create(
                     repositoryId,
@@ -565,8 +655,8 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
         }
 
         "update the name of the user if user already exists" {
-            val userDisplayName1 = UserDisplayName("user-id", "username", "full name")
-            val userDisplayName2 = UserDisplayName("user-id", "new-username", "new full name")
+            val userDisplayName1 = User("user-id", "username", "full name")
+            val userDisplayName2 = User("user-id", "new-username", "new full name")
             integrationTestApplication {
                 val run1 = ortRunRepository.create(
                     repositoryId,
@@ -583,7 +673,7 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
                 val response1 = superuserClient.get("/api/v1/runs/${run1.id}")
                 response1 shouldHaveStatus HttpStatusCode.OK
 
-                // UserDisplayName is already created by the previous request, now do another request with different
+                // User is already created by the previous request, now do another request with different
                 // username and full name and check if it is updated.
                 val run2 = ortRunRepository.create(
                     repositoryId,
@@ -1559,6 +1649,55 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
             }
         }
 
+        "respond with Accepted while the vulnerabilities are being prepared if async responses are preferred" {
+            // Do not wait for the build, so that the request is answered before the build has finished.
+            integrationTestApplication(mapOf("projections.asyncRequestWaitMillis" to "0")) {
+                val ortRun = dbExtension.fixtures.createOrtRun(repositoryId = repositoryId)
+                val advisorJob = dbExtension.fixtures.createAdvisorJob(ortRunId = ortRun.id)
+                dbExtension.fixtures.createAdvisorRun(advisorJob.id, generateAdvisorResult())
+
+                val response = superuserClient.get("/api/v1/runs/${ortRun.id}/vulnerabilities") {
+                    header(HttpHeaders.Prefer, "respond-async")
+                }
+
+                response shouldHaveStatus HttpStatusCode.Accepted
+                response.headers[HttpHeaders.RetryAfter] shouldBe "1"
+                response.headers[HttpHeaders.PreferenceApplied] shouldBe "respond-async"
+
+                val readyResponse = superuserClient.get("/api/v1/runs/${ortRun.id}/vulnerabilities")
+
+                readyResponse shouldHaveStatus HttpStatusCode.OK
+                readyResponse.body<PagedResponse<VulnerabilityWithDetails>>().data shouldHaveSize 2
+            }
+        }
+
+        "respond with Service Unavailable if the vulnerabilities are not prepared in time" {
+            // Do not wait for the build, so that the request is answered before the build has finished.
+            integrationTestApplication(mapOf("projections.syncRequestWaitMillis" to "0")) {
+                val ortRun = dbExtension.fixtures.createOrtRun(repositoryId = repositoryId)
+                val advisorJob = dbExtension.fixtures.createAdvisorJob(ortRunId = ortRun.id)
+                dbExtension.fixtures.createAdvisorRun(advisorJob.id, generateAdvisorResult())
+
+                val response = superuserClient.get("/api/v1/runs/${ortRun.id}/vulnerabilities")
+
+                response shouldHaveStatus HttpStatusCode.ServiceUnavailable
+                response.headers[HttpHeaders.RetryAfter] shouldBe "1"
+                response.headers[HttpHeaders.PreferenceApplied] shouldBe null
+            }
+        }
+
+        "respond with no vulnerabilities as long as the advisor has not stored its results" {
+            integrationTestApplication {
+                val ortRun = dbExtension.fixtures.createOrtRun(repositoryId = repositoryId)
+                dbExtension.fixtures.createAdvisorJob(ortRunId = ortRun.id)
+
+                val response = superuserClient.get("/api/v1/runs/${ortRun.id}/vulnerabilities")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                response.body<PagedResponse<VulnerabilityWithDetails>>().data should beEmpty()
+            }
+        }
+
         "require RepositoryPermission.READ_ORT_RUNS" {
             val run = ortRunRepository.create(
                 repositoryId,
@@ -1617,6 +1756,41 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
                 // Applies a default sort order
                 pagedIssues.pagination.sortProperties.firstOrNull()?.name shouldBe "timestamp"
                 pagedIssues.pagination.sortProperties.firstOrNull()?.direction shouldBe SortDirection.DESCENDING
+            }
+        }
+
+        "return how-to-fix Markdown and omit missing values" {
+            integrationTestApplication {
+                val scenario = createIssueRouteScenario()
+                val path = "/api/v1/runs/${scenario.ortRun.id}/issues"
+
+                val response = superuserClient.get(path)
+                response shouldHaveStatus HttpStatusCode.OK
+
+                val issues = response.body<PagedResponse<ApiIssue>>().data
+                val resolvedIssue = issues.single { it.message == scenario.resolvedIssue.message }
+                val unresolvedIssue = issues.single { it.message == scenario.unresolvedIssue.message }
+
+                resolvedIssue.howToFix shouldBe scenario.resolvedIssue.howToFix
+                resolvedIssue.message shouldBe scenario.resolvedIssue.message
+                resolvedIssue.resolutions.shouldBeSingleton()
+                unresolvedIssue.howToFix should beNull()
+                unresolvedIssue.message shouldBe scenario.unresolvedIssue.message
+                unresolvedIssue.resolutions should beEmpty()
+
+                val rawResponse = superuserClient.get(path)
+                val rawIssues = Json.parseToJsonElement(rawResponse.bodyAsText())
+                    .jsonObject.getValue("data").jsonArray
+                    .map { it.jsonObject }
+                val rawResolvedIssue = rawIssues.single {
+                    it.getValue("message").jsonPrimitive.content == scenario.resolvedIssue.message
+                }
+                val rawUnresolvedIssue = rawIssues.single {
+                    it.getValue("message").jsonPrimitive.content == scenario.unresolvedIssue.message
+                }
+
+                rawResolvedIssue.getValue("howToFix").jsonPrimitive.content shouldBe scenario.resolvedIssue.howToFix
+                rawUnresolvedIssue.containsKey("howToFix") shouldBe false
             }
         }
 
@@ -2134,6 +2308,93 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
             }
         }
 
+        "return known publication dates of packages and their curations and leave out unknown ones" {
+            integrationTestApplication {
+                val curated = dbExtension.fixtures.generatePackage(Identifier("Maven", "com.example", "curated", "1.0"))
+                val ortRun = createRunWithPackages(
+                    setOf(
+                        dbExtension.fixtures.generatePackage(Identifier("Maven", "com.example", "dated", "1.0"))
+                            .copy(publishedAt = Instant.parse("2024-05-06T07:08:09.123456Z")),
+                        dbExtension.fixtures.generatePackage(Identifier("Maven", "com.example", "undated", "1.0")),
+                        curated
+                    )
+                )
+
+                dbExtension.fixtures.resolvedConfigurationRepository.addPackageCurations(
+                    ortRun.id,
+                    listOf(
+                        ResolvedPackageCurations(
+                            PackageCurationProviderConfig("provider"),
+                            listOf(
+                                PackageCuration(
+                                    curated.identifier,
+                                    PackageCurationData(
+                                        comment = "dated",
+                                        publishedAt = Instant.parse("2024-06-07T08:09:10.123456Z")
+                                    )
+                                ),
+                                PackageCuration(curated.identifier, PackageCurationData(comment = "undated"))
+                            )
+                        )
+                    )
+                )
+                dbExtension.fixtures.resolvedConfigurationRepository.addPackageCurationAssociations(
+                    ortRun.id,
+                    mapOf(
+                        curated.identifier to listOf(
+                            AppliedPackageCurationRef(providerName = "provider", curationRank = 0),
+                            AppliedPackageCurationRef(providerName = "provider", curationRank = 1)
+                        )
+                    )
+                )
+
+                val response = superuserClient.get("/api/v1/runs/${ortRun.id}/packages")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                val rawPackages = Json.parseToJsonElement(response.bodyAsText())
+                    .jsonObject.getValue("data").jsonArray
+                    .map { it.jsonObject }
+                    .associateBy { it.getValue("identifier").jsonObject.getValue("name").jsonPrimitive.content }
+
+                rawPackages.getValue("dated").getValue("publishedAt").jsonPrimitive.content shouldBe
+                        "2024-05-06T07:08:09.123456Z"
+                rawPackages.getValue("undated").containsKey("publishedAt") shouldBe false
+
+                val rawCurationData = rawPackages.getValue("curated").getValue("curations").jsonArray
+                    .map { it.jsonObject.getValue("data").jsonObject }
+                    .associateBy { it.getValue("comment").jsonPrimitive.content }
+
+                rawCurationData.getValue("dated").getValue("publishedAt").jsonPrimitive.content shouldBe
+                        "2024-06-07T08:09:10.123456Z"
+                rawCurationData.getValue("undated").containsKey("publishedAt") shouldBe false
+            }
+        }
+
+        "sort packages by publication date in both directions across pages" {
+            integrationTestApplication {
+                val ortRun = createRunWithPackages(
+                    setOf(
+                        dbExtension.fixtures.generatePackage(Identifier("Maven", "com.example", "unknown", "1.0")),
+                        dbExtension.fixtures.generatePackage(Identifier("Maven", "com.example", "march", "1.0"))
+                            .copy(publishedAt = Instant.parse("2024-03-01T00:00:00Z")),
+                        dbExtension.fixtures.generatePackage(Identifier("Maven", "com.example", "january", "1.0"))
+                            .copy(publishedAt = Instant.parse("2024-01-01T00:00:00Z"))
+                    )
+                )
+
+                suspend fun sortedNames(sort: String) = listOf(0, 2).flatMap { offset ->
+                    val response = superuserClient.get(
+                        "/api/v1/runs/${ortRun.id}/packages?sort=$sort&limit=2&offset=$offset"
+                    )
+                    response shouldHaveStatus HttpStatusCode.OK
+                    response.body<PagedSearchResponse<ApiPackage, PackageFilters>>().data.map { it.identifier.name }
+                }
+
+                sortedNames("publishedAt") shouldBe listOf("january", "march", "unknown")
+                sortedNames("-publishedAt") shouldBe listOf("march", "january", "unknown")
+            }
+        }
+
         "allow filtering by declared license" {
             integrationTestApplication {
                 val licenseUrl = "https://www.nuget.org/packages/CommandLineParser/2.9.1/license"
@@ -2362,6 +2623,48 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
             }
         }
 
+        "filter packages by an exact identifier if requested" {
+            integrationTestApplication {
+                val target = Identifier("Maven", "com.example", "core", "1.0")
+                val ortRun = createRunWithPackages(
+                    setOf(
+                        dbExtension.fixtures.generatePackage(target),
+                        dbExtension.fixtures.generatePackage(target.copy(version = "1.0.1")),
+                        dbExtension.fixtures.generatePackage(target.copy(version = "1.0-SNAPSHOT"))
+                    )
+                )
+
+                suspend fun getPackages(vararg parameters: Pair<String, String>) =
+                    superuserClient.get("/api/v1/runs/${ortRun.id}/packages") {
+                        url { parameters.forEach { (name, value) -> this.parameters.append(name, value) } }
+                    }.also { it shouldHaveStatus HttpStatusCode.OK }
+                        .body<PagedSearchResponse<ApiPackage, PackageFilters>>()
+
+                val exact = getPackages("identifier" to "Maven:com.example:core:1.0", "identifierMatchType" to "exact")
+                exact.data.map { it.identifier } should containExactly(target.mapToApi())
+                exact.pagination.totalCount shouldBe 1
+                exact.filters shouldBe PackageFilters(
+                    identifier = FilterOperatorAndValue(ComparisonOperator.EQUALS, "Maven:com.example:core:1.0")
+                )
+
+                val substring = getPackages("identifier" to "Maven:com.example:core:1.0")
+                substring.pagination.totalCount shouldBe 3
+                substring.filters shouldBe PackageFilters(
+                    identifier = FilterOperatorAndValue(ComparisonOperator.ILIKE, "Maven:com.example:core:1.0")
+                )
+            }
+        }
+
+        "reject an unsupported identifier match type" {
+            integrationTestApplication {
+                val ortRun = createRunWithPackages(emptySet())
+
+                superuserClient.get(
+                    "/api/v1/runs/${ortRun.id}/packages?identifier=core&identifierMatchType=regex"
+                ) shouldHaveStatus HttpStatusCode.BadRequest
+            }
+        }
+
         "require RepositoryPermission.READ_ORT_RUNS" {
             val run = ortRunRepository.create(
                 repositoryId,
@@ -2524,6 +2827,35 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
                         setOf(processedLicense, "MIT")
                     ),
                     definitionFilePath = FilterOperatorAndValue(ComparisonOperator.ILIKE, "apps/")
+                )
+            }
+        }
+
+        "filter projects by an exact identifier if requested" {
+            integrationTestApplication {
+                val target = Identifier("Maven", "com.example", "core", "1.0")
+                val ortRun = createRunWithProjects(
+                    linkedSetOf(
+                        dbExtension.fixtures.getProject(target.copy(version = "1.0.1")),
+                        dbExtension.fixtures.getProject(target.copy(version = "1.0-SNAPSHOT")),
+                        dbExtension.fixtures.getProject(target)
+                    )
+                )
+
+                val response = superuserClient.get("/api/v1/runs/${ortRun.id}/projects") {
+                    url {
+                        parameters.append("identifier", "Maven:com.example:core:1.0")
+                        parameters.append("identifierMatchType", "exact")
+                    }
+                }
+
+                response shouldHaveStatus HttpStatusCode.OK
+                val projects = response.body<PagedSearchResponse<ApiProject, ProjectFilters>>()
+
+                projects.data.map { it.identifier.version } should containExactly("1.0")
+                projects.pagination.totalCount shouldBe 1
+                projects.filters shouldBe ProjectFilters(
+                    identifier = FilterOperatorAndValue(ComparisonOperator.EQUALS, "Maven:com.example:core:1.0")
                 )
             }
         }
@@ -3827,15 +4159,11 @@ class RunsRouteIntegrationTest : AbstractIntegrationTest({
     }
 })
 
-/**
- * Generate the content of a log file for the given [source].
- */
+/** Generate the content of a log file for the given [source]. */
 private fun logFileContent(source: LogSource): String =
     "Content of log file for '${source.name}'."
 
-/**
- * Check whether the given [archiveFile] contains the correct logs for the given [sources].
- */
+/** Check whether the given [archiveFile] contains the correct logs for the given [sources]. */
 private fun checkLogArchive(archiveFile: File, sources: Set<LogSource>) {
     archiveFile shouldBe aFile()
     val currentDir = archiveFile.parentFile
@@ -3857,9 +4185,7 @@ private fun checkLogArchive(archiveFile: File, sources: Set<LogSource>) {
     }
 }
 
-/**
- * Return the name of the log file for this [LogSource].
- */
+/** Return the name of the log file for this [LogSource]. */
 private fun LogSource.logFileName() = "${name.lowercase()}.log"
 
 private fun generateAdvisorEnvironment() = Environment(

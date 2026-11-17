@@ -19,19 +19,10 @@
 
 package org.eclipse.apoapsis.ortserver.workers.config
 
-import com.github.michaelbull.result.getOrElse
-
 import kotlin.time.Clock
 
-import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginAvailability
-import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginService
-import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginTemplateService
-import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginType
-import org.eclipse.apoapsis.ortserver.model.OrganizationId
 import org.eclipse.apoapsis.ortserver.model.Severity
 import org.eclipse.apoapsis.ortserver.model.runs.Issue
-
-import org.ossreviewtoolkit.model.config.AnalyzerConfiguration
 
 /** An [Issue.source] for errors that occur when compiling or executing the validation script. */
 const val INVALID_SCRIPT_SOURCE = "VALIDATION_SCRIPT_ERROR"
@@ -42,6 +33,9 @@ const val PARAMETER_VALIDATION_SOURCE = "PARAMETER_VALIDATION"
 /** An [Issue.source] for errors that occur when validating the admin config file. */
 const val ADMIN_CONFIG_VALIDATION_SOURCE = "ADMIN_CONFIG_VALIDATION"
 
+/** An [Issue.source] for errors that occur when applying the default plugins or plugin templates. */
+const val PLUGIN_TEMPLATE_SOURCE = "PLUGIN_TEMPLATE"
+
 /** Create a new [Issue] with the given [message] and [source] and other properties set to default values. */
 fun createIssue(message: String, source: String): Issue =
     Issue(
@@ -50,35 +44,3 @@ fun createIssue(message: String, source: String): Issue =
         message = message,
         severity = Severity.ERROR
     )
-
-/**
- * Returns the IDs of the package managers that are enabled by default. This includes package managers which are enabled
- * by default in ORT and which are enabled in the [pluginService].
- */
-fun getDefaultPackageManagers(
-    pluginService: PluginService,
-    pluginTemplateService: PluginTemplateService,
-    organizationId: OrganizationId
-): List<String> {
-    val ortDefaultPackageManagers = AnalyzerConfiguration().enabledPackageManagers
-
-    return pluginService.getPlugins()
-        .filter {
-            val isPluginEnabled by lazy {
-                when (it.availability) {
-                    PluginAvailability.ENABLED -> true
-
-                    PluginAvailability.DISABLED -> false
-
-                    PluginAvailability.RESTRICTED -> {
-                        // Add restricted package managers only if a template exists for the organization.
-                        pluginTemplateService.getTemplateForOrganization(it.type, it.id, organizationId)
-                            .getOrElse { null } != null
-                    }
-                }
-            }
-
-            it.type == PluginType.PACKAGE_MANAGER && it.id in ortDefaultPackageManagers && isPluginEnabled
-        }
-        .map { it.id }
-}

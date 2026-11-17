@@ -20,6 +20,7 @@
 import { Loader2, OctagonAlert } from 'lucide-react';
 import { cloneElement, isValidElement, ReactNode, useState } from 'react';
 
+import { ActionTooltipTrigger } from '@/components/action-tooltip-trigger';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -32,11 +33,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent } from '@/components/ui/tooltip';
 
 interface DeleteDialogProps {
   /**
@@ -88,6 +85,10 @@ interface DeleteDialogProps {
    * When true, the uiComponent is rendered as disabled and the dialog cannot be opened.
    */
   disabled?: boolean;
+  /**
+   * The tooltip of the disabled delete button.
+   */
+  disabledTooltip?: string;
 }
 
 export const DeleteDialog = ({
@@ -100,6 +101,7 @@ export const DeleteDialog = ({
   tooltip,
   title,
   disabled,
+  disabledTooltip = 'Insufficient permissions.',
 }: DeleteDialogProps) => {
   const [input, setInput] = useState('');
   const [open, setOpen] = useState(false);
@@ -125,17 +127,15 @@ export const DeleteDialog = ({
       }}
     >
       <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
+        <ActionTooltipTrigger disabled={!!disabled}>
           {disabled ? (
-            <span className='inline-flex cursor-not-allowed'>
-              {triggerElement}
-            </span>
+            triggerElement
           ) : (
             <AlertDialogTrigger asChild>{uiComponent}</AlertDialogTrigger>
           )}
-        </TooltipTrigger>
+        </ActionTooltipTrigger>
         <TooltipContent>
-          {disabled ? 'Insufficient permissions.' : tooltip || 'Delete'}
+          {disabled ? disabledTooltip : tooltip || 'Delete'}
         </TooltipContent>
       </Tooltip>
       {/* Adding the preventDefault will prevent focusing on the trigger after closing the modal (which would cause the tooltip to show) */}

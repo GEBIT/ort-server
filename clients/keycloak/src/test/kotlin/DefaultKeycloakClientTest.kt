@@ -22,8 +22,11 @@ package org.eclipse.apoapsis.ortserver.clients.keycloak
 import com.github.tomakehurst.wiremock.WireMockServer
 import com.github.tomakehurst.wiremock.client.WireMock.aResponse
 import com.github.tomakehurst.wiremock.client.WireMock.anyUrl
+import com.github.tomakehurst.wiremock.client.WireMock.equalTo
 import com.github.tomakehurst.wiremock.client.WireMock.get
+import com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor
 import com.github.tomakehurst.wiremock.client.WireMock.post
+import com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration
 
 import com.typesafe.config.ConfigFactory
@@ -36,6 +39,8 @@ import io.kotest.core.spec.style.WordSpec
 import io.kotest.extensions.system.withEnvironment
 import io.kotest.matchers.collections.beEmpty
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
+import io.kotest.matchers.nulls.beNull
+import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNot
 import io.kotest.matchers.string.shouldStartWith
@@ -49,6 +54,7 @@ import org.eclipse.apoapsis.ortserver.clients.keycloak.test.TEST_CONFIDENTIAL_CL
 import org.eclipse.apoapsis.ortserver.clients.keycloak.test.TEST_REALM
 import org.eclipse.apoapsis.ortserver.clients.keycloak.test.createKeycloakClientConfigurationForTestRealm
 import org.eclipse.apoapsis.ortserver.clients.keycloak.test.testRealmAdmin
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.keycloak.admin.client.Keycloak
 
@@ -62,6 +68,8 @@ class DefaultKeycloakClientTest : WordSpec() {
     val client = keycloak.createTestClient()
 
     init {
+        tags(Integration)
+
         "create" should {
             "not throw any instantiation exception" {
                 val incorrectConfig = keycloak.createKeycloakClientConfigurationForTestRealm("falseSecret")
@@ -116,15 +124,7 @@ class DefaultKeycloakClientTest : WordSpec() {
                             )
                     )
 
-                    val config = KeycloakClientConfiguration(
-                        baseUrl = server.baseUrl(),
-                        realm = "some-realm",
-                        apiUrl = "${server.baseUrl()}/admin/realms/some-realm",
-                        clientId = "some-client",
-                        accessTokenUrl = "${server.baseUrl()}/realms/some-realm/protocol/openid-connect/token",
-                        apiUser = "some-user",
-                        apiSecret = "some-secret"
-                    )
+                    val config = server.createConfiguration()
 
                     val env = mapOf("KEYCLOAK_HTTP_CLIENT_REQUEST_TIMEOUT_MS" to "50")
                     withEnvironment(env) {
@@ -136,6 +136,9 @@ class DefaultKeycloakClientTest : WordSpec() {
                     }
                 } finally {
                     server.stop()
+
+                    // Do not let the short timeout leak into clients that later tests create.
+                    ConfigFactory.invalidateCaches()
                 }
             }
         }
@@ -145,6 +148,100 @@ class DefaultKeycloakClientTest : WordSpec() {
                 val users = client.getUsers()
 
                 users shouldContainExactlyInAnyOrder setOf(testRealmAdmin, adminUser, visitorUser)
+            }
+
+            "return all users if they span several pages" {
+                val users = client.getUsers(pageSize = 2)
+
+                users shouldContainExactlyInAnyOrder setOf(testRealmAdmin, adminUser, visitorUser)
+            }
+
+            "return a user renamed between two pages only once, with the later username" {
+                val json = createJson()
+                val firstPage = listOf(User(UserId("u1"), UserName("user1")), User(UserId("u2"), UserName("user2")))
+                val secondPage = listOf(User(UserId("u2"), UserName("user3")))
+
+                val server = WireMockServer(WireMockConfiguration.options().dynamicPort())
+                server.start()
+                try {
+                    server.stubFor(
+                        post(anyUrl())
+                            .willReturn(
+                                aResponse()
+                                    .withHeader("Content-Type", "application/json")
+                                    .withBody(json.encodeToString(TokenInfo("some-token")))
+                            )
+                    )
+
+                    listOf("0" to firstPage, "2" to secondPage).forEach { (first, page) ->
+                        server.stubFor(
+                            get(urlPathEqualTo("/admin/realms/some-realm/users"))
+                                .withQueryParam("first", equalTo(first))
+                                .willReturn(
+                                    aResponse()
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody(json.encodeToString(page))
+                                )
+                        )
+                    }
+
+                    val client = DefaultKeycloakClient.create(server.createConfiguration(), json)
+
+                    client.getUsers(pageSize = 2) shouldContainExactlyInAnyOrder setOf(
+                        User(UserId("u1"), UserName("user1")),
+                        User(UserId("u2"), UserName("user3"))
+                    )
+                } finally {
+                    server.stop()
+                }
+            }
+
+            "throw an exception if a later page cannot be loaded" {
+                val json = createJson()
+                val firstPage = listOf(User(UserId("u1"), UserName("user1")), User(UserId("u2"), UserName("user2")))
+
+                val server = WireMockServer(WireMockConfiguration.options().dynamicPort())
+                server.start()
+                try {
+                    server.stubFor(
+                        post(anyUrl())
+                            .willReturn(
+                                aResponse()
+                                    .withHeader("Content-Type", "application/json")
+                                    .withBody(json.encodeToString(TokenInfo("some-token")))
+                            )
+                    )
+
+                    server.stubFor(
+                        get(urlPathEqualTo("/admin/realms/some-realm/users"))
+                            .withQueryParam("first", equalTo("0"))
+                            .willReturn(
+                                aResponse()
+                                    .withHeader("Content-Type", "application/json")
+                                    .withBody(json.encodeToString(firstPage))
+                            )
+                    )
+
+                    server.stubFor(
+                        get(urlPathEqualTo("/admin/realms/some-realm/users"))
+                            .withQueryParam("first", equalTo("2"))
+                            .willReturn(aResponse().withStatus(500))
+                    )
+
+                    val client = DefaultKeycloakClient.create(server.createConfiguration(), json)
+
+                    val exception = shouldThrow<KeycloakClientException> {
+                        client.getUsers(pageSize = 2)
+                    }
+
+                    exception.message shouldStartWith "Failed to load users"
+                    server.verify(
+                        getRequestedFor(urlPathEqualTo("/admin/realms/some-realm/users"))
+                            .withQueryParam("first", equalTo("2"))
+                    )
+                } finally {
+                    server.stop()
+                }
             }
         }
 
@@ -156,6 +253,64 @@ class DefaultKeycloakClientTest : WordSpec() {
             "throw an exception if the user does not exist" {
                 shouldThrow<KeycloakClientException> {
                     client.getUser(UserName("1"))
+                }
+            }
+        }
+
+        "findUser by ID" should {
+            "return the user with the given ID" {
+                client.findUser(adminUser.id) shouldBe adminUser
+            }
+
+            "return null if Keycloak answers that the user does not exist" {
+                client.findUser(UserId("00000000-0000-0000-0000-000000000000")) should beNull()
+            }
+
+            "throw an exception if the request fails" {
+                withFailingKeycloak(status = 500) { failingClient ->
+                    shouldThrow<KeycloakClientException> {
+                        failingClient.findUser(UserId("u1"))
+                    }
+                }
+            }
+
+            "throw an exception if Keycloak cannot be reached" {
+                shouldThrow<KeycloakClientException> {
+                    createUnreachableClient().findUser(UserId("u1"))
+                }
+            }
+        }
+
+        "findUser by username" should {
+            "return the user with the given username" {
+                client.findUser(adminUser.username) shouldBe adminUser
+            }
+
+            "return null if the search does not find the user" {
+                client.findUser(UserName("unknown-user")) should beNull()
+            }
+
+            "throw an exception if the search fails" {
+                withFailingKeycloak(status = 500) { failingClient ->
+                    shouldThrow<KeycloakClientException> {
+                        failingClient.findUser(UserName("user1"))
+                    }
+                }
+            }
+
+            "throw an exception if the search answers with not found" {
+                // A search that finds no user answers with an empty list. "Not found" means that the realm or the URL
+                // is wrong, so the user must not be taken as missing.
+                withFailingKeycloak(status = 404) { failingClient ->
+                    shouldThrow<KeycloakClientException> {
+                        failingClient.findUser(UserName("user1"))
+                    }
+                }
+            }
+
+            "throw an exception if Keycloak cannot be reached" {
+                shouldThrow<KeycloakClientException> {
+                    createUnreachableClient().findUser(UserName("user1"))
                 }
             }
         }
@@ -257,15 +412,60 @@ class DefaultKeycloakClientTest : WordSpec() {
     }
 }
 
-/**
- * Create a test client instance that is configured to access the Keycloak instance managed by this container.
- */
+/** Create a test client instance that is configured to access the Keycloak instance managed by this container. */
 private fun KeycloakContainer.createTestClient(): KeycloakClient =
     DefaultKeycloakClient.create(createKeycloakClientConfigurationForTestRealm(), createJson())
 
+/** Create a [KeycloakClientConfiguration] for a realm on this [WireMockServer]. */
+private fun WireMockServer.createConfiguration() =
+    KeycloakClientConfiguration(
+        baseUrl = baseUrl(),
+        realm = "some-realm",
+        apiUrl = "${baseUrl()}/admin/realms/some-realm",
+        clientId = "some-client",
+        accessTokenUrl = "${baseUrl()}/realms/some-realm/protocol/openid-connect/token",
+        apiUser = "some-user",
+        apiSecret = "some-secret"
+    )
+
 /**
- * Create the [Json] instance required by the test client.
+ * Run the given [block] with a client for a Keycloak that issues access tokens but answers every other request with
+ * the given HTTP [status].
  */
+private suspend fun withFailingKeycloak(status: Int, block: suspend (KeycloakClient) -> Unit) {
+    val json = createJson()
+    val server = WireMockServer(WireMockConfiguration.options().dynamicPort())
+    server.start()
+
+    try {
+        server.stubFor(
+            post(anyUrl())
+                .willReturn(
+                    aResponse()
+                        .withHeader("Content-Type", "application/json")
+                        .withBody(json.encodeToString(TokenInfo("some-token")))
+                )
+        )
+
+        server.stubFor(get(anyUrl()).willReturn(aResponse().withStatus(status)))
+
+        block(DefaultKeycloakClient.create(server.createConfiguration(), json))
+    } finally {
+        server.stop()
+    }
+}
+
+/** Create a client for a Keycloak that cannot be reached because its server is not running. */
+private fun createUnreachableClient(): KeycloakClient {
+    val server = WireMockServer(WireMockConfiguration.options().dynamicPort())
+    server.start()
+    val config = server.createConfiguration()
+    server.stop()
+
+    return DefaultKeycloakClient.create(config, createJson())
+}
+
+/** Create the [Json] instance required by the test client. */
 private fun createJson(): Json = Json {
     ignoreUnknownKeys = true
 }

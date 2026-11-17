@@ -24,27 +24,19 @@ import kotlin.time.Instant
 import org.eclipse.apoapsis.ortserver.model.runs.reporter.Report
 import org.eclipse.apoapsis.ortserver.model.runs.reporter.ReporterRun
 
-/**
- * A repository of [reporter runs][ReporterRun].
- */
+/** A repository of [reporter runs][ReporterRun]. */
 interface ReporterRunRepository {
-    /**
-     * Create a reporter run.
-     */
-    fun create(
+    /** Create a reporter run. */
+    suspend fun create(
         reporterJobId: Long,
         startTime: Instant,
         endTime: Instant,
         reports: List<Report>
     ): ReporterRun
 
-    /**
-     * Get a reporter run by [id]. Returns null if the reporter run is not found.
-     */
-    fun get(id: Long): ReporterRun?
+    /** Get a reporter run by [id]. Returns null if the reporter run is not found. */
+    suspend fun get(id: Long): ReporterRun?
 
-    /**
-     * Get a reporter run by [reporterJobId]. Returns null if the reporter run is not found.
-     */
-    fun getByJobId(reporterJobId: Long): ReporterRun?
+    /** Get a reporter run by [reporterJobId]. Returns null if the reporter run is not found. */
+    suspend fun getByJobId(reporterJobId: Long): ReporterRun?
 }

@@ -63,9 +63,7 @@ private const val WORKER_LABEL = "ort-worker"
  */
 private val VARIABLES_NOT_TO_PROPAGATE = setOf("_", "HOME", "PATH", "PWD")
 
-/**
- * Implementation of the [MessageSender] interface for Kubernetes.
- */
+/** Implementation of the [MessageSender] interface for Kubernetes. */
 internal class KubernetesMessageSender<T : Any>(
     /** The Kubernetes API for creating jobs. */
     val api: BatchV1Api,
@@ -88,12 +86,13 @@ internal class KubernetesMessageSender<T : Any>(
         )
 
         val variables = message.header.transportProperties.selectByPrefix(TRANSPORT_NAME)
-        val env = (createEnvironment() + msgMap).map { V1EnvVarBuilder().withName(it.key).withValue(it.value).build() }
+        val inheritedEnvironment = createEnvironment()
         val labels = config.labels + createTraceIdLabels(traceId) + mapOf(
             RUN_ID_LABEL to message.header.ortRunId.toString(),
             WORKER_LABEL to endpoint.configPrefix
         )
-        val (globalMounts, namedMounts) = createVolumeMounts(config)
+        val volumeNames = generateVolumeNames(config)
+        val (globalMounts, namedMounts) = createVolumeMounts(config, volumeNames)
 
         val jobBody = V1JobBuilder()
             .withNewMetadata()
@@ -114,8 +113,8 @@ internal class KubernetesMessageSender<T : Any>(
                             listOfNotNull(config.imagePullSecret).map { V1LocalObjectReference().name(it) }
                         )
                        .withServiceAccountName(config.serviceAccountName)
-                       .addContainers(config, env, variables, globalMounts, namedMounts)
-                       .withVolumes(createVolumes(config))
+                       .addContainers(config, inheritedEnvironment, msgMap, variables, globalMounts, namedMounts)
+                       .withVolumes(createVolumes(config, volumeNames))
                     .endSpec()
                 .endTemplate()
             .endSpec()
@@ -146,23 +145,43 @@ internal class KubernetesMessageSender<T : Any>(
     }
 
     /**
-     * Return a list with volumes declared in the given [config].
+     * Generate a map assigning a Kubernetes-compliant volume name to each distinct [VolumeIdentity] referenced by
+     * the volume mounts declared in the given [config]. Volume mounts referencing the same underlying Kubernetes
+     * resource (e.g. the same secret, persistent volume claim, or empty dir name) share the same typed
+     * [VolumeIdentity] and therefore resolve to the same generated volume name.
      */
-    private fun createVolumes(config: KubernetesSenderConfig): List<V1Volume> =
-        config.volumeMounts.mapIndexed { index, volumeMount ->
-            volumeMount.initializeVolume(V1Volume(), index)
+    private fun generateVolumeNames(config: KubernetesSenderConfig): Map<VolumeIdentity, String> =
+        config.volumeMounts.map { it.volumeIdentity }.distinct().withIndex().associate { (index, identity) ->
+            identity to generateVolumeName(identity, index)
         }
 
     /**
-     * Convert the volume mounts declared in the given [config] to [V1VolumeMount] objects. Return a [Pair] with the
-     * mounts to be added to all containers and the named volume mounts.
+     * Return a list with volumes declared in the given [config], using the provided [volumeNames] to resolve the
+     * name of the Kubernetes volume for each distinct [VolumeIdentity]. Volume mounts referencing the same
+     * underlying resource are deduplicated, so that only a single `volume` entry is generated for them.
+     */
+    private fun createVolumes(
+        config: KubernetesSenderConfig,
+        volumeNames: Map<VolumeIdentity, String>
+    ): List<V1Volume> =
+        config.volumeMounts.distinctBy { it.volumeIdentity }.map { volumeMount ->
+            volumeMount.initializeVolume(V1Volume(), volumeNames.getValue(volumeMount.volumeIdentity))
+        }
+
+    /**
+     * Convert the volume mounts declared in the given [config] to [V1VolumeMount] objects, using the provided
+     * [volumeNames] to resolve the name of the Kubernetes volume for each distinct [VolumeIdentity]. Return a [Pair]
+     * with the mounts to be added to all containers and the named volume mounts.
      */
     private fun createVolumeMounts(
-        config: KubernetesSenderConfig
+        config: KubernetesSenderConfig,
+        volumeNames: Map<VolumeIdentity, String>
     ): Pair<List<V1VolumeMount>, Map<String, V1VolumeMount>> =
-        config.volumeMounts.foldIndexed(emptyList<V1VolumeMount>() to emptyMap()) { index, (list, map), volumeMount ->
-            val mount = volumeMount.initializeVolumeMount(V1VolumeMount(), index)
-                .mountPath(volumeMount.mountPath)
+        config.volumeMounts.fold(emptyList<V1VolumeMount>() to emptyMap()) { (list, map), volumeMount ->
+            val mount = volumeMount.initializeVolumeMount(
+                V1VolumeMount(),
+                volumeNames.getValue(volumeMount.volumeIdentity)
+            ).mountPath(volumeMount.mountPath)
             volumeMount.mountName?.let { name -> list to (map + (name to mount)) } ?: ((list + mount) to map)
         }
 
@@ -177,19 +196,26 @@ internal class KubernetesMessageSender<T : Any>(
 }
 
 /**
- * Add the containers declared in the given [config] to the pod specification. All containers share the same
- * [environment]. Variable substitution is done based on the provided [variables]. Generate volume mounts based on the
- * given [globalMounts] (which are added to all containers) and [namedMounts] (explicitly referenced by single
- * containers).
+ * Add the containers declared in the given [config] to the pod specification. Filter [inheritedEnvironment] according
+ * to each container's allowlist, then add [messageEnvironment] to every container. Variable substitution is done
+ * based on the provided [variables]. Generate volume mounts based on the given [globalMounts] (which are added to all
+ * containers) and [namedMounts] (explicitly referenced by single containers).
  */
 private fun <A : V1PodSpecFluent<A>> A.addContainers(
     config: KubernetesSenderConfig,
-    environment: List<V1EnvVar>,
+    inheritedEnvironment: Map<String, String>,
+    messageEnvironment: Map<String, String>,
     variables: Map<String, String>,
     globalMounts: List<V1VolumeMount>,
     namedMounts: Map<String, V1VolumeMount>
 ): A =
     (listOf(config.mainContainer) + config.additionalContainers).fold(this) { pod, container ->
+        val filteredEnvironment = inheritedEnvironment.filter {
+            container.environmentAllowlist?.contains(it.key) ?: true
+        }
+        val environment = (filteredEnvironment + messageEnvironment)
+            .map { V1EnvVarBuilder().withName(it.key).withValue(it.value).build() }
+
         if (container.isInitContainer) {
             pod.addNewInitContainer()
                 .configureContainer(container, environment, variables, globalMounts, namedMounts)

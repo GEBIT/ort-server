@@ -20,7 +20,7 @@
 package org.eclipse.apoapsis.ortserver.workers.common.env.definition
 
 import org.eclipse.apoapsis.ortserver.model.CredentialsType
-import org.eclipse.apoapsis.ortserver.workers.common.ResolvedInfrastructureService
+import org.eclipse.apoapsis.ortserver.shared.authenticator.ResolvedInfrastructureService
 
 /**
  * A specific [EnvironmentServiceDefinition] class for generating the Conan _remotes.json_ file with configuration
@@ -33,9 +33,7 @@ class ConanDefinition(
 
     credentialsTypes: Set<CredentialsType>?,
 
-    /**
-     * Name of the remote. This name will be used in commands like `conan list`.
-     */
+    /** Name of the remote. This name will be used in commands like `conan list`. */
     val name: String,
 
     /**
@@ -44,9 +42,7 @@ class ConanDefinition(
      */
     val url: String?,
 
-    /**
-     * Verify SSL certificate of the specified url.
-     */
+    /** Verify SSL certificate of the specified url. */
     val verifySsl: Boolean
 ) : EnvironmentServiceDefinition(service, credentialsTypes) {
     /**

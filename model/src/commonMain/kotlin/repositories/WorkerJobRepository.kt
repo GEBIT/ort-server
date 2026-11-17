@@ -33,20 +33,14 @@ import org.eclipse.apoapsis.ortserver.model.util.asPresent
  * generic way.
  */
 interface WorkerJobRepository<T : WorkerJob> {
-    /**
-     * Get a job by [id]. Returns null if the job is not found.
-     */
-    fun get(id: Long): T?
+    /** Get a job by [id]. Returns null if the job is not found. */
+    suspend fun get(id: Long): T?
 
-    /**
-     * Get the job for an [ORT run][ortRunId].
-     */
-    fun getForOrtRun(ortRunId: Long): T?
+    /** Get the job for an [ORT run][ortRunId]. */
+    suspend fun getForOrtRun(ortRunId: Long): T?
 
-    /**
-     * Update a job by [id] with the [present][OptionalValue.Present] values.
-     */
-    fun update(
+    /** Update a job by [id] with the [present][OptionalValue.Present] values. */
+    suspend fun update(
         id: Long,
         startedAt: OptionalValue<Instant?> = OptionalValue.Absent,
         finishedAt: OptionalValue<Instant?> = OptionalValue.Absent,
@@ -58,20 +52,18 @@ interface WorkerJobRepository<T : WorkerJob> {
      * Mark a job by [id] as started by updating the given [startedAt] timestamp and setting the status to
      * [JobStatus.RUNNING].
      */
-    fun start(id: Long, startedAt: Instant): T =
+    suspend fun start(id: Long, startedAt: Instant): T =
         update(id, startedAt = startedAt.asPresent(), status = JobStatus.RUNNING.asPresent())
 
     /**
      * Mark a job by [id] as started if it is not yet in a started state. Return the updated job if the update is
      * possible and `null` otherwise.
      */
-    fun tryStart(id: Long, startedAt: Instant): T? =
+    suspend fun tryStart(id: Long, startedAt: Instant): T? =
         if (getStatus(id) in notStartedJobStates) start(id, startedAt) else null
 
-    /**
-     * Mark a job by [id] as completed by updating the given [finishedAt] date and setting the given [status].
-     */
-    fun complete(id: Long, finishedAt: Instant, status: JobStatus, errorMessage: String? = null): T {
+    /** Mark a job by [id] as completed by updating the given [finishedAt] date and setting the given [status]. */
+    suspend fun complete(id: Long, finishedAt: Instant, status: JobStatus, errorMessage: String? = null): T {
         require(status in completedJobStates) {
             "complete can only be called with a JobStatus that mark the job as completed: $completedJobStates."
         }
@@ -90,7 +82,7 @@ interface WorkerJobRepository<T : WorkerJob> {
      * multiple completion messages are received. If the update is possible, return the updated entity; otherwise,
      * return *null*.
      */
-    fun tryComplete(id: Long, finishedAt: Instant, status: JobStatus): T? =
+    suspend fun tryComplete(id: Long, finishedAt: Instant, status: JobStatus): T? =
         if (getStatus(id) !in completedJobStates) complete(id, finishedAt, status) else null
 
     /**
@@ -100,19 +92,15 @@ interface WorkerJobRepository<T : WorkerJob> {
      * A job is considered active if it does not have a finished timestamp. Note that the [JobStatus] is not taken
      * into account here, since the finished timestamp is always set together with a completed status.
      */
-    fun listActive(before: Instant? = null): List<T>
+    suspend fun listActive(before: Instant? = null): List<T>
 
     /** Return the status of a job by [id] or throw an [IllegalArgumentException] if the job is not found. */
-    private fun getStatus(id: Long): JobStatus =
+    private suspend fun getStatus(id: Long): JobStatus =
         requireNotNull(get(id)?.status) { "${this::class.simpleName}: Job '$id' not found." }
 }
 
-/**
- * A set with the [JobStatus] values that indicate a completed job.
- */
+/** A set with the [JobStatus] values that indicate a completed job. */
 private val completedJobStates = setOf(JobStatus.FINISHED, JobStatus.FINISHED_WITH_ISSUES, JobStatus.FAILED)
 
-/**
- * A set with the [JobStatus] values that indicate a job that was not started.
- */
+/** A set with the [JobStatus] values that indicate a job that was not started. */
 private val notStartedJobStates = setOf(JobStatus.CREATED, JobStatus.SCHEDULED)

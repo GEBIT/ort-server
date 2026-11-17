@@ -39,7 +39,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 
 internal fun Route.patchOrganizationSecret(secretService: SecretService) =
-    patch("/organizations/{organizationId}/secrets/{secretName}", {
+    patch("organizations/{organizationId}/secrets/{secretName}", {
         operationId = "patchOrganizationSecret"
         summary = "Update a secret of an organization"
         tags = listOf("Organizations")
@@ -60,7 +60,7 @@ internal fun Route.patchOrganizationSecret(secretService: SecretService) =
                         description = "New access token for Maven Repo 1".asPresent()
                     )
                 }
-                description = "Set the values that should be updated. To delete a value, set it explicitly to null."
+                description = "Set the values that should be updated. Omitted values are not changed."
             }
         }
 
@@ -70,9 +70,13 @@ internal fun Route.patchOrganizationSecret(secretService: SecretService) =
 
                 jsonBody<Secret> {
                     example("Update Secret") {
-                        value = Secret(name = "token_maven_repo_1", description = "New access token for Maven Repo 1")
+                        value = Secret(name = "token-maven-repo-1", description = "New access token for Maven Repo 1")
                     }
                 }
+            }
+
+            HttpStatusCode.NotFound to {
+                description = "The secret does not exist."
             }
         }
     }, requirePermission(OrganizationPermission.WRITE_SECRETS)) {

@@ -35,7 +35,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 
 internal fun Route.getRepositorySecret(secretService: SecretService) =
-    get("/repositories/{repositoryId}/secrets/{secretName}", {
+    get("repositories/{repositoryId}/secrets/{secretName}", {
         operationId = "getRepositorySecret"
         summary = "Get details of a secret of a repository"
         tags = listOf("Repositories")
@@ -54,9 +54,13 @@ internal fun Route.getRepositorySecret(secretService: SecretService) =
                 description = "Success"
                 jsonBody<Secret> {
                     example("Get Secret") {
-                        value = Secret(name = "token_npm_repo_1", description = "Access token for NPM Repo 1")
+                        value = Secret(name = "token-npm-repo-1", description = "Access token for NPM Repo 1")
                     }
                 }
+            }
+
+            HttpStatusCode.NotFound to {
+                description = "The repository or the secret does not exist."
             }
         }
     }, requirePermission(RepositoryPermission.READ)) {

@@ -21,20 +21,23 @@ package org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun
 
 import io.kotest.core.spec.style.StringSpec
 import io.kotest.matchers.collections.beEmpty
+import io.kotest.matchers.collections.containExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldBeSingleton
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.microseconds
+import kotlin.time.Instant
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.dao.utils.toDatabasePrecision
 import org.eclipse.apoapsis.ortserver.model.RepositoryType
 import org.eclipse.apoapsis.ortserver.model.Severity
@@ -54,10 +57,14 @@ import org.eclipse.apoapsis.ortserver.model.runs.Project
 import org.eclipse.apoapsis.ortserver.model.runs.RemoteArtifact
 import org.eclipse.apoapsis.ortserver.model.runs.ShortestDependencyPath
 import org.eclipse.apoapsis.ortserver.model.runs.VcsInfo
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.selectAll
 
 class DaoAnalyzerRunRepositoryTest : StringSpec({
+    tags(Integration)
+
     val dbExtension = extension(DatabaseTestExtension())
 
     lateinit var analyzerRunRepository: DaoAnalyzerRunRepository
@@ -103,14 +110,62 @@ class DaoAnalyzerRunRepositoryTest : StringSpec({
         analyzerRunRepository.create(analyzerJobId, analyzerRunWithEmptyPackage)
         analyzerRunRepository.create(analyzerJobId, analyzerRunWithEmptyPackage)
 
-        dbExtension.db.dbQuery { PackagesTable.selectAll().count() } shouldBe 1
+        dbExtension.db.transaction { PackagesTable.selectAll().count() } shouldBe 1
     }
 
     "create should deduplicate packages with full metadata" {
         analyzerRunRepository.create(analyzerJobId, analyzerRun)
         analyzerRunRepository.create(analyzerJobId, analyzerRun)
 
-        dbExtension.db.dbQuery { PackagesTable.selectAll().count() } shouldBe 1
+        dbExtension.db.transaction { PackagesTable.selectAll().count() } shouldBe 1
+    }
+
+    "create should persist known and unknown publication dates of packages" {
+        val pkgWithDate = createPackage(1).copy(publishedAt = publishedAt)
+        val pkgWithoutDate = createPackage(2)
+
+        val createdAnalyzerRun = analyzerRunRepository.create(
+            analyzerJobId,
+            analyzerRun.copy(packages = setOf(pkgWithDate, pkgWithoutDate))
+        )
+
+        val expectedDates = listOf(pkgWithDate.identifier to publishedAt, pkgWithoutDate.identifier to null)
+
+        analyzerRunRepository.get(createdAnalyzerRun.id)?.packages.orEmpty()
+            .map { it.identifier to it.publishedAt } should containExactlyInAnyOrder(expectedDates)
+
+        dbExtension.db.transaction {
+            PackageDao.all().map { it.mapToModel() }.map { it.identifier to it.publishedAt }
+        } should containExactlyInAnyOrder(expectedDates)
+    }
+
+    "create should deduplicate packages with a publication date beyond database precision" {
+        val publishedAtWithNanos = Instant.parse("2024-05-06T07:08:09.123456789Z")
+        val runWithDatedPackage = analyzerRun.copy(packages = setOf(pkg.copy(publishedAt = publishedAtWithNanos)))
+
+        analyzerRunRepository.create(analyzerJobId, runWithDatedPackage)
+        analyzerRunRepository.create(analyzerJobId, runWithDatedPackage)
+
+        dbExtension.db.transaction {
+            PackagesTable.selectAll().map { it[PackagesTable.publishedAt] }
+        }.shouldBeSingleton { it shouldBe Instant.parse("2024-05-06T07:08:09.123456Z") }
+    }
+
+    "create should not deduplicate packages with different publication dates" {
+        val publicationDates = listOf(publishedAt, publishedAt + 1.microseconds, null)
+
+        val createdRunIds = publicationDates.map { date ->
+            analyzerRunRepository.create(
+                analyzerJobId,
+                analyzerRun.copy(packages = setOf(pkg.copy(publishedAt = date)))
+            ).id
+        }
+
+        dbExtension.db.transaction { PackagesTable.selectAll().count() } shouldBe 3
+
+        createdRunIds.map { id ->
+            analyzerRunRepository.get(id)?.packages?.single()?.publishedAt
+        } shouldBe publicationDates
     }
 
     "create should deduplicate projects with empty metadata" {
@@ -133,19 +188,19 @@ class DaoAnalyzerRunRepositoryTest : StringSpec({
         analyzerRunRepository.create(analyzerJobId, analyzerRunWithEmptyProject)
         analyzerRunRepository.create(analyzerJobId, analyzerRunWithEmptyProject)
 
-        dbExtension.db.dbQuery { ProjectsTable.selectAll().count() } shouldBe 1
+        dbExtension.db.transaction { ProjectsTable.selectAll().count() } shouldBe 1
     }
 
     "create should deduplicate projects with full metadata" {
         analyzerRunRepository.create(analyzerJobId, analyzerRun)
         analyzerRunRepository.create(analyzerJobId, analyzerRun)
 
-        dbExtension.db.dbQuery { ProjectsTable.selectAll().count() } shouldBe 1
+        dbExtension.db.transaction { ProjectsTable.selectAll().count() } shouldBe 1
     }
 
     "create should handle unique constraint violations" {
         val txCount = 64
-        withContext(Dispatchers.IO) {
+        withContext(Dispatchers.Virtual) {
             (1..txCount).map {
                 async {
                     val run = analyzerRun.copy(packages = setOf(createPackage(it)))
@@ -168,7 +223,7 @@ class DaoAnalyzerRunRepositoryTest : StringSpec({
 
         analyzerRunRepository.create(analyzerJobId, analyzerRun, shortestPaths)
 
-        val result = dbExtension.db.dbQuery {
+        val result = dbExtension.db.transaction {
             ShortestDependencyPathsTable
                 .selectAll()
                 .map { ShortestDependencyPathDao.wrapRow(it).mapToModel() }
@@ -189,7 +244,7 @@ class DaoAnalyzerRunRepositoryTest : StringSpec({
             excludedProjectIds = setOf(project.identifier)
         )
 
-        dbExtension.db.dbQuery {
+        dbExtension.db.transaction {
             PackagesAnalyzerRunsTable.selectAll().single()[PackagesAnalyzerRunsTable.excluded] shouldBe true
             ProjectsAnalyzerRunsTable.selectAll().single()[ProjectsAnalyzerRunsTable.excluded] shouldBe true
         }
@@ -203,7 +258,7 @@ class DaoAnalyzerRunRepositoryTest : StringSpec({
             excludedProjectIds = emptySet()
         )
 
-        dbExtension.db.dbQuery {
+        dbExtension.db.transaction {
             PackagesAnalyzerRunsTable.selectAll().single()[PackagesAnalyzerRunsTable.excluded] shouldBe false
             ProjectsAnalyzerRunsTable.selectAll().single()[ProjectsAnalyzerRunsTable.excluded] shouldBe false
         }
@@ -214,7 +269,7 @@ class DaoAnalyzerRunRepositoryTest : StringSpec({
     }
 })
 
-private fun DaoAnalyzerRunRepository.create(
+private suspend fun DaoAnalyzerRunRepository.create(
     analyzerJobId: Long,
     analyzerRun: AnalyzerRun,
     shortestDependencyPaths: Map<Identifier, List<ShortestDependencyPath>> = emptyMap(),
@@ -296,6 +351,8 @@ private val project = Project(
 )
 
 private val pkg = createPackage(1)
+
+private val publishedAt = Instant.parse("2024-05-06T07:08:09.123456Z")
 
 private fun createPackage(index: Int) = Package(
     identifier = Identifier(

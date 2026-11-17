@@ -45,8 +45,10 @@ import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.TextContent
 
 import io.mockk.mockk
 
@@ -73,6 +75,11 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.Jobs
 import org.eclipse.apoapsis.ortserver.api.v1.model.NotifierJobConfiguration
 import org.eclipse.apoapsis.ortserver.api.v1.model.OrtRun
 import org.eclipse.apoapsis.ortserver.api.v1.model.PatchRepository
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathExclude as ApiPathExclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathExcludeReason as ApiPathExcludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathInclude as ApiPathInclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathIncludeReason as ApiPathIncludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.PathIncludesExcludes as ApiPathIncludesExcludes
 import org.eclipse.apoapsis.ortserver.api.v1.model.PluginConfig
 import org.eclipse.apoapsis.ortserver.api.v1.model.PostOrganization
 import org.eclipse.apoapsis.ortserver.api.v1.model.PostRepositoryRun
@@ -81,9 +88,13 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.ReporterJobConfiguration
 import org.eclipse.apoapsis.ortserver.api.v1.model.Repository
 import org.eclipse.apoapsis.ortserver.api.v1.model.RepositoryType as ApiRepositoryType
 import org.eclipse.apoapsis.ortserver.api.v1.model.ScannerJobConfiguration
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeExclude as ApiScopeExclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeExcludeReason as ApiScopeExcludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeInclude as ApiScopeInclude
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeIncludeReason as ApiScopeIncludeReason
+import org.eclipse.apoapsis.ortserver.api.v1.model.ScopeIncludesExcludes as ApiScopeIncludesExcludes
 import org.eclipse.apoapsis.ortserver.api.v1.model.User as ApiUser
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserGroup as ApiUserGroup
-import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithGroups as ApiUserWithGroups
+import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithRepositoryRole as ApiUserWithRepositoryRole
 import org.eclipse.apoapsis.ortserver.api.v1.model.Username
 import org.eclipse.apoapsis.ortserver.components.authorization.api.RepositoryRole as ApiRepositoryRole
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.ProductRole
@@ -94,6 +105,7 @@ import org.eclipse.apoapsis.ortserver.components.authorization.service.DbAuthori
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginOptionTemplate
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginService
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginType
+import org.eclipse.apoapsis.ortserver.config.ConfigFileProviderFactoryForTesting
 import org.eclipse.apoapsis.ortserver.core.SUPERUSER
 import org.eclipse.apoapsis.ortserver.core.TEST_USER
 import org.eclipse.apoapsis.ortserver.model.CompoundHierarchyId
@@ -107,6 +119,13 @@ import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.model.RepositoryType
 import org.eclipse.apoapsis.ortserver.model.SecretSource
 import org.eclipse.apoapsis.ortserver.model.repositories.OrtRunRepository
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathInclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.PathIncludesExcludes
+import org.eclipse.apoapsis.ortserver.model.runs.repository.RunIncludesExcludes
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeExclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeInclude
+import org.eclipse.apoapsis.ortserver.model.runs.repository.ScopeIncludesExcludes
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters.Companion.DEFAULT_LIMIT
 import org.eclipse.apoapsis.ortserver.services.OrganizationService
 import org.eclipse.apoapsis.ortserver.services.ProductService
@@ -119,6 +138,7 @@ import org.eclipse.apoapsis.ortserver.shared.apimodel.SortDirection
 import org.eclipse.apoapsis.ortserver.shared.apimodel.SortProperty
 import org.eclipse.apoapsis.ortserver.shared.apimodel.asPresent
 import org.eclipse.apoapsis.ortserver.shared.apimodel.valueOrThrow
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.shouldHaveBody
 import org.eclipse.apoapsis.ortserver.transport.OrchestratorEndpoint
 import org.eclipse.apoapsis.ortserver.transport.testing.MessageSenderFactoryForTesting
@@ -181,7 +201,7 @@ class RepositoriesRouteIntegrationTest : AbstractIntegrationTest({
         description: String? = repositoryDescription
     ) = productService.createRepository(type, url, prodId, name, description)
 
-    fun createJobSummaries(ortRunId: Long) = dbExtension.fixtures.createJobs(ortRunId).mapToApiSummary()
+    suspend fun createJobSummaries(ortRunId: Long) = dbExtension.fixtures.createJobs(ortRunId).mapToApiSummary()
 
     fun org.eclipse.apoapsis.ortserver.model.Repository.hierarchyId(prodId: Long = productId): CompoundHierarchyId =
         CompoundHierarchyId.forRepository(
@@ -189,6 +209,97 @@ class RepositoriesRouteIntegrationTest : AbstractIntegrationTest({
             ProductId(prodId),
             RepositoryId(id)
         )
+
+    "GET /repositories" should {
+        "return the repositories of all products sorted by URL" {
+            integrationTestApplication {
+                val orgId2 = organizationService.createOrganization(name = "name2", description = "description").id
+                val productId2 =
+                    organizationService.createProduct(name = "name", description = null, organizationId = orgId2).id
+                val repo1 = createRepository(url = "https://example.org/b.git")
+                val repo2 = createRepository(url = "https://example.org/a.git", prodId = productId2, name = null)
+                val repo3 = createRepository(url = "https://example.org/c.git", prodId = productId2)
+
+                val response = superuserClient.get("/api/v1/repositories")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                response shouldHaveBody PagedResponse(
+                    listOf(repo2.mapToApi(), repo1.mapToApi(), repo3.mapToApi()),
+                    PagingData(
+                        limit = DEFAULT_LIMIT,
+                        offset = 0,
+                        totalCount = 3,
+                        sortProperties = listOf(SortProperty("url", SortDirection.ASCENDING))
+                    )
+                )
+            }
+        }
+
+        "apply the limit and offset and return the number of all repositories" {
+            integrationTestApplication {
+                createRepository(url = "https://example.org/a.git")
+                val repo2 = createRepository(url = "https://example.org/b.git")
+                createRepository(url = "https://example.org/c.git")
+
+                val response = superuserClient.get("/api/v1/repositories?limit=1&offset=1")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                response shouldHaveBody PagedResponse(
+                    listOf(repo2.mapToApi()),
+                    PagingData(
+                        limit = 1,
+                        offset = 1,
+                        totalCount = 3,
+                        sortProperties = listOf(SortProperty("url", SortDirection.ASCENDING))
+                    )
+                )
+            }
+        }
+
+        "return only the repositories whose name or URL matches the filter" {
+            integrationTestApplication {
+                val orgId2 = organizationService.createOrganization(name = "name2", description = "description").id
+                val productId2 =
+                    organizationService.createProduct(name = "name", description = null, organizationId = orgId2).id
+                val repo1 = createRepository(url = "https://example.org/web-shop.git", name = null)
+                createRepository(url = "https://example.org/payments.git", name = "Payments")
+                val repo3 = createRepository(url = "https://example.org/admin.git", prodId = productId2, name = "Shop")
+
+                val response = superuserClient.get("/api/v1/repositories?filter=SHOP")
+
+                response shouldHaveStatus HttpStatusCode.OK
+                response shouldHaveBody PagedResponse(
+                    listOf(repo3.mapToApi(), repo1.mapToApi()),
+                    PagingData(
+                        limit = DEFAULT_LIMIT,
+                        offset = 0,
+                        totalCount = 2,
+                        sortProperties = listOf(SortProperty("url", SortDirection.ASCENDING))
+                    )
+                )
+            }
+        }
+
+        "respond with 'Bad Request' if the filter is not a valid regular expression" {
+            integrationTestApplication {
+                createRepository()
+
+                val response = superuserClient.get("/api/v1/repositories?filter=shop(")
+
+                response shouldHaveStatus HttpStatusCode.BadRequest
+
+                val body = response.body<ErrorResponse>()
+                body.message shouldBe "Invalid query parameters."
+                body.cause shouldContain "regular expression"
+            }
+        }
+
+        "require superuser rights" {
+            requestShouldRequireSuperuser {
+                get("/api/v1/repositories")
+            }
+        }
+    }
 
     "GET /repositories/{repositoryId}" should {
         "return a single repository" {
@@ -780,6 +891,113 @@ class RepositoriesRouteIntegrationTest : AbstractIntegrationTest({
             }
         }
 
+        "store the resolved config context" {
+            integrationTestApplication {
+                val createdRepository = createRepository()
+                val jobConfigContext = "testContext"
+
+                val createRun = PostRepositoryRun(
+                    revision = "main",
+                    jobConfigs = ApiJobConfigurations(),
+                    jobConfigContext = jobConfigContext
+                )
+
+                val response = superuserClient.post("/api/v1/repositories/${createdRepository.id}/runs") {
+                    setBody(createRun)
+                }
+
+                response shouldHaveStatus HttpStatusCode.Created
+
+                val run = ortRunRepository.listForRepository(createdRepository.id).data.single()
+                run.jobConfigContext shouldBe jobConfigContext
+                run.resolvedJobConfigContext shouldBe ConfigFileProviderFactoryForTesting.RESOLVED_PREFIX +
+                        jobConfigContext
+            }
+        }
+
+        "store the requested includes and excludes" {
+            integrationTestApplication {
+                val createdRepository = createRepository()
+
+                val createRun = PostRepositoryRun(
+                    revision = "main",
+                    jobConfigs = ApiJobConfigurations(),
+                    paths = ApiPathIncludesExcludes(
+                        includes = listOf(ApiPathInclude("src/**", ApiPathIncludeReason.SOURCE_OF)),
+                        excludes = listOf(ApiPathExclude("docs/**", ApiPathExcludeReason.DOCUMENTATION_OF, "Docs."))
+                    ),
+                    scopes = ApiScopeIncludesExcludes(
+                        includes = listOf(ApiScopeInclude("compile", ApiScopeIncludeReason.SOURCE_OF)),
+                        excludes = listOf(ApiScopeExclude("test.*", ApiScopeExcludeReason.TEST_DEPENDENCY_OF))
+                    )
+                )
+
+                val response = superuserClient.post("/api/v1/repositories/${createdRepository.id}/runs") {
+                    setBody(createRun)
+                }
+
+                response shouldHaveStatus HttpStatusCode.Created
+
+                val run = ortRunRepository.listForRepository(createdRepository.id).data.single()
+                run.includesExcludes shouldBe RunIncludesExcludes(
+                    paths = PathIncludesExcludes(
+                        includes = listOf(PathInclude("src/**", "SOURCE_OF", "")),
+                        excludes = listOf(PathExclude("docs/**", "DOCUMENTATION_OF", "Docs."))
+                    ),
+                    scopes = ScopeIncludesExcludes(
+                        includes = listOf(ScopeInclude("compile", "SOURCE_OF", "")),
+                        excludes = listOf(ScopeExclude("test.*", "TEST_DEPENDENCY_OF", ""))
+                    )
+                )
+            }
+        }
+
+        "respond with BadRequest if an include or exclude has an unknown reason" {
+            integrationTestApplication {
+                val createdRepository = createRepository()
+
+                val response = superuserClient.post("/api/v1/repositories/${createdRepository.id}/runs") {
+                    setBody(
+                        TextContent(
+                            """
+                            {
+                              "revision": "main",
+                              "jobConfigs": {},
+                              "paths": { "excludes": [{ "pattern": "docs/**", "reason": "UNKNOWN_REASON" }] }
+                            }
+                            """.trimIndent(),
+                            ContentType.Application.Json
+                        )
+                    )
+                }
+
+                response shouldHaveStatus HttpStatusCode.BadRequest
+
+                ortRunRepository.listForRepository(createdRepository.id).data should beEmpty()
+            }
+        }
+
+        "respond with BadRequest if the config context cannot be resolved" {
+            integrationTestApplication {
+                val createdRepository = createRepository()
+
+                val createRun = PostRepositoryRun(
+                    revision = "main",
+                    jobConfigs = ApiJobConfigurations(),
+                    jobConfigContext = ConfigFileProviderFactoryForTesting.ERROR_VALUE
+                )
+
+                val response = superuserClient.post("/api/v1/repositories/${createdRepository.id}/runs") {
+                    setBody(createRun)
+                }
+
+                response shouldHaveStatus HttpStatusCode.BadRequest
+                response.body<ErrorResponse>().message shouldBe "Could not resolve the config context."
+
+                ortRunRepository.listForRepository(createdRepository.id).data should beEmpty()
+            }
+        }
+
         "create a new ORT run with default infrastructure services in the environment config" {
             integrationTestApplication {
                 val createdRepository = createRepository()
@@ -877,7 +1095,7 @@ class RepositoriesRouteIntegrationTest : AbstractIntegrationTest({
                 }
 
                 run.jobConfigs.evaluator.shouldNotBeNull {
-                    packageConfigurationProviders.shouldBeSingleton {
+                    packageConfigurationProviders.shouldNotBeNull().shouldBeSingleton {
                         it.type shouldBe "DOS"
                         it.secrets["token"].shouldNotBeNull {
                             name shouldBe "DOS_TOKEN"
@@ -908,7 +1126,7 @@ class RepositoriesRouteIntegrationTest : AbstractIntegrationTest({
                     allowDynamicVersions = true
                 )
 
-                val responses = withContext(Dispatchers.IO) {
+                val responses = withContext(Dispatchers.Virtual) {
                     (1..runCount).map { idx ->
                         async {
                             val createRun = PostRepositoryRun(
@@ -1115,6 +1333,122 @@ class RepositoriesRouteIntegrationTest : AbstractIntegrationTest({
             }
         }
 
+        "respond with 'BadRequest' if plugin configs differ only in the case of the plugin ID" {
+            integrationTestApplication {
+                val repositoryId = createRepository().id
+
+                val installedPlugins = pluginService.getPlugins()
+
+                val pluginType = PluginType.ADVISOR
+                val plugin = installedPlugins.first { it.type == pluginType && it.id == "VulnerableCode" }
+                val pluginId = plugin.id
+                val pluginOption = plugin.options.first { it.name == "serverUrl" }
+
+                // Create a plugin template with a final option.
+                superuserClient.post("/api/v1/admin/plugins/$pluginType/$pluginId/templates/test") {
+                    setBody(
+                        listOf(
+                            PluginOptionTemplate(
+                                option = pluginOption.name,
+                                type = pluginOption.type,
+                                value = "https://example.org",
+                                isFinal = true
+                            )
+                        )
+                    )
+                }
+
+                // Make the plugin template globally active.
+                superuserClient.post("/api/v1/admin/plugins/$pluginType/$pluginId/templates/test/enableGlobal")
+
+                // Create a run trying to overwrite the final option with a differently spelled config key.
+                val createRun = PostRepositoryRun(
+                    "main",
+                    null,
+                    ApiJobConfigurations(
+                        advisor = AdvisorJobConfiguration(
+                            advisors = listOf(pluginId),
+                            config = mapOf(
+                                pluginId to PluginConfig(
+                                    options = mapOf(pluginOption.name to "https://example.org"),
+                                    secrets = emptyMap()
+                                ),
+                                pluginId.lowercase() to PluginConfig(
+                                    options = mapOf(pluginOption.name to "https://new.example.org"),
+                                    secrets = emptyMap()
+                                )
+                            )
+                        )
+                    )
+                )
+
+                val response = superuserClient.post("/api/v1/repositories/$repositoryId/runs") {
+                    setBody(createRun)
+                }
+
+                response shouldHaveStatus HttpStatusCode.BadRequest
+                response.bodyAsText() shouldContain "multiple times with different spellings"
+            }
+        }
+
+        "respond with 'BadRequest' if plugin configs only match ignoring case due to special Unicode characters" {
+            integrationTestApplication {
+                val repositoryId = createRepository().id
+
+                val installedPlugins = pluginService.getPlugins()
+
+                val pluginType = PluginType.ADVISOR
+                val plugin = installedPlugins.first { it.type == pluginType && it.id == "OSV" }
+                val pluginId = plugin.id
+                val pluginOption = plugin.options.first { it.name == "serverUrl" }
+
+                // Create a plugin template with a final option.
+                superuserClient.post("/api/v1/admin/plugins/$pluginType/$pluginId/templates/test") {
+                    setBody(
+                        listOf(
+                            PluginOptionTemplate(
+                                option = pluginOption.name,
+                                type = pluginOption.type,
+                                value = "https://example.org",
+                                isFinal = true
+                            )
+                        )
+                    )
+                }
+
+                // Make the plugin template globally active.
+                superuserClient.post("/api/v1/admin/plugins/$pluginType/$pluginId/templates/test/enableGlobal")
+
+                // Create a run trying to overwrite the final option with a config key using a long s (U+017F).
+                val createRun = PostRepositoryRun(
+                    "main",
+                    null,
+                    ApiJobConfigurations(
+                        advisor = AdvisorJobConfiguration(
+                            advisors = listOf(pluginId),
+                            config = mapOf(
+                                pluginId to PluginConfig(
+                                    options = mapOf(pluginOption.name to "https://example.org"),
+                                    secrets = emptyMap()
+                                ),
+                                pluginId.replace("S", "\u017F") to PluginConfig(
+                                    options = mapOf(pluginOption.name to "https://new.example.org"),
+                                    secrets = emptyMap()
+                                )
+                            )
+                        )
+                    )
+                )
+
+                val response = superuserClient.post("/api/v1/repositories/$repositoryId/runs") {
+                    setBody(createRun)
+                }
+
+                response shouldHaveStatus HttpStatusCode.BadRequest
+                response.bodyAsText() shouldContain "multiple times with different spellings"
+            }
+        }
+
         val keepAliveJobConfigs = ApiJobConfigurations().let {
             listOf(
                 it.copy(
@@ -1182,7 +1516,7 @@ class RepositoriesRouteIntegrationTest : AbstractIntegrationTest({
             row(HttpMethod.Put),
             row(HttpMethod.Delete)
         ) { method ->
-            "require ProductPermission.MANAGE_GROUPS for method '${method.value}'" {
+            "require RepositoryPermission.MANAGE_ROLES for method '${method.value}'" {
                 val createdRepo = createRepository()
                 val user = Username(TEST_USER.username.value)
                 requestShouldRequireRole(
@@ -1386,13 +1720,13 @@ class RepositoriesRouteIntegrationTest : AbstractIntegrationTest({
                 response shouldHaveStatus HttpStatusCode.OK
                 response shouldHaveBody PagedResponse(
                     listOf(
-                        ApiUserWithGroups(
+                        ApiUserWithRepositoryRole(
                             ApiUser(SUPERUSER.username.value, SUPERUSER.firstName, SUPERUSER.lastName, SUPERUSER.email),
-                            listOf(ApiUserGroup.ADMINS)
+                            ApiRepositoryRole.ADMIN
                         ),
-                        ApiUserWithGroups(
+                        ApiUserWithRepositoryRole(
                             ApiUser(TEST_USER.username.value, TEST_USER.firstName, TEST_USER.lastName, TEST_USER.email),
-                            listOf(ApiUserGroup.READERS)
+                            ApiRepositoryRole.READER
                         )
                     ),
                     PagingData(
@@ -1412,7 +1746,7 @@ class RepositoriesRouteIntegrationTest : AbstractIntegrationTest({
                 val response = superuserClient.get("/api/v1/repositories/$repositoryId/users")
 
                 response shouldHaveStatus HttpStatusCode.OK
-                response shouldHaveBody PagedResponse<ApiUserWithGroups>(
+                response shouldHaveBody PagedResponse<ApiUserWithRepositoryRole>(
                     emptyList(),
                     PagingData(
                         limit = DEFAULT_LIMIT,
@@ -1444,9 +1778,9 @@ class RepositoriesRouteIntegrationTest : AbstractIntegrationTest({
                 response shouldHaveStatus HttpStatusCode.OK
                 response shouldHaveBody PagedResponse(
                     listOf(
-                        ApiUserWithGroups(
+                        ApiUserWithRepositoryRole(
                             ApiUser(TEST_USER.username.value, TEST_USER.firstName, TEST_USER.lastName, TEST_USER.email),
-                            listOf(ApiUserGroup.READERS)
+                            ApiRepositoryRole.READER
                         )
                     ),
                     PagingData(

@@ -21,7 +21,8 @@ package org.eclipse.apoapsis.ortserver.dao.test
 
 import kotlin.time.Clock
 
-import org.eclipse.apoapsis.ortserver.dao.blockingQuery
+import kotlinx.coroutines.runBlocking
+
 import org.eclipse.apoapsis.ortserver.dao.repositories.advisorjob.DaoAdvisorJobRepository
 import org.eclipse.apoapsis.ortserver.dao.repositories.advisorrun.DaoAdvisorRunRepository
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerjob.DaoAnalyzerJobRepository
@@ -40,8 +41,8 @@ import org.eclipse.apoapsis.ortserver.dao.repositories.repositoryconfiguration.D
 import org.eclipse.apoapsis.ortserver.dao.repositories.resolvedconfiguration.DaoResolvedConfigurationRepository
 import org.eclipse.apoapsis.ortserver.dao.repositories.scannerjob.DaoScannerJobRepository
 import org.eclipse.apoapsis.ortserver.dao.repositories.scannerrun.DaoScannerRunRepository
-import org.eclipse.apoapsis.ortserver.dao.repositories.secret.DaoSecretRepository
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.IdentifierDao
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.AdvisorJobConfiguration
 import org.eclipse.apoapsis.ortserver.model.AnalyzerJobConfiguration
 import org.eclipse.apoapsis.ortserver.model.EvaluatorJobConfiguration
@@ -70,7 +71,10 @@ import org.eclipse.apoapsis.ortserver.model.runs.VcsInfo
 import org.eclipse.apoapsis.ortserver.model.runs.advisor.AdvisorConfiguration
 import org.eclipse.apoapsis.ortserver.model.runs.advisor.AdvisorResult
 
+import org.jetbrains.exposed.v1.core.InternalApi
 import org.jetbrains.exposed.v1.jdbc.Database
+import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
+import org.jetbrains.exposed.v1.jdbc.withTransactionContext
 
 /**
  * A helper class to manage test fixtures. It provides default instances as well as helper functions to create custom
@@ -95,19 +99,18 @@ class Fixtures(private val db: Database) {
     val resolvedConfigurationRepository = DaoResolvedConfigurationRepository(db)
     val scannerJobRepository = DaoScannerJobRepository(db)
     val scannerRunRepository = DaoScannerRunRepository(db)
-    val secretRepository = DaoSecretRepository(db)
 
-    val organization by lazy { createOrganization() }
-    val product by lazy { createProduct() }
-    val repository by lazy { createRepository() }
-    val ortRun by lazy { createOrtRun() }
-    val analyzerJob by lazy { createAnalyzerJob() }
-    val advisorJob by lazy { createAdvisorJob() }
-    val scannerJob by lazy { createScannerJob() }
-    val evaluatorJob by lazy { createEvaluatorJob() }
-    val reporterJob by lazy { createReporterJob() }
-    val notifierJob by lazy { createNotifierJob() }
-    val identifier by lazy { createIdentifier() }
+    val organization by blockingLazy { createOrganization() }
+    val product by blockingLazy { createProduct() }
+    val repository by blockingLazy { createRepository() }
+    val ortRun by blockingLazy { createOrtRun() }
+    val analyzerJob by blockingLazy { createAnalyzerJob() }
+    val advisorJob by blockingLazy { createAdvisorJob() }
+    val scannerJob by blockingLazy { createScannerJob() }
+    val evaluatorJob by blockingLazy { createEvaluatorJob() }
+    val reporterJob by blockingLazy { createReporterJob() }
+    val notifierJob by blockingLazy { createNotifierJob() }
+    val identifier by blockingLazy { createIdentifier() }
     val ruleViolation by lazy { getViolation() }
 
     val jobConfigurations = JobConfigurations(
@@ -127,16 +130,16 @@ class Fixtures(private val db: Database) {
         )
     )
 
-    fun createOrganization(name: String = "name", description: String = "description") =
+    suspend fun createOrganization(name: String = "name", description: String = "description") =
         organizationRepository.create(name, description)
 
-    fun createProduct(
+    suspend fun createProduct(
         name: String = "name",
         description: String = "description",
         organizationId: Long = organization.id
     ) = productRepository.create(name, description, organizationId)
 
-    fun createRepository(
+    suspend fun createRepository(
         type: RepositoryType = RepositoryType.GIT,
         url: String = "https://example.com/repo.git",
         productId: Long = product.id,
@@ -144,12 +147,13 @@ class Fixtures(private val db: Database) {
         description: String? = "description"
     ) = repositoryRepository.create(type, url, productId, name = name, description = description)
 
-    fun createOrtRun(
+    suspend fun createOrtRun(
         repositoryId: Long = repository.id,
         revision: String = "revision",
         jobConfigurations: JobConfigurations = this.jobConfigurations,
         jobConfigContext: String? = null,
-        labels: Map<String, String> = mapOf("label key" to "label value")
+        labels: Map<String, String> = mapOf("label key" to "label value"),
+        resolvedJobConfigContext: String? = null
     ) = ortRunRepository.create(
         repositoryId,
         revision,
@@ -158,40 +162,41 @@ class Fixtures(private val db: Database) {
         jobConfigContext,
         labels,
         traceId = "trace-this-run0",
-        environmentConfigPath = "path/to/env.yml"
+        environmentConfigPath = "path/to/env.yml",
+        resolvedJobConfigContext = resolvedJobConfigContext
     )
 
-    fun createAnalyzerJob(
+    suspend fun createAnalyzerJob(
         ortRunId: Long = ortRun.id,
         configuration: AnalyzerJobConfiguration = jobConfigurations.analyzer
     ) = analyzerJobRepository.create(ortRunId, configuration)
 
-    fun createAdvisorJob(
+    suspend fun createAdvisorJob(
         ortRunId: Long = ortRun.id,
         configuration: AdvisorJobConfiguration = checkNotNull(jobConfigurations.advisor)
     ) = advisorJobRepository.create(ortRunId, configuration)
 
-    fun createScannerJob(
+    suspend fun createScannerJob(
         ortRunId: Long = ortRun.id,
         configuration: ScannerJobConfiguration = checkNotNull(jobConfigurations.scanner)
     ) = scannerJobRepository.create(ortRunId, configuration)
 
-    fun createEvaluatorJob(
+    suspend fun createEvaluatorJob(
         ortRunId: Long = ortRun.id,
         configuration: EvaluatorJobConfiguration = checkNotNull(jobConfigurations.evaluator)
     ) = evaluatorJobRepository.create(ortRunId, configuration)
 
-    fun createReporterJob(
+    suspend fun createReporterJob(
         ortRunId: Long = ortRun.id,
         configuration: ReporterJobConfiguration = checkNotNull(jobConfigurations.reporter)
     ) = reporterJobRepository.create(ortRunId, configuration)
 
-    fun createNotifierJob(
+    suspend fun createNotifierJob(
         ortRunId: Long = ortRun.id,
         configuration: NotifierJobConfiguration = checkNotNull(jobConfigurations.notifier)
     ) = notifierJobRepository.create(ortRunId, configuration)
 
-    fun createJobs(ortRunId: Long): Jobs {
+    suspend fun createJobs(ortRunId: Long): Jobs {
         val analyzerJob = createAnalyzerJob(ortRunId)
         val advisorJob = createAdvisorJob(ortRunId)
         val scannerJob = createScannerJob(ortRunId)
@@ -201,9 +206,9 @@ class Fixtures(private val db: Database) {
         return Jobs(analyzerJob, advisorJob, scannerJob, evaluatorJob, reporterJob, notifierJob)
     }
 
-    fun createAnalyzerRunWithPackages(
+    suspend fun createAnalyzerRunWithPackages(
         packages: Set<Package>,
-        repositoryId: Long = createRepository().id,
+        repositoryId: Long,
         projects: Set<Project> = emptySet(),
         shortestPaths: Map<Identifier, List<ShortestDependencyPath>> = emptyMap()
     ): OrtRun {
@@ -228,14 +233,14 @@ class Fixtures(private val db: Database) {
         return ortRun
     }
 
-    fun createIdentifier(
+    suspend fun createIdentifier(
         identifier: Identifier = Identifier(
             "identifier_type",
             "identifier_namespace",
             "identifier_package",
             "identifier_version"
         )
-    ): Identifier = db.blockingQuery {
+    ): Identifier = db.transaction {
         IdentifierDao.getOrPut(identifier).mapToModel()
     }
 
@@ -267,7 +272,7 @@ class Fixtures(private val db: Database) {
             scopeNames = setOf("compileClasspath", "runtimeClasspath")
         )
 
-    fun createAnalyzerRun(
+    suspend fun createAnalyzerRun(
         analyzerJobId: Long = analyzerJob.id,
         projects: Set<Project> = emptySet(),
         packages: Set<Package> = emptySet(),
@@ -300,7 +305,7 @@ class Fixtures(private val db: Database) {
         shortestDependencyPaths = shortestDependencyPaths
     )
 
-    fun createAdvisorRun(
+    suspend fun createAdvisorRun(
         advisorJobId: Long = advisorJob.id,
         results: Map<Identifier, List<AdvisorResult>>
     ) = advisorRunRepository.create(
@@ -376,4 +381,22 @@ class Fixtures(private val db: Database) {
         isMetadataOnly = false,
         isModified = false
     )
+}
+
+/**
+ * Create a [Lazy] delegate whose value is computed by the suspending [initializer] while preserving the transaction
+ * context of the current thread. This allows to access the lazily initialized properties of `Fixtures` from within a
+ * transaction in test code.
+ */
+@OptIn(InternalApi::class)
+private fun <T> blockingLazy(initializer: suspend () -> T): Lazy<T> = lazy {
+    val outerTransaction = TransactionManager.currentOrNull()
+
+    runBlocking {
+        if (outerTransaction != null) {
+            withTransactionContext(outerTransaction) { initializer() }
+        } else {
+            initializer()
+        }
+    }
 }

@@ -26,6 +26,7 @@ import org.eclipse.apoapsis.ortserver.dao.Query
 
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.lowerCase
 import org.jetbrains.exposed.v1.jdbc.andWhere
 import org.jetbrains.exposed.v1.jdbc.selectAll
 
@@ -34,16 +35,7 @@ internal class GetPluginTemplatesQuery(val pluginType: PluginType, val pluginId:
         PluginTemplatesReadModel
             .selectAll()
             .where { PluginTemplatesReadModel.pluginType eq pluginType }
-            .andWhere { PluginTemplatesReadModel.pluginId eq pluginId }
+            .andWhere { PluginTemplatesReadModel.pluginId.lowerCase() eq pluginId.lowercase() }
             .orderBy(PluginTemplatesReadModel.name, order = SortOrder.ASC)
-            .map {
-                PluginTemplate(
-                    name = it[PluginTemplatesReadModel.name],
-                    pluginType = it[PluginTemplatesReadModel.pluginType],
-                    pluginId = it[PluginTemplatesReadModel.pluginId],
-                    options = it[PluginTemplatesReadModel.pluginOptions],
-                    isGlobal = it[PluginTemplatesReadModel.isGlobal],
-                    organizationIds = it[PluginTemplatesReadModel.organizationIds]
-                )
-            }
+            .map { it.toPluginTemplate() }
 }

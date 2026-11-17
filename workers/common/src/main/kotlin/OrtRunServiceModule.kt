@@ -19,6 +19,7 @@
 
 package org.eclipse.apoapsis.ortserver.workers.common
 
+import org.eclipse.apoapsis.ortserver.components.reportstorage.reportStorageModule
 import org.eclipse.apoapsis.ortserver.dao.repositories.advisorjob.DaoAdvisorJobRepository
 import org.eclipse.apoapsis.ortserver.dao.repositories.advisorrun.DaoAdvisorRunRepository
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerjob.DaoAnalyzerJobRepository
@@ -51,7 +52,6 @@ import org.eclipse.apoapsis.ortserver.model.repositories.RepositoryRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.ResolvedConfigurationRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.ScannerJobRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.ScannerRunRepository
-import org.eclipse.apoapsis.ortserver.services.ReportStorageService
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrtRunService
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrtServerFileListStorage
 import org.eclipse.apoapsis.ortserver.storage.Storage
@@ -65,10 +65,10 @@ import org.ossreviewtoolkit.model.config.DownloaderConfiguration
 import org.ossreviewtoolkit.scanner.provenance.DefaultProvenanceDownloader
 import org.ossreviewtoolkit.scanner.utils.FileListResolver
 
-/**
- * Return a module with bean definitions for the [OrtRunService] and the repositories it depends on.
- */
+/** Return a module with bean definitions for the [OrtRunService] and the repositories it depends on. */
 fun ortRunServiceModule(): Module = module {
+    includes(reportStorageModule)
+
     single<AdvisorJobRepository> { DaoAdvisorJobRepository(get()) }
     single<AdvisorRunRepository> { DaoAdvisorRunRepository(get()) }
     single<AnalyzerJobRepository> { DaoAnalyzerJobRepository(get()) }
@@ -87,16 +87,11 @@ fun ortRunServiceModule(): Module = module {
     single<ScannerRunRepository> { DaoScannerRunRepository(get()) }
 
     single {
-        val storage = Storage.create(OrtServerFileListStorage.STORAGE_TYPE, get())
+        val storage = Storage.create(OrtServerFileListStorage.STORAGE_TYPE, get(), get())
         FileListResolver(
             OrtServerFileListStorage(storage),
             DefaultProvenanceDownloader(DownloaderConfiguration(), DefaultWorkingTreeCache())
         )
-    }
-
-    single {
-        val storage = Storage.create("reportStorage", get())
-        ReportStorageService(storage, get())
     }
 
     singleOf(::OrtRunService)

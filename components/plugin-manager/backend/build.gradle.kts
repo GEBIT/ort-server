@@ -40,15 +40,17 @@ repositories {
 }
 
 dependencies {
+    api(projects.components.adminConfig.adminConfigBackend)
     api(projects.components.pluginManager.pluginManagerApiModel)
     api(projects.model)
 
     implementation(projects.dao)
 
+    api(libs.kotlinResult)
+
     implementation(libs.exposed.core)
     implementation(libs.exposed.json)
     implementation(libs.exposed.kotlinDatetime)
-    implementation(libs.kotlinResult)
     implementation(ortLibs.analyzer)
     implementation(ortLibs.ortPlugins.advisors.api)
     implementation(ortLibs.ortPlugins.packageConfigurationProviders.api)
@@ -56,12 +58,22 @@ dependencies {
     implementation(ortLibs.reporter)
     implementation(ortLibs.scanner)
 
+    // Add all ORT plugins as runtime dependencies so that the plugin manager can discover them.
+    runtimeOnly(projects.shared.reporters)
+    runtimeOnly(platform(ortLibs.ortPlugins.advisors))
+    runtimeOnly(platform(ortLibs.ortPlugins.packageConfigurationProviders))
+    runtimeOnly(platform(ortLibs.ortPlugins.packageCurationProviders))
+    runtimeOnly(platform(ortLibs.ortPlugins.packageManagers))
+    runtimeOnly(platform(ortLibs.ortPlugins.reporters))
+    runtimeOnly(platform(ortLibs.ortPlugins.scanners))
+
     routesImplementation(projects.components.authorization.authorizationBackend)
     routesImplementation(projects.shared.ktorUtils)
 
     routesImplementation(ktorLibs.server.core)
     routesImplementation(libs.ktor.openApi)
 
+    testImplementation(testFixtures(projects.config.configSpi))
     testImplementation(testFixtures(projects.dao))
     testImplementation(testFixtures(projects.shared.ktorUtils))
 

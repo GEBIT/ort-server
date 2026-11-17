@@ -22,7 +22,7 @@ package org.eclipse.apoapsis.ortserver.workers.advisor
 import org.eclipse.apoapsis.ortserver.components.adminconfig.AdminConfigService
 import org.eclipse.apoapsis.ortserver.components.resolutions.issues.IssueResolutionService
 import org.eclipse.apoapsis.ortserver.components.resolutions.vulnerabilities.VulnerabilityResolutionService
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.RepositoryId
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrtRunService
 import org.eclipse.apoapsis.ortserver.services.ortrun.mapToModel
@@ -110,7 +110,7 @@ internal class AdvisorWorker(
                 vulnerabilities = allVulnerabilities
             )
 
-            db.dbQuery {
+            db.transaction {
                 getValidAdvisorJob(jobId)
                 ortRunService.storeAdvisorRun(advisorRun.mapToModel(jobId))
                 ortRunService.storeResolvedItems(job.ortRunId, resolvedItems)
@@ -143,17 +143,17 @@ internal class AdvisorWorker(
     }.getOrElse {
         when (it) {
             is JobIgnoredException -> {
-                logger.warn("Message with traceId '$traceId' ignored: ${it.message}")
+                logger.warn("Not running the advisor because message '$traceId' got ignored: ${it.message}")
                 RunResult.Ignored
             }
 
             else -> {
-                logger.error("Error while processing message with traceId '$traceId': ${it.message}")
+                logger.error("Error while running the advisor as instructed by message '$traceId': ${it.message}")
                 RunResult.Failed(it)
             }
         }
     }
 
-    private fun getValidAdvisorJob(jobId: Long) =
+    private suspend fun getValidAdvisorJob(jobId: Long) =
         ortRunService.getAdvisorJob(jobId).validateForProcessing(jobId)
 }

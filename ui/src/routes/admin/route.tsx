@@ -20,10 +20,13 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router';
 import {
   Blocks,
+  Building2,
   Eye,
   FilePen,
-  KeyRound,
+  FolderGit2,
+  ListChecks,
   ListVideo,
+  Package,
   Palette,
   User,
 } from 'lucide-react';
@@ -57,17 +60,32 @@ const Layout = () => {
       ],
     },
     {
+      label: 'Hierarchy',
+      items: [
+        {
+          title: 'All Organizations',
+          to: '/organizations',
+          icon: () => <Building2 className='h-4 w-4' />,
+        },
+        {
+          title: 'All Products',
+          to: '/admin/products',
+          icon: () => <Package className='h-4 w-4' />,
+        },
+        {
+          title: 'All Repositories',
+          to: '/admin/repositories',
+          icon: () => <FolderGit2 className='h-4 w-4' />,
+        },
+      ],
+    },
+    {
       label: 'User Management',
       items: [
         {
           title: 'Users',
           to: '/admin/users',
           icon: () => <User className='h-4 w-4' />,
-        },
-        {
-          title: 'Authorization',
-          to: '/admin/users/authorization',
-          icon: () => <KeyRound className='h-4 w-4' />,
         },
       ],
     },
@@ -78,6 +96,11 @@ const Layout = () => {
           title: 'Installed Plugins',
           to: '/admin/plugins',
           icon: () => <Blocks className='h-4 w-4' />,
+        },
+        {
+          title: 'Default Plugins',
+          to: '/admin/plugins/defaults',
+          icon: () => <ListChecks className='h-4 w-4' />,
         },
       ],
     },

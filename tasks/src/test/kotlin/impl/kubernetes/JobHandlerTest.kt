@@ -19,6 +19,8 @@
 
 package org.eclipse.apoapsis.ortserver.tasks.impl.kubernetes
 
+import io.kotest.assertions.throwables.shouldNotThrowAny
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.WordSpec
 import io.kotest.inspectors.forAll
 import io.kotest.matchers.collections.containExactlyInAnyOrder
@@ -26,6 +28,7 @@ import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
+import io.kubernetes.client.openapi.ApiException
 import io.kubernetes.client.openapi.apis.BatchV1Api
 import io.kubernetes.client.openapi.apis.CoreV1Api
 import io.kubernetes.client.openapi.models.V1ContainerState
@@ -39,6 +42,7 @@ import io.kubernetes.client.openapi.models.V1ObjectMeta
 import io.kubernetes.client.openapi.models.V1Pod
 import io.kubernetes.client.openapi.models.V1PodList
 import io.kubernetes.client.openapi.models.V1PodStatus
+import io.kubernetes.client.openapi.models.V1Status
 
 import io.mockk.every
 import io.mockk.just
@@ -48,6 +52,7 @@ import io.mockk.slot
 import io.mockk.verify
 
 import java.io.IOException
+import java.net.HttpURLConnection
 import java.time.Month
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
@@ -77,8 +82,8 @@ class JobHandlerTest : WordSpec({
 
             coreApi.mockPodList(jobName, podNames.map(::createPod))
 
-            every { coreApi.deleteNamespacedPod(any(), any()) } returns null
-            every { jobApi.deleteNamespacedJob(any(), any()) } returns null
+            coreApi.mockPodDeletion()
+            jobApi.mockJobDeletion()
 
             val handler = createJobHandler(jobApi, coreApi)
 
@@ -121,7 +126,9 @@ class JobHandlerTest : WordSpec({
 
             val handler = createJobHandler(jobApi, coreApi)
 
-            handler.deleteAndNotifyIfFailed(job)
+            shouldThrow<IllegalStateException> {
+                handler.deleteAndNotifyIfFailed(job)
+            }
 
             verify {
                 podNames.forAll {
@@ -129,6 +136,26 @@ class JobHandlerTest : WordSpec({
                 }
 
                 jobApi.deleteNamespacedJob(jobName, NAMESPACE)
+            }
+        }
+
+        "treat a job and pods that do not exist anymore as deleted" {
+            val podNames = listOf("pod1", "pod2")
+            val jobName = "jobAlreadyGone"
+
+            val coreApi = mockk<CoreV1Api>()
+            val jobApi = mockk<BatchV1Api>()
+
+            coreApi.mockPodList(jobName, podNames.map(::createPod))
+
+            val notFound = ApiException(HttpURLConnection.HTTP_NOT_FOUND, "Not Found")
+            every { coreApi.deleteNamespacedPod(any(), any()) } throws notFound
+            every { jobApi.deleteNamespacedJob(any(), any()) } throws notFound
+
+            val handler = createJobHandler(jobApi, coreApi)
+
+            shouldNotThrowAny {
+                handler.deleteJob(jobName)
             }
         }
 
@@ -142,8 +169,8 @@ class JobHandlerTest : WordSpec({
 
             coreApi.mockPodList(jobName, podNames.map(::createPod))
 
-            every { coreApi.deleteNamespacedPod(any(), any()) } returns null
-            every { jobApi.deleteNamespacedJob(any(), any()) } returns null
+            coreApi.mockPodDeletion()
+            jobApi.mockJobDeletion()
 
             val notifier = mockk<FailedJobNotifier> {
                 every { sendFailedJobNotification(job.job) } just runs
@@ -175,7 +202,9 @@ class JobHandlerTest : WordSpec({
             val jobApi = mockk<BatchV1Api>()
             val handler = createJobHandler(jobApi = jobApi, notifier = notifier)
 
-            handler.deleteAndNotifyIfFailed(job)
+            shouldThrow<IllegalStateException> {
+                handler.deleteAndNotifyIfFailed(job)
+            }
 
             verify(exactly = 0) {
                 jobApi.deleteNamespacedJob(any(), any())
@@ -191,7 +220,8 @@ class JobHandlerTest : WordSpec({
 
             coreApi.mockPodList(jobName, emptyList())
 
-            every { coreApi.deleteNamespacedPod(any(), any()) } returns null
+            coreApi.mockPodDeletion()
+            jobApi.mockJobDeletion()
 
             val notifier = mockk<FailedJobNotifier> {
                 every { sendFailedJobNotification(job.job) } just runs
@@ -224,7 +254,8 @@ class JobHandlerTest : WordSpec({
             )
             coreApi.mockPodLists(jobsToList)
 
-            every { coreApi.deleteNamespacedPod(any(), any()) } returns null
+            coreApi.mockPodDeletion()
+            jobApi.mockJobDeletion()
 
             val notifier = mockk<FailedJobNotifier> {
                 every { sendFailedJobNotification(job.job) } just runs
@@ -514,9 +545,7 @@ class JobHandlerTest : WordSpec({
     }
 })
 
-/**
- * Create a [JobHandler] instance with default dependencies that can be overridden if needed.
- */
+/** Create a [JobHandler] instance with default dependencies that can be overridden if needed. */
 private fun createJobHandler(
     jobApi: BatchV1Api = mockk(),
     api: CoreV1Api = mockk(),
@@ -525,48 +554,52 @@ private fun createJobHandler(
 ): JobHandler =
     JobHandler(jobApi, api, notifier, createMonitorConfig(recentlyProcessedInterval))
 
-/**
- * Create a [MonitorConfig] with default values and the given [processedInterval].
- */
+/** Create a [MonitorConfig] with default values and the given [processedInterval]. */
 private fun createMonitorConfig(processedInterval: Duration): MonitorConfig =
     mockk {
         every { namespace } returns NAMESPACE
         every { recentlyProcessedInterval } returns processedInterval
     }
 
-/**
- * Create a [V1Job] with the given [name] and [status].
- */
+/** Create a [V1Job] with the given [name] and [status]. */
 private fun createJob(name: String, status: V1JobStatus = V1JobStatus()): V1Job =
     V1Job().apply {
         metadata = createMetadata(name)
         status(status)
     }
 
-/**
- * Create a [JobData] object containing a [V1Job] with the given [name], and the given [failed] flag.
- */
+/** Create a [JobData] object containing a [V1Job] with the given [name], and the given [failed] flag. */
 private fun createJobData(name: String, failed: Boolean = false): JobData =
     JobData(
         job = createJob(name),
         failed = failed
     )
 
-/**
- * Create a [V1Job] object with the given [name].
- */
+/** Create a [V1Job] object with the given [name]. */
 private fun createPod(name: String): V1Pod =
     V1Pod().apply {
         metadata = createMetadata(name)
     }
 
-/**
- * Create a [V1ObjectMeta] object with the given [name].
- */
+/** Create a [V1ObjectMeta] object with the given [name]. */
 private fun createMetadata(name: String): V1ObjectMeta =
     V1ObjectMeta().apply {
         name(name)
     }
+
+/** Prepare this mock to delete any job successfully. */
+private fun BatchV1Api.mockJobDeletion() {
+    every { deleteNamespacedJob(any(), any()) } returns mockk {
+        every { execute() } returns V1Status()
+    }
+}
+
+/** Prepare this mock to delete any pod successfully. */
+private fun CoreV1Api.mockPodDeletion() {
+    every { deleteNamespacedPod(any(), any()) } returns mockk {
+        every { execute() } returns V1Pod()
+    }
+}
 
 /**
  * Prepare this API mock to expect a list operation for the pods of the job with the given [jobName]. The operation

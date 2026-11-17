@@ -27,9 +27,11 @@ group = "org.eclipse.apoapsis.ortserver.services"
 
 dependencies {
     api(projects.api.v1.apiV1Model)
+    api(projects.components.projections.projectionsBackend)
+    api(projects.components.reportStorage.reportStorageBackend)
     api(projects.components.resolutions.resolutionsBackend)
     api(projects.model)
-    api(projects.services.reportStorageService)
+    api(projects.shared.apiModel)
 
     api(ortLibs.model)
     api(ortLibs.scanner)
@@ -38,7 +40,7 @@ dependencies {
     implementation(projects.dao)
     implementation(projects.services.hierarchyService)
     implementation(projects.shared.apiMappings)
-    implementation(projects.shared.apiModel)
+    implementation(projects.shared.coroutines)
     implementation(projects.utils.logging)
 
     implementation(ortLibs.utils.common)

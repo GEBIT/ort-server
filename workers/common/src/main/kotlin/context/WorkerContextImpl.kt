@@ -25,10 +25,14 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentMap
 import java.util.concurrent.atomic.AtomicReference
 
+import kotlin.coroutines.cancellation.CancellationException
+
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
@@ -44,14 +48,16 @@ import org.eclipse.apoapsis.ortserver.model.Secret
 import org.eclipse.apoapsis.ortserver.model.SecretSource
 import org.eclipse.apoapsis.ortserver.model.repositories.OrtRunRepository
 import org.eclipse.apoapsis.ortserver.model.repositories.RepositoryRepository
-import org.eclipse.apoapsis.ortserver.workers.common.ResolvedInfrastructureService
-import org.eclipse.apoapsis.ortserver.workers.common.auth.AuthenticationInfo
-import org.eclipse.apoapsis.ortserver.workers.common.auth.AuthenticationListener
-import org.eclipse.apoapsis.ortserver.workers.common.auth.OrtServerAuthenticator
-import org.eclipse.apoapsis.ortserver.workers.common.auth.SecretResolverFun
-import org.eclipse.apoapsis.ortserver.workers.common.auth.infraSecretResolverFromConfig
-import org.eclipse.apoapsis.ortserver.workers.common.auth.secretResolver
-import org.eclipse.apoapsis.ortserver.workers.common.auth.undefinedSecretResolver
+import org.eclipse.apoapsis.ortserver.shared.authenticator.AuthenticationInfo
+import org.eclipse.apoapsis.ortserver.shared.authenticator.AuthenticationListener
+import org.eclipse.apoapsis.ortserver.shared.authenticator.OrtServerAuthenticator
+import org.eclipse.apoapsis.ortserver.shared.authenticator.ResolvedInfrastructureService
+import org.eclipse.apoapsis.ortserver.shared.authenticator.SecretResolverFun
+import org.eclipse.apoapsis.ortserver.shared.authenticator.infraSecretResolverFromConfig
+import org.eclipse.apoapsis.ortserver.shared.authenticator.secretResolver
+import org.eclipse.apoapsis.ortserver.shared.authenticator.undefinedSecretResolver
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
+import org.eclipse.apoapsis.ortserver.utils.logging.runBlocking
 
 import org.ossreviewtoolkit.utils.authentication.OrtAuthenticator
 import org.ossreviewtoolkit.utils.common.safeDeleteRecursively
@@ -61,9 +67,7 @@ import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger(WorkerContextImpl::class.java)
 
-/**
- * The internal default implementation of the [WorkerContext] interface.
- */
+/** The internal default implementation of the [WorkerContext] interface. */
 internal class WorkerContextImpl(
     /** The object allowing access to the application configuration. */
     override val configManager: ConfigManager,
@@ -95,9 +99,7 @@ internal class WorkerContextImpl(
      */
     private val tempDirectories = Collections.newSetFromMap(ConcurrentHashMap<File, Boolean>())
 
-    /**
-     * The authenticator to be used for all requests during the lifetime of this context.
-     */
+    /** The authenticator to be used for all requests during the lifetime of this context. */
     private val authenticator = OrtServerAuthenticator.install(infraSecretResolverFromConfig(configManager))
 
     /**
@@ -107,16 +109,22 @@ internal class WorkerContextImpl(
     private val refSecretResolverFun = AtomicReference(undefinedSecretResolver)
 
     override val ortRun: OrtRun by lazy {
-        requireNotNull(ortRunRepository.get(ortRunId)) { "Could not resolve ORT run ID $ortRunId" }
+        checkNotNull(runBlocking { ortRunRepository.get(ortRunId) }) { "Could not resolve ORT run ID $ortRunId" }
     }
 
     override val hierarchy: Hierarchy by lazy {
-        repositoryRepository.getHierarchy(ortRun.repositoryId)
+        runBlocking { repositoryRepository.getHierarchy(ortRun.repositoryId) }
     }
 
-    private val hierarchySecrets by lazy {
-        secretService.listForHierarchy(hierarchy).associateBy { it.name }
-    }
+    private val hierarchySecretsMutex = Mutex()
+    private var cachedHierarchySecrets: Map<String, Secret>? = null
+
+    private suspend fun getHierarchySecrets(): Map<String, Secret> =
+        cachedHierarchySecrets ?: hierarchySecretsMutex.withLock {
+            cachedHierarchySecrets ?: secretService.listForHierarchy(hierarchy).associateBy { it.name }.also {
+                cachedHierarchySecrets = it
+            }
+        }
 
     override val secretResolverFun: SecretResolverFun
         get() = { secret ->
@@ -148,7 +156,7 @@ internal class WorkerContextImpl(
             }
             val userSecrets = c.values.flatMap { pluginConfig ->
                 pluginConfig.secrets.values.filter { it.source == SecretSource.USER }.map {
-                    hierarchySecrets[it.name]
+                    getHierarchySecrets()[it.name]
                         ?: error("Could not find secret '${it.name}' in hierarchy '${hierarchy.compoundId}'.")
                 }
             }
@@ -170,7 +178,7 @@ internal class WorkerContextImpl(
             }
             val userSecrets = c.flatMap { providerPluginConfig ->
                 providerPluginConfig.secrets.values.filter { it.source == SecretSource.USER }.map {
-                    hierarchySecrets[it.name]
+                    getHierarchySecrets()[it.name]
                         ?: error("Could not find secret '${it.name}' in hierarchy '${hierarchy.compoundId}'.")
                 }
             }
@@ -253,7 +261,7 @@ internal class WorkerContextImpl(
     private suspend fun <T, K, V> singleTransform(
         data: T,
         cache: ConcurrentMap<K, Deferred<V>>,
-        transform: (K) -> V,
+        transform: suspend (K) -> V,
         keyExtract: (T) -> K
     ): V =
         transformAsync(data, cache, transform, keyExtract).await()
@@ -268,7 +276,7 @@ internal class WorkerContextImpl(
     private suspend fun <T, K, V> parallelTransform(
         data: Collection<T>,
         cache: ConcurrentMap<K, Deferred<V>>,
-        transform: (K) -> V,
+        transform: suspend (K) -> V,
         keyExtract: (T) -> K
     ): Map<T, V> {
         val results = data.map { transformAsync(it, cache, transform, keyExtract) }.awaitAll()
@@ -284,23 +292,19 @@ internal class WorkerContextImpl(
     private suspend fun <T, K, V> transformAsync(
         data: T,
         cache: ConcurrentMap<K, Deferred<V>>,
-        transform: (K) -> V,
+        transform: suspend (K) -> V,
         keyExtract: (T) -> K
     ): Deferred<V> =
-        withContext(Dispatchers.IO) {
+        withContext(Dispatchers.Virtual) {
             val key = keyExtract(data)
             cache.getOrPut(key) { async { transform(key) } }
         }
 
-    /**
-     * Resolve the value of the provided [secret] using the [secretService].
-     */
-    private fun resolveSecretValue(secret: Secret): String =
+    /** Resolve the value of the provided [secret] using the [secretService]. */
+    private suspend fun resolveSecretValue(secret: Secret): String =
         secretService.getSecretValue(secret)?.value ?: error("Could not resolve secret at path '${secret.path}'")
 
-    /**
-     * Resolve the given [secret] from the configuration manager.
-     */
+    /** Resolve the given [secret] from the configuration manager. */
     private fun resolveConfigSecret(secret: String): String =
         configManager.getSecret(ConfigPath(secret))
 
@@ -308,11 +312,13 @@ internal class WorkerContextImpl(
      * Return a function to download configuration files from the current [Context] into the given [directory],
      * optionally using the given [targetName].
      */
-    private fun downloadConfigFile(directory: File, targetName: String?): (String) -> Result<File> =
+    private fun downloadConfigFile(directory: File, targetName: String?): suspend (String) -> Result<File> =
         { key ->
             runCatching {
                 val path = ConfigPath(key.substringBefore('|'))
                 configManager.downloadFile(currentContext, path, directory, targetName)
+            }.onFailure {
+                if (it is CancellationException) throw it
             }
         }
 }

@@ -29,17 +29,18 @@ import org.eclipse.apoapsis.ortserver.components.authorization.routes.requireSup
 import org.eclipse.apoapsis.ortserver.components.serversettings.ServerSetting
 import org.eclipse.apoapsis.ortserver.components.serversettings.ServerSettingKey
 import org.eclipse.apoapsis.ortserver.components.serversettings.ServerSettingsTable
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.jsonBody
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.respondError
 
 import org.jetbrains.exposed.v1.jdbc.Database
-import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 
 internal fun Route.setServerSettingByKey(db: Database) = post("settings/server/{key}", {
-    operationId = "SetServerSettingByKey"
+    operationId = "setServerSettingByKey"
     summary = "Set the server setting for the provided key"
-    description = "Set the value and isEnabled properties for a server setting key."
+    description = "Set the value and isEnabled properties for a server setting key. If the value is null, the " +
+            "default value of the setting is stored."
     tags = listOf("Settings")
 
     request {
@@ -65,7 +66,7 @@ internal fun Route.setServerSettingByKey(db: Database) = post("settings/server/{
         }
 
         HttpStatusCode.BadRequest to {
-            description = "The server setting key is invalid."
+            description = "The server setting key or the request body is invalid."
         }
     }
 }, requireSuperuser()) {
@@ -84,7 +85,7 @@ internal fun Route.setServerSettingByKey(db: Database) = post("settings/server/{
 
     val serverSetting = call.receive<ServerSetting>()
 
-    transaction(db) {
+    db.transaction {
         ServerSettingsTable.insertOrUpdate(
             key = key,
             value = serverSetting.value,

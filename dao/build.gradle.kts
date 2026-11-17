@@ -36,6 +36,7 @@ dependencies {
     api(projects.config.configSpi)
     api(projects.model)
 
+    implementation(projects.shared.coroutines)
     implementation(projects.utils.config)
     implementation(projects.utils.system)
 
@@ -69,11 +70,10 @@ dependencies {
     testFixturesImplementation(projects.config.configSpi)
     testFixturesImplementation(projects.utils.test)
 
-    testFixturesImplementation(libs.flyway.core)
     testFixturesImplementation(libs.hikari)
     testFixturesImplementation(libs.koin.test)
-    testFixturesImplementation(libs.kotest.extensions.testcontainers)
     testFixturesImplementation(libs.kotest.runner.junit5)
+    testFixturesImplementation(libs.kotlinx.coroutines)
     testFixturesImplementation(libs.mockk)
     testFixturesImplementation(libs.testContainers)
     testFixturesImplementation(libs.testContainers.postgresql)

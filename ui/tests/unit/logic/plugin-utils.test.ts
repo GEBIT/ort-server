@@ -19,7 +19,7 @@
 
 import { expect, it } from 'vitest';
 
-import { ADMIN_SECRET_VALUE } from '@/components/form/plugin-multi-select-field-utils';
+import { ADMIN_SECRET_VALUE } from '@/components/form/plugin-multi-select-field';
 import {
   createPluginPayload,
   createProviderPluginPayload,
@@ -42,7 +42,9 @@ it('createPluginPayload omits blank secret values from the payload', () => {
         },
       },
     },
-    ['SCANOSS']
+    ['SCANOSS'],
+    [],
+    'SCANNER'
   );
 
   expect(payload).toEqual({
@@ -53,6 +55,108 @@ it('createPluginPayload omits blank secret values from the payload', () => {
       secrets: {},
     },
   });
+});
+
+it('createPluginPayload omits options that equal their plugin defaults', () => {
+  const plugin = createPluginDescriptor({
+    id: 'TestPlugin',
+    options: [
+      {
+        name: 'enabled',
+        description: 'Whether the plugin is enabled.',
+        type: 'BOOLEAN',
+        defaultValue: 'true',
+        isFixed: false,
+        isNullable: false,
+        isRequired: false,
+      },
+      {
+        name: 'labels',
+        description: 'Labels to apply.',
+        type: 'STRING_LIST',
+        defaultValue: 'first, second',
+        isFixed: false,
+        isNullable: false,
+        isRequired: false,
+      },
+      {
+        name: 'serverUrl',
+        description: 'The server URL.',
+        type: 'STRING',
+        defaultValue: 'https://default.example',
+        isFixed: false,
+        isNullable: false,
+        isRequired: false,
+      },
+      {
+        name: 'timeout',
+        description: 'The timeout.',
+        type: 'INTEGER',
+        defaultValue: null,
+        isFixed: false,
+        isNullable: true,
+        isRequired: false,
+      },
+    ],
+  });
+
+  const payload = createPluginPayload(
+    {
+      TestPlugin: {
+        options: {
+          enabled: true,
+          labels: ['first', 'second'],
+          serverUrl: 'https://custom.example',
+          timeout: '30',
+        },
+        secrets: {},
+      },
+    },
+    ['TestPlugin'],
+    [plugin],
+    'SCANNER'
+  );
+
+  expect(payload).toEqual({
+    TestPlugin: {
+      options: {
+        serverUrl: 'https://custom.example',
+        timeout: '30',
+      },
+      secrets: {},
+    },
+  });
+});
+
+it('createPluginPayload omits plugin configurations containing only default values', () => {
+  const plugin = createPluginDescriptor({
+    id: 'TestPlugin',
+    options: [
+      {
+        name: 'enabled',
+        description: 'Whether the plugin is enabled.',
+        type: 'BOOLEAN',
+        defaultValue: 'false',
+        isFixed: false,
+        isNullable: false,
+        isRequired: false,
+      },
+    ],
+  });
+
+  const payload = createPluginPayload(
+    {
+      TestPlugin: {
+        options: { enabled: false },
+        secrets: {},
+      },
+    },
+    ['TestPlugin'],
+    [plugin],
+    'SCANNER'
+  );
+
+  expect(payload).toBeUndefined();
 });
 
 it('createProviderPluginPayload creates provider configurations for selected plugins', () => {
@@ -73,7 +177,9 @@ it('createProviderPluginPayload creates provider configurations for selected plu
         secrets: {},
       },
     },
-    ['ClearlyDefined']
+    ['ClearlyDefined'],
+    [],
+    'PACKAGE_CURATION_PROVIDER'
   );
 
   expect(payload).toEqual([
@@ -142,15 +248,12 @@ it('createPluginPayload omits admin-provided secret placeholders from the payloa
         },
       },
     },
-    ['SCANOSS']
+    ['SCANOSS'],
+    [],
+    'SCANNER'
   );
 
-  expect(payload).toEqual({
-    SCANOSS: {
-      options: {},
-      secrets: {},
-    },
-  });
+  expect(payload).toBeUndefined();
 });
 
 it('providerPluginConfigsToFormValues reconstructs selected providers and config', () => {
@@ -211,6 +314,103 @@ it('reconstructScannerSelection rebuilds scanner scopes for rerun values', () =>
     scannerScopes: {
       SCANOSS: 'both',
     },
+  });
+});
+
+it('reconstructScannerSelection keeps an empty list of project scanners', () => {
+  const defaults = {
+    scanners: ['ScanCode'],
+    scannerScopes: {
+      ScanCode: 'both' as const,
+    },
+  };
+
+  const result = reconstructScannerSelection(['ScanCode'], [], defaults);
+
+  expect(result).toEqual({
+    scanners: ['ScanCode'],
+    scannerScopes: {
+      ScanCode: 'packages',
+    },
+  });
+});
+
+it('reconstructScannerSelection uses the default package scanners if scanners are not set', () => {
+  const defaults = {
+    scanners: ['ScanCode', 'SCANOSS'],
+    scannerScopes: {
+      ScanCode: 'packages' as const,
+      SCANOSS: 'projects' as const,
+    },
+  };
+
+  const result = reconstructScannerSelection(null, ['FossID'], defaults);
+
+  expect(result).toEqual({
+    scanners: ['ScanCode', 'FossID'],
+    scannerScopes: {
+      ScanCode: 'packages',
+      FossID: 'projects',
+    },
+  });
+});
+
+it('mergePluginConfigs converts rerun options to form value types', () => {
+  const plugins = [
+    createPluginDescriptor({
+      id: 'Bazel',
+      type: 'PACKAGE_MANAGER',
+      options: [
+        {
+          name: 'useConan2',
+          description: 'Use Conan 2.',
+          type: 'BOOLEAN',
+          defaultValue: 'true',
+          isFixed: false,
+          isNullable: false,
+          isRequired: false,
+        },
+        {
+          name: 'bazelDependenciesOnly',
+          description: 'Only scan Bazel dependencies.',
+          type: 'BOOLEAN',
+          defaultValue: 'false',
+          isFixed: false,
+          isNullable: false,
+          isRequired: false,
+        },
+        {
+          name: 'enabledFeatures',
+          description: 'Enabled Bazel features.',
+          type: 'STRING_LIST',
+          defaultValue: '',
+          isFixed: false,
+          isNullable: false,
+          isRequired: false,
+        },
+      ],
+    }),
+  ];
+
+  const merged = mergePluginConfigs(
+    {
+      Bazel: {
+        options: {
+          useConan2: 'false',
+          bazelDependenciesOnly: 'true',
+          enabledFeatures: 'feature-a, feature-b',
+        },
+        secrets: {},
+      },
+    },
+    getPluginDefaultValues(plugins),
+    plugins
+  );
+
+  expect(merged.Bazel?.options).toEqual({
+    useConan2: false,
+    bazelDependenciesOnly: true,
+    enabledFeatures: ['feature-a', 'feature-b'],
   });
 });
 

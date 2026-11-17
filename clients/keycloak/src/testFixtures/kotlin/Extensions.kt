@@ -122,8 +122,28 @@ fun KeycloakContainer.createCliConfigMapForTestRealm() =
     )
 
 /**
- * Create an audience mapper that adds the provided [audience] to the access token.
+ * The name of the built-in client scope that adds the Admin REST API to the audience of access tokens. Since Keycloak
+ * 26.8.2, the Admin REST API rejects tokens that were not issued with this scope.
  */
+const val ADMIN_API_CLIENT_SCOPE = "kc-admin-api"
+
+/**
+ * Add the [ADMIN_API_CLIENT_SCOPE] to the default client scopes of the clients with the given [clientIds] in the given
+ * [realmName], so that they can access the Admin REST API. Clients that do not exist in the realm are ignored.
+ */
+fun Keycloak.setUpAdminApiAccess(realmName: String, clientIds: Collection<String>) {
+    realm(realmName).apply {
+        val clientScope = clientScopes().findAll().single { it.name == ADMIN_API_CLIENT_SCOPE }
+
+        clientIds.forEach { clientId ->
+            clients().findByClientId(clientId).singleOrNull()?.let { client ->
+                clients().get(client.id).addDefaultClientScope(clientScope.id)
+            }
+        }
+    }
+}
+
+/** Create an audience mapper that adds the provided [audience] to the access token. */
 private fun audienceMapper(audience: String) = ProtocolMapperRepresentation().apply {
     name = "audience-mapper"
     protocol = "openid-connect"
@@ -158,16 +178,12 @@ fun Keycloak.setUpClientScope(audience: String) {
     }
 }
 
-/**
- * Create a [user] with the provided [password].
- */
+/** Create a [user] with the provided [password]. */
 fun Keycloak.setUpUser(user: User, password: String) {
     realm(TEST_REALM).users().create(user.toUserRepresentation(password = password))
 }
 
-/**
- * Create the provided [roles] in the [TEST_CLIENT] and assign them to the provided [username].
- */
+/** Create the provided [roles] in the [TEST_CLIENT] and assign them to the provided [username]. */
 fun Keycloak.setUpUserRoles(username: String, roles: List<String>) {
     realm(TEST_REALM).apply {
         val client = clients().findByClientId(TEST_CLIENT).single()

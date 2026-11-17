@@ -25,35 +25,44 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.route
 
+import org.eclipse.apoapsis.ortserver.api.v1.mapping.mapIncludesExcludesToModel
 import org.eclipse.apoapsis.ortserver.api.v1.mapping.mapToApi
 import org.eclipse.apoapsis.ortserver.api.v1.mapping.mapToModel
 import org.eclipse.apoapsis.ortserver.api.v1.model.Jobs
 import org.eclipse.apoapsis.ortserver.api.v1.model.PatchRepository
 import org.eclipse.apoapsis.ortserver.api.v1.model.PostRepositoryRun
+import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithRepositoryRole
 import org.eclipse.apoapsis.ortserver.api.v1.model.Username
 import org.eclipse.apoapsis.ortserver.components.authorization.api.RepositoryRole
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.HierarchyPermissions
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.PermissionChecker
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.ProductPermission
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.RepositoryPermission
+import org.eclipse.apoapsis.ortserver.components.authorization.rights.RepositoryRole as ModelRepositoryRole
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.AuthorizationException
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.OrtServerPrincipal.Companion.requirePrincipal
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.delete
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.get
+import org.eclipse.apoapsis.ortserver.components.authorization.routes.mapToApi
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.mapToModel
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.ortServerPrincipal
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.patch
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.post
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.put
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.requirePermission
+import org.eclipse.apoapsis.ortserver.components.authorization.routes.requireSuperuser
 import org.eclipse.apoapsis.ortserver.components.authorization.service.AuthorizationService
 import org.eclipse.apoapsis.ortserver.components.authorization.service.UserService
 import org.eclipse.apoapsis.ortserver.components.pluginmanager.PluginTemplateService
-import org.eclipse.apoapsis.ortserver.core.api.UserWithGroupsHelper.mapToApi
-import org.eclipse.apoapsis.ortserver.core.api.UserWithGroupsHelper.sortAndPage
+import org.eclipse.apoapsis.ortserver.config.ConfigException
+import org.eclipse.apoapsis.ortserver.config.ConfigManager
+import org.eclipse.apoapsis.ortserver.config.RequestedConfigContext
+import org.eclipse.apoapsis.ortserver.core.api.UserWithRoleHelper.mapToApi
+import org.eclipse.apoapsis.ortserver.core.api.UserWithRoleHelper.sortAndPage
 import org.eclipse.apoapsis.ortserver.core.apiDocs.deleteRepository
 import org.eclipse.apoapsis.ortserver.core.apiDocs.deleteRepositoryRoleFromUser
 import org.eclipse.apoapsis.ortserver.core.apiDocs.deleteRepositoryRun
+import org.eclipse.apoapsis.ortserver.core.apiDocs.getRepositories
 import org.eclipse.apoapsis.ortserver.core.apiDocs.getRepository
 import org.eclipse.apoapsis.ortserver.core.apiDocs.getRepositoryRun
 import org.eclipse.apoapsis.ortserver.core.apiDocs.getRepositoryRuns
@@ -62,14 +71,16 @@ import org.eclipse.apoapsis.ortserver.core.apiDocs.patchRepository
 import org.eclipse.apoapsis.ortserver.core.apiDocs.postRepositoryRun
 import org.eclipse.apoapsis.ortserver.core.apiDocs.putRepositoryRoleToUser
 import org.eclipse.apoapsis.ortserver.core.services.OrchestratorService
+import org.eclipse.apoapsis.ortserver.core.utils.getAmbiguousPluginConfigErrors
 import org.eclipse.apoapsis.ortserver.core.utils.getPluginConfigs
 import org.eclipse.apoapsis.ortserver.core.utils.hasKeepAliveWorkerFlag
 import org.eclipse.apoapsis.ortserver.model.HierarchyId
 import org.eclipse.apoapsis.ortserver.model.HierarchyLevel
 import org.eclipse.apoapsis.ortserver.model.OrganizationId
 import org.eclipse.apoapsis.ortserver.model.ProductId
+import org.eclipse.apoapsis.ortserver.model.Repository
 import org.eclipse.apoapsis.ortserver.model.RepositoryId
-import org.eclipse.apoapsis.ortserver.model.UserDisplayName
+import org.eclipse.apoapsis.ortserver.model.User
 import org.eclipse.apoapsis.ortserver.services.RepositoryService
 import org.eclipse.apoapsis.ortserver.services.ortrun.OrtRunService
 import org.eclipse.apoapsis.ortserver.shared.apimappings.mapToApi
@@ -77,6 +88,7 @@ import org.eclipse.apoapsis.ortserver.shared.apimappings.mapToModel
 import org.eclipse.apoapsis.ortserver.shared.apimodel.PagedResponse
 import org.eclipse.apoapsis.ortserver.shared.apimodel.SortDirection
 import org.eclipse.apoapsis.ortserver.shared.apimodel.SortProperty
+import org.eclipse.apoapsis.ortserver.shared.ktorutils.filterParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.pagingOptions
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireEnumParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
@@ -85,9 +97,26 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.respondError
 
 import org.koin.ktor.ext.inject
 
+import org.ossreviewtoolkit.utils.common.collectMessages
+
+/** The route that lists the repositories of all products. The routes for a single repository are in [repositories]. */
+fun Route.allRepositories() = route("repositories") {
+    val repositoryService by inject<RepositoryService>()
+
+    get(getRepositories, requireSuperuser()) {
+        val pagingOptions = call.pagingOptions(SortProperty("url", SortDirection.ASCENDING))
+        val filter = call.filterParameter("filter")
+
+        val repositories = repositoryService.listRepositories(pagingOptions.mapToModel(), filter?.mapToModel())
+
+        call.respond(HttpStatusCode.OK, repositories.mapToApi(Repository::mapToApi))
+    }
+}
+
 @Suppress("LongMethod")
 fun Route.repositories() = route("repositories/{repositoryId}") {
     val authorizationService by inject<AuthorizationService>()
+    val configManager by inject<ConfigManager>()
     val orchestratorService by inject<OrchestratorService>()
     val ortRunService by inject<OrtRunService>()
     val pluginTemplateService by inject<PluginTemplateService>()
@@ -109,7 +138,10 @@ fun Route.repositories() = route("repositories/{repositoryId}") {
         updateRepository.productId.ifPresent { newProductId = it }
 
         suspend fun checkAdditionalPermission(elementId: HierarchyId, checker: PermissionChecker) {
-            if (authorizationService.checkPermissions(requirePrincipal().username, elementId, checker) == null) {
+            val principal = requirePrincipal()
+            val effectiveRole =
+                authorizationService.checkPermissions(principal.username, elementId, checker, principal.userId)
+            if (effectiveRole == null) {
                 throw AuthorizationException()
             }
         }
@@ -163,7 +195,32 @@ fun Route.repositories() = route("repositories/{repositoryId}") {
 
                 // Extract the user information from the principal.
                 val userDisplayName = call.ortServerPrincipal.let { principal ->
-                    UserDisplayName(principal.userId, principal.username, principal.fullName)
+                    User(principal.userId, principal.username, principal.fullName)
+                }
+
+                // Resolve the config context now, so that the configuration of the run cannot change later.
+                val resolvedJobConfigContext = try {
+                    configManager.resolveContext(
+                        createOrtRun.jobConfigContext?.let(::RequestedConfigContext) ?: RequestedConfigContext.EMPTY
+                    )
+                } catch (e: ConfigException) {
+                    call.respondError(
+                        HttpStatusCode.BadRequest,
+                        message = "Could not resolve the config context.",
+                        cause = e.collectMessages()
+                    )
+                    return@post
+                }
+
+                // Reject ambiguous plugin configurations, as they could be used to bypass the validation.
+                val ambiguousPluginConfigErrors = createOrtRun.getAmbiguousPluginConfigErrors()
+                if (ambiguousPluginConfigErrors.isNotEmpty()) {
+                    call.respondError(
+                        HttpStatusCode.BadRequest,
+                        message = "Invalid plugin configuration.",
+                        cause = ambiguousPluginConfigErrors.joinToString(separator = "\n")
+                    )
+                    return@post
                 }
 
                 // Validate the plugin configuration.
@@ -171,7 +228,8 @@ fun Route.repositories() = route("repositories/{repositoryId}") {
                     pluginConfigs = createOrtRun.getPluginConfigs().mapValues { (_, pluginConfigs) ->
                         pluginConfigs.mapValues { (_, pluginConfig) -> pluginConfig.mapToModel() }
                     },
-                    organizationId = OrganizationId(it.organizationId)
+                    organizationId = OrganizationId(it.organizationId),
+                    context = resolvedJobConfigContext
                 )
 
                 if (!validationResult.isValid) {
@@ -202,7 +260,9 @@ fun Route.repositories() = route("repositories/{repositoryId}") {
                         createOrtRun.jobConfigContext,
                         createOrtRun.labels,
                         createOrtRun.environmentConfigPath,
-                        userDisplayName
+                        userDisplayName,
+                        resolvedJobConfigContext.name,
+                        createOrtRun.mapIncludesExcludesToModel()
                     ).mapToApi(Jobs())
                 )
             } ?: call.respond(HttpStatusCode.NotFound)
@@ -234,7 +294,7 @@ fun Route.repositories() = route("repositories/{repositoryId}") {
 
     route("roles") {
         route("{role}") {
-            put(putRepositoryRoleToUser, requirePermission(RepositoryPermission.MANAGE_GROUPS)) {
+            put(putRepositoryRoleToUser, requirePermission(RepositoryPermission.MANAGE_ROLES)) {
                 val user = call.receive<Username>()
                 val repositoryId = call.requireIdParameter("repositoryId")
                 val role = call.requireEnumParameter<RepositoryRole>("role").mapToModel()
@@ -244,16 +304,22 @@ fun Route.repositories() = route("repositories/{repositoryId}") {
                     return@put
                 }
 
-                if (!userService.userExists(user.username)) {
+                val userSub = userService.findUserId(user.username)
+                if (userSub == null) {
                     call.respondError(HttpStatusCode.NotFound, "Could not find user '${user.username}'.")
                     return@put
                 }
 
-                authorizationService.assignRole(user.username, role, call.ortServerPrincipal.effectiveRole.elementId)
+                authorizationService.assignRole(
+                    user.username,
+                    role,
+                    call.ortServerPrincipal.effectiveRole.elementId,
+                    userSub
+                )
                 call.respond(HttpStatusCode.NoContent)
             }
 
-            delete(deleteRepositoryRoleFromUser, requirePermission(RepositoryPermission.MANAGE_GROUPS)) {
+            delete(deleteRepositoryRoleFromUser, requirePermission(RepositoryPermission.MANAGE_ROLES)) {
                 val repositoryId = call.requireIdParameter("repositoryId")
                 call.requireEnumParameter<RepositoryRole>("role")
                 val username = call.requireParameter("username")
@@ -279,10 +345,15 @@ fun Route.repositories() = route("repositories/{repositoryId}") {
             val pagingOptions = call.pagingOptions(SortProperty("username", SortDirection.ASCENDING))
 
             val users = authorizationService.listUsers(call.ortServerPrincipal.effectiveRole.elementId)
-                .mapToApi(userService) { it.assignedAt.level == HierarchyLevel.REPOSITORY }
+                .mapToApi(userService, { it.assignedAt.level == HierarchyLevel.REPOSITORY }) { user, role ->
+                    UserWithRepositoryRole(user, (role as ModelRepositoryRole).mapToApi())
+                }
 
             call.respond(
-                PagedResponse(users.sortAndPage(pagingOptions), pagingOptions.toPagingData(users.size.toLong()))
+                PagedResponse(
+                    users.sortAndPage(pagingOptions, { it.user }, { it.role }),
+                    pagingOptions.toPagingData(users.size.toLong())
+                )
             )
         }
     }

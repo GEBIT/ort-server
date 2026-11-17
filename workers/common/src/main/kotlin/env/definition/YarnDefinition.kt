@@ -20,7 +20,7 @@
 package org.eclipse.apoapsis.ortserver.workers.common.env.definition
 
 import org.eclipse.apoapsis.ortserver.model.CredentialsType
-import org.eclipse.apoapsis.ortserver.workers.common.ResolvedInfrastructureService
+import org.eclipse.apoapsis.ortserver.shared.authenticator.ResolvedInfrastructureService
 
 /**
  * A specific [EnvironmentServiceDefinition] class for generating the Yarn _.yarnrc.yml_ file with configuration
@@ -39,9 +39,7 @@ class YarnDefinition(
      */
     val alwaysAuth: Boolean = true,
 
-    /**
-     * Defines the way authentication should be handled for this private registry.
-     */
+    /** Defines the way authentication should be handled for this private registry. */
     val authMode: YarnAuthMode = YarnAuthMode.AUTH_TOKEN
 ) : EnvironmentServiceDefinition(service, credentialsTypes)
 

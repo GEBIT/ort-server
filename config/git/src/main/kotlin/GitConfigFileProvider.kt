@@ -32,15 +32,25 @@ import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 import kotlin.time.measureTime
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 import org.eclipse.apoapsis.ortserver.config.ConfigException
 import org.eclipse.apoapsis.ortserver.config.ConfigFileProvider
 import org.eclipse.apoapsis.ortserver.config.Path
 import org.eclipse.apoapsis.ortserver.config.RequestedConfigContext
 import org.eclipse.apoapsis.ortserver.config.ResolvedConfigContext
 import org.eclipse.apoapsis.ortserver.config.resolveSecurely
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
+import org.eclipse.apoapsis.ortserver.shared.coroutines.withContextClosingOnCancel
 import org.eclipse.apoapsis.ortserver.utils.config.getLongOrDefault
 import org.eclipse.apoapsis.ortserver.utils.config.getServiceUrl
+import org.eclipse.jgit.api.Git as JGit
+import org.eclipse.jgit.lib.Constants
+import org.eclipse.jgit.lib.ObjectId
+import org.eclipse.jgit.revwalk.RevWalk
 
+import org.ossreviewtoolkit.downloader.VersionControlSystem
 import org.ossreviewtoolkit.model.VcsInfo
 import org.ossreviewtoolkit.model.VcsType
 import org.ossreviewtoolkit.plugins.versioncontrolsystems.git.GitFactory
@@ -57,12 +67,11 @@ class GitConfigFileProvider internal constructor(
     private val gitUrl: String,
     private val configDir: File,
     internal val revisionCacheTtl: Duration = DEFAULT_REVISION_CACHE_TTL_SECONDS,
-    private val timeSource: TimeSource = TimeSource.Monotonic
+    private val timeSource: TimeSource = TimeSource.Monotonic,
+    private val git: VersionControlSystem = GitFactory.create(historyDepth = 1)
 ) : ConfigFileProvider {
     companion object {
-        /**
-         * Configuration property for the Git URL.
-         */
+        /** Configuration property for the Git URL. */
         const val GIT_URL = "gitUrl"
 
         /**
@@ -79,9 +88,7 @@ class GitConfigFileProvider internal constructor(
 
         private val logger = LoggerFactory.getLogger(GitConfigFileProvider::class.java)
 
-        /**
-         * Create a new instance of [GitConfigFileProvider] that is initialized based on the given [config].
-         */
+        /** Create a new instance of [GitConfigFileProvider] that is initialized based on the given [config]. */
         fun create(config: Config): GitConfigFileProvider {
             val gitUrl = config.getServiceUrl(GIT_URL)
             val revisionCacheTtl = config.getLongOrDefault(
@@ -94,8 +101,6 @@ class GitConfigFileProvider internal constructor(
             return GitConfigFileProvider(gitUrl, createOrtTempDir(), revisionCacheTtl)
         }
     }
-
-    private val git = GitFactory.create(historyDepth = 1)
 
     /**
      * A lock guarding all access to the working tree in [configDir]. A single provider instance can be accessed
@@ -123,85 +128,105 @@ class GitConfigFileProvider internal constructor(
         override fun removeEldestEntry(eldest: Map.Entry<String, CachedRevision>) = size > MAX_REVISION_CACHE_SIZE
     }
 
-    override fun resolveContext(context: RequestedConfigContext): ResolvedConfigContext = synchronized(lock) {
-        val requestedRevision = context.name
+    override suspend fun resolveContext(context: RequestedConfigContext): ResolvedConfigContext =
+        withContext(Dispatchers.Virtual) {
+            synchronized(lock) {
+                val requestedRevision = context.name
 
-        val cached = revisionCache[requestedRevision]
+                val cached = revisionCache[requestedRevision]
 
-        val resolvedRevision = if (cached != null && cached.expiresAt.hasNotPassedNow()) {
-            logger.debug("Using cached revision '{}' for context '{}'.", cached.revision, requestedRevision)
-            cached.revision
-        } else {
-            resolveRevision(requestedRevision).also {
-                logger.debug("Resolved revision '{}' for context '{}'.", it, requestedRevision)
-                revisionCache[requestedRevision] = CachedRevision(it, timeSource.markNow() + revisionCacheTtl)
+                val resolvedRevision = if (cached != null && cached.expiresAt.hasNotPassedNow()) {
+                    logger.debug("Using cached revision '{}' for context '{}'.", cached.revision, requestedRevision)
+                    cached.revision
+                } else {
+                    resolveRevision(requestedRevision).also {
+                        logger.debug("Resolved revision '{}' for context '{}'.", it, requestedRevision)
+                        revisionCache[requestedRevision] = CachedRevision(it, timeSource.markNow() + revisionCacheTtl)
+                    }
+                }
+
+                ResolvedConfigContext(resolvedRevision)
             }
         }
-
-        ResolvedConfigContext(resolvedRevision)
-    }
 
     /** Resolve the given [requestedRevision] to a concrete revision by updating the working tree. */
     internal fun resolveRevision(requestedRevision: String): String =
         synchronized(lock) { updateWorkingTree(requestedRevision) }
 
-    override fun getFile(context: ResolvedConfigContext, path: Path): InputStream =
-        synchronized(lock) {
-            runCatching {
-                updateWorkingTree(context.name)
-
-                // Copy the file to a temporary location while holding the lock, so that reading the returned stream is
-                // not affected by a concurrent update of the working tree.
-                val sourceFile = configDir.resolveSecurely(path)
-                val tempFile = File.createTempFile("config", null, snapshotDir)
-
+    override suspend fun getFile(context: ResolvedConfigContext, path: Path): InputStream =
+        withContextClosingOnCancel(Dispatchers.Virtual) {
+            synchronized(lock) {
                 runCatching {
-                    sourceFile.inputStream().use { input ->
-                        tempFile.outputStream().use { output -> input.copyTo(output) }
-                    }
+                    updateWorkingTree(context.name, allowLocalCheckout = true)
 
-                    DeleteOnCloseInputStream(tempFile)
-                }.onFailure {
-                    tempFile.delete()
-                }.getOrThrow()
-            }.getOrElse {
-                throw ConfigException("Cannot read path '${path.path}'.", it)
+                    // Copy the file to a temporary location while holding the lock, so that reading the returned stream
+                    // is not affected by a concurrent update of the working tree.
+                    val sourceFile = configDir.resolveSecurely(path)
+                    val tempFile = File.createTempFile("config", null, snapshotDir)
+
+                    runCatching {
+                        sourceFile.inputStream().use { input ->
+                            tempFile.outputStream().use { output -> input.copyTo(output) }
+                        }
+
+                        DeleteOnCloseInputStream(tempFile)
+                    }.onFailure {
+                        tempFile.delete()
+                    }.getOrThrow()
+                }.getOrElse {
+                    throw ConfigException("Cannot read path '${path.path}'.", it)
+                }
             }
         }
 
-    override fun contains(context: ResolvedConfigContext, path: Path): Boolean = synchronized(lock) {
-        updateWorkingTree(context.name)
-        val p = configDir.resolveSecurely(path)
-        val isDirectoryPath = path.path.endsWith("/")
+    override suspend fun contains(context: ResolvedConfigContext, path: Path): Boolean =
+        withContext(Dispatchers.Virtual) {
+            synchronized(lock) {
+                updateWorkingTree(context.name, allowLocalCheckout = true)
+                val p = configDir.resolveSecurely(path)
+                val isDirectoryPath = path.path.endsWith("/")
 
-        (!isDirectoryPath && p.isFile) || (isDirectoryPath && p.isDirectory)
-    }
-
-    override fun listFiles(context: ResolvedConfigContext, path: Path): Set<Path> = synchronized(lock) {
-        updateWorkingTree(context.name)
-
-        val dir = configDir.resolveSecurely(path)
-
-        if (!dir.isDirectory) {
-            throw ConfigException("The provided path '${path.path}' does not refer to a directory.")
+                (!isDirectoryPath && p.isFile) || (isDirectoryPath && p.isDirectory)
+            }
         }
 
-        dir.walk().maxDepth(1).filter { it.isFile }
-            .mapTo(mutableSetOf()) { Path(it.relativeTo(configDir).path) }
-    }
+    override suspend fun listFiles(context: ResolvedConfigContext, path: Path): Set<Path> =
+        withContext(Dispatchers.Virtual) {
+            synchronized(lock) {
+                updateWorkingTree(context.name, allowLocalCheckout = true)
+
+                val dir = configDir.resolveSecurely(path)
+
+                if (!dir.isDirectory) {
+                    throw ConfigException("The provided path '${path.path}' does not refer to a directory.")
+                }
+
+                dir.walk().maxDepth(1).filter { it.isFile }
+                    .mapTo(mutableSetOf()) { Path(it.relativeTo(configDir).path) }
+            }
+        }
 
     /**
      * Update the working tree to the [requestedRevision]. If the [configDir] does not contain a ".git" subdirectory,
      * the working tree is initialized first. The resolved revision is returned.
      *
+     * If [allowLocalCheckout] is true, the function will first try to check out the requested revision from the local
+     * object database, which avoids accessing the remote repository.
+     *
      * This function must not be called concurrently, all callers must make sure to synchronize against [lock].
      */
-    private fun updateWorkingTree(requestedRevision: String): String {
+    private fun updateWorkingTree(requestedRevision: String, allowLocalCheckout: Boolean = false): String {
+        var accessedRemote = false
+
         try {
-            val revisionToCheckout = requestedRevision.ifBlank { git.getDefaultBranchName(gitUrl) }
+            val revisionToCheckout = requestedRevision.ifBlank {
+                accessedRemote = true
+                git.getDefaultBranchName(gitUrl).getOrThrow()
+            }
             val workingTree = git.getWorkingTree(configDir)
 
             if (!workingTree.isValid()) {
+                accessedRemote = true
                 val vcsInfo = VcsInfo(VcsType.GIT, gitUrl, revisionToCheckout)
 
                 measureTime { git.initWorkingTree(configDir, vcsInfo) }.also {
@@ -212,18 +237,46 @@ class GitConfigFileProvider internal constructor(
             // Check if the requested revision was already checked out.
             if (workingTree.getRevision() == revisionToCheckout) return revisionToCheckout
 
-            // Update the working tree to the requested revision.
             measureTime {
-                git.updateWorkingTree(workingTree, revisionToCheckout, recursive = true).getOrThrow()
+                val checkedOutLocally = allowLocalCheckout && checkoutRevisionLocally(revisionToCheckout)
+
+                if (!checkedOutLocally) {
+                    accessedRemote = true
+                    git.updateWorkingTree(workingTree, revisionToCheckout).getOrThrow()
+                }
             }.also {
                 logger.debug("Updated Git working tree to revision '$revisionToCheckout' in $it.")
             }
 
             return workingTree.getRevision()
         } finally {
-            clearHttpAuthCache()
+            if (accessedRemote) clearHttpAuthCache()
         }
     }
+
+    /**
+     * Check out [revision] from the local object database and return `true` if the checkout was successful, otherwise
+     * return `false`. Only full object IDs are accepted as [revision] to avoid resolving a stale local branch or tag.
+     */
+    internal fun checkoutRevisionLocally(revision: String): Boolean =
+        ObjectId.isId(revision) && runCatching {
+            JGit.open(configDir).use { jGit ->
+                val objectId = ObjectId.fromString(revision)
+
+                // Check if the object ID exists locally, otherwise parseCommit throws an exception.
+                RevWalk(jGit.repository).use { it.parseCommit(objectId) }
+
+                jGit.checkout().setName(objectId.name).setForced(true).call()
+
+                checkNotNull(jGit.repository.resolve(Constants.HEAD)).name.also {
+                    check(it.equals(revision, ignoreCase = true)) {
+                        "Local checkout resulted in revision '$it' instead of '$revision'."
+                    }
+                }
+            }
+        }.onFailure {
+            logger.debug("Could not check out revision '$revision' from the local Git repository.", it)
+        }.isSuccess
 
     /**
      * Clear the HTTP basic authentication cache used by HttpURLConnection.
@@ -251,7 +304,8 @@ class GitConfigFileProvider internal constructor(
     }.onFailure { e ->
         logger.warn(
             "Failed to clear JGit HTTP authentication cache. This may lead to Git authentication issues. Consider " +
-                    "setting '--add-opens java.base/sun.net.www.protocol.http=ALL-UNNAMED' javaOpts.",
+                    "adding '--add-opens=java.base/sun.net.www.protocol.http=ALL-UNNAMED' to the JDK_JAVA_OPTIONS " +
+                    "environment variable.",
             e
         )
     }

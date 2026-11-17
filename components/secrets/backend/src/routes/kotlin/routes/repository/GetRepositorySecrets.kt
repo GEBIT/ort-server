@@ -43,7 +43,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.standardListQueryParameters
 
 internal fun Route.getRepositorySecrets(secretService: SecretService) =
-    get("/repositories/{repositoryId}/secrets", {
+    get("repositories/{repositoryId}/secrets", {
         operationId = "getRepositorySecrets"
         summary = "Get all secrets of a repository"
         tags = listOf("Repositories")
@@ -62,8 +62,8 @@ internal fun Route.getRepositorySecrets(secretService: SecretService) =
                     example("Get all secrets of a repository") {
                         value = PagedResponse(
                             listOf(
-                                Secret(name = "token_npm_repo_1", description = "Access token for NPM Repo 1"),
-                                Secret(name = "token_maven_repo_1", description = "Access token for Maven Repo 1")
+                                Secret(name = "token-npm-repo-1", description = "Access token for NPM Repo 1"),
+                                Secret(name = "token-maven-repo-1", description = "Access token for Maven Repo 1")
                             ),
                             PagingData(
                                 limit = 20,
@@ -74,6 +74,10 @@ internal fun Route.getRepositorySecrets(secretService: SecretService) =
                         )
                     }
                 }
+            }
+
+            HttpStatusCode.NotFound to {
+                description = "The repository does not exist."
             }
         }
     }, requirePermission(RepositoryPermission.READ)) {

@@ -19,13 +19,18 @@
 
 package org.eclipse.apoapsis.ortserver.components.authorization.service
 
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.WordSpec
+import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactly
-import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
+import io.kotest.matchers.nulls.beNull
+import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifySequence
+import io.mockk.confirmVerified
 import io.mockk.just
 import io.mockk.mockk
 import io.mockk.runs
@@ -35,7 +40,11 @@ import org.eclipse.apoapsis.ortserver.clients.keycloak.KeycloakClientException
 import org.eclipse.apoapsis.ortserver.clients.keycloak.User as KeycloakUser
 import org.eclipse.apoapsis.ortserver.clients.keycloak.UserId
 import org.eclipse.apoapsis.ortserver.clients.keycloak.UserName
-import org.eclipse.apoapsis.ortserver.model.User
+import org.eclipse.apoapsis.ortserver.dao.QueryParametersException
+import org.eclipse.apoapsis.ortserver.model.repositories.UserRepository
+import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
+import org.eclipse.apoapsis.ortserver.model.util.OrderDirection
+import org.eclipse.apoapsis.ortserver.model.util.OrderField
 
 class KeycloakUserServiceTest : WordSpec({
     "createUser" should {
@@ -51,7 +60,7 @@ class KeycloakUserServiceTest : WordSpec({
                 coEvery { createUser(any(), any(), any(), any(), any(), any()) } just runs
             }
 
-            val service = KeycloakUserService(client)
+            val service = KeycloakUserService(client, mockk(), mockk())
             service.createUser(
                 username = username,
                 firstName = firstName,
@@ -75,37 +84,253 @@ class KeycloakUserServiceTest : WordSpec({
     }
 
     "deleteUser" should {
-        "delete a user" {
-            val keycloakUser = createKeycloakUser(1)
+        val keycloakUser = createKeycloakUser(1)
+        val username = keycloakUser.username.value
+        lateinit var client: KeycloakClient
+        lateinit var authorizationService: AuthorizationService
+        lateinit var userRepository: UserRepository
+        lateinit var service: KeycloakUserService
 
-            val client = mockk<KeycloakClient> {
-                coEvery { getUser(keycloakUser.username) } returns keycloakUser
+        beforeEach {
+            client = mockk {
+                coEvery { getUser(any()) } returns keycloakUser
                 coEvery { deleteUser(any()) } just runs
             }
-
-            val service = KeycloakUserService(client)
-            service.deleteUser(keycloakUser.username.value)
-
-            coVerify {
-                client.deleteUser(keycloakUser.id)
+            authorizationService = mockk {
+                coEvery { removeUserAssignments(username) } returns 3
             }
+            userRepository = mockk {
+                coEvery { markDeleted(any()) } just runs
+            }
+            service = KeycloakUserService(client, authorizationService, userRepository)
+        }
+
+        "remove roles for the resolved username before deleting by Keycloak ID" {
+            val requestedUsername = username.uppercase()
+
+            service.deleteUser(requestedUsername)
+
+            coVerifySequence {
+                client.getUser(UserName(requestedUsername))
+                authorizationService.removeUserAssignments(username)
+                client.deleteUser(keycloakUser.id)
+                userRepository.markDeleted(keycloakUser.id.value)
+            }
+            confirmVerified(client, authorizationService, userRepository)
+        }
+
+        "delete a user without role assignments" {
+            coEvery { authorizationService.removeUserAssignments(username) } returns 0
+
+            service.deleteUser(username)
+
+            coVerifySequence {
+                client.getUser(keycloakUser.username)
+                authorizationService.removeUserAssignments(username)
+                client.deleteUser(keycloakUser.id)
+                userRepository.markDeleted(keycloakUser.id.value)
+            }
+            confirmVerified(client, authorizationService, userRepository)
+        }
+
+        "leave assignments untouched if user lookup fails" {
+            val failure = KeycloakClientException("User not found")
+            coEvery { client.getUser(any()) } throws failure
+
+            shouldThrow<KeycloakClientException> { service.deleteUser(username) } shouldBe failure
+
+            coVerify(exactly = 1) { client.getUser(keycloakUser.username) }
+            coVerify(exactly = 0) {
+                authorizationService.removeUserAssignments(any())
+                client.deleteUser(any())
+                userRepository.markDeleted(any())
+            }
+            confirmVerified(client, authorizationService, userRepository)
+        }
+
+        "not delete the Keycloak user if role removal fails" {
+            val failure = IllegalStateException("Database unavailable")
+            coEvery { authorizationService.removeUserAssignments(username) } throws failure
+
+            shouldThrow<IllegalStateException> { service.deleteUser(username) } shouldBe failure
+
+            coVerifySequence {
+                client.getUser(keycloakUser.username)
+                authorizationService.removeUserAssignments(username)
+            }
+            coVerify(exactly = 0) {
+                client.deleteUser(any())
+                userRepository.markDeleted(any())
+            }
+            confirmVerified(client, authorizationService, userRepository)
+        }
+
+        "not mark the user deleted if the Keycloak deletion fails" {
+            val failure = KeycloakClientException("Keycloak unavailable")
+            coEvery { client.deleteUser(any()) } throws failure
+
+            shouldThrow<KeycloakClientException> { service.deleteUser(username) } shouldBe failure
+
+            coVerify(exactly = 0) { userRepository.markDeleted(any()) }
+        }
+
+        "fail if the user cannot be marked deleted" {
+            val failure = IllegalStateException("Database unavailable")
+            coEvery { userRepository.markDeleted(any()) } throws failure
+
+            shouldThrow<IllegalStateException> { service.deleteUser(username) } shouldBe failure
+
+            coVerify(exactly = 1) { client.deleteUser(keycloakUser.id) }
         }
     }
 
-    "getUsers" should {
-        "return a set of all users" {
-            val userCount = 16
-            val keycloakUsers = (1..userCount).mapTo(mutableSetOf(), ::createKeycloakUser)
-            val expectedUsers = (1..userCount).mapTo(mutableSetOf(), ::createUser)
-
-            val client = mockk<KeycloakClient> {
-                coEvery { getUsers() } returns keycloakUsers
+    "listUsers" should {
+        "return a deterministic default page ordered by username" {
+            val keycloakUsers = (25 downTo 1).mapTo(mutableSetOf()) { index ->
+                createKeycloakUser(index, username = "user${index.toString().padStart(2, '0')}")
             }
+            val service = createService(keycloakUsers)
 
-            val service = KeycloakUserService(client)
-            val users = service.getUsers()
+            val result = service.listUsers()
 
-            users shouldContainExactlyInAnyOrder expectedUsers
+            result.data.map(User::username) shouldContainExactly (1..ListQueryParameters.DEFAULT_LIMIT).map { index ->
+                "user${index.toString().padStart(2, '0')}"
+            }
+            result.params shouldBe ListQueryParameters(limit = ListQueryParameters.DEFAULT_LIMIT, offset = 0)
+            result.totalCount shouldBe 25L
+        }
+
+        "apply limit and offset after sorting" {
+            val service = createService(
+                setOf(
+                    createKeycloakUser(1, username = "charlie"),
+                    createKeycloakUser(2, username = "alpha"),
+                    createKeycloakUser(3, username = "bravo")
+                )
+            )
+
+            val result = service.listUsers(ListQueryParameters(limit = 1, offset = 1))
+
+            result.data.map(User::username) shouldContainExactly listOf("bravo")
+            result.totalCount shouldBe 3L
+        }
+
+        "return an empty page for an offset greater than the integer range" {
+            val service = createService(setOf(createKeycloakUser(1)))
+
+            val result = service.listUsers(ListQueryParameters(offset = Int.MAX_VALUE.toLong() + 1))
+
+            result.data.shouldBeEmpty()
+            result.totalCount shouldBe 1L
+        }
+
+        "preserve all users for null and blank searches" {
+            val service = createService(setOf(createKeycloakUser(1), createKeycloakUser(2)))
+
+            service.listUsers(search = null).totalCount shouldBe 2L
+            service.listUsers(search = "  ").totalCount shouldBe 2L
+        }
+
+        "match a partial case-insensitive search against every user field" {
+            val keycloakUsers = setOf(
+                createKeycloakUser(1, username = "Matching-Username"),
+                createKeycloakUser(2, firstName = "Matching-FirstName"),
+                createKeycloakUser(3, lastName = "Matching-LastName"),
+                createKeycloakUser(4, email = "matching-email@example.org"),
+                createKeycloakUser(5)
+            )
+            val service = createService(keycloakUsers)
+
+            val result = service.listUsers(ListQueryParameters(limit = 2, offset = 1), "MaTcHiNg")
+
+            result.data.map(User::username) shouldContainExactly listOf("user2", "user3")
+            result.totalCount shouldBe 4L
+        }
+
+        "sort every supported field in ascending and descending order" {
+            val keycloakUsers = setOf(
+                createKeycloakUser(
+                    1,
+                    username = "charlie",
+                    firstName = "Charlie",
+                    lastName = null,
+                    email = "charlie@example.org"
+                ),
+                createKeycloakUser(
+                    2,
+                    username = "alpha",
+                    firstName = null,
+                    lastName = "Alpha",
+                    email = "alpha@example.org"
+                ),
+                createKeycloakUser(
+                    3,
+                    username = "bravo",
+                    firstName = "Bravo",
+                    lastName = "Bravo",
+                    email = null
+                )
+            )
+            val service = createService(keycloakUsers)
+            val expectedAscending = mapOf(
+                "username" to listOf("alpha", "bravo", "charlie"),
+                "firstName" to listOf("alpha", "bravo", "charlie"),
+                "lastName" to listOf("charlie", "alpha", "bravo"),
+                "email" to listOf("bravo", "alpha", "charlie")
+            )
+
+            expectedAscending.forEach { (sortField, expected) ->
+                val ascending = service.listUsers(queryParameters(sortField, OrderDirection.ASCENDING))
+                val descending = service.listUsers(queryParameters(sortField, OrderDirection.DESCENDING))
+
+                ascending.data.map(User::username) shouldContainExactly expected
+                descending.data.map(User::username) shouldContainExactly expected.reversed()
+            }
+        }
+
+        "apply multiple sort fields in request order" {
+            val service = createService(
+                setOf(
+                    createKeycloakUser(1, username = "charlie", firstName = "Same", lastName = "Zulu"),
+                    createKeycloakUser(2, username = "alpha", firstName = "Same", lastName = "Alpha"),
+                    createKeycloakUser(3, username = "bravo", firstName = "Different", lastName = "Middle")
+                )
+            )
+            val parameters = ListQueryParameters(
+                sortFields = listOf(
+                    OrderField("firstName", OrderDirection.ASCENDING),
+                    OrderField("lastName", OrderDirection.DESCENDING)
+                )
+            )
+
+            val result = service.listUsers(parameters)
+
+            result.data.map(User::username) shouldContainExactly listOf("bravo", "charlie", "alpha")
+        }
+
+        "use username as a tie-breaker" {
+            val service = createService(
+                setOf(
+                    createKeycloakUser(1, username = "charlie", firstName = "Same"),
+                    createKeycloakUser(2, username = "alpha", firstName = "Same"),
+                    createKeycloakUser(3, username = "bravo", firstName = "Same")
+                )
+            )
+
+            val result = service.listUsers(queryParameters("firstName", OrderDirection.DESCENDING))
+
+            result.data.map(User::username) shouldContainExactly listOf("alpha", "bravo", "charlie")
+        }
+
+        "reject empty and unsupported sort fields" {
+            val service = createService(setOf(createKeycloakUser(1)))
+
+            shouldThrow<QueryParametersException> {
+                service.listUsers(queryParameters("", OrderDirection.ASCENDING))
+            }
+            shouldThrow<QueryParametersException> {
+                service.listUsers(queryParameters("unknown", OrderDirection.ASCENDING))
+            }
         }
     }
 
@@ -118,7 +343,7 @@ class KeycloakUserServiceTest : WordSpec({
                 coEvery { getUser(keycloakUser.username) } returns keycloakUser
             }
 
-            val service = KeycloakUserService(client)
+            val service = KeycloakUserService(client, mockk(), mockk())
             val user = service.getUserById(keycloakUser.username.value)
 
             user shouldBe expectedUser
@@ -138,7 +363,7 @@ class KeycloakUserServiceTest : WordSpec({
                 }
             }
 
-            val service = KeycloakUserService(client)
+            val service = KeycloakUserService(client, mockk(), mockk())
             val users = service.getUsersById(userIds)
 
             users shouldContainExactly expectedUsers
@@ -154,7 +379,7 @@ class KeycloakUserServiceTest : WordSpec({
                 coEvery { getUser(UserName("non-existing-user")) } throws KeycloakClientException("User not found")
             }
 
-            val service = KeycloakUserService(client)
+            val service = KeycloakUserService(client, mockk(), mockk())
             val users = service.getUsersById(userIds)
 
             users shouldContainExactly setOf(expectedUser)
@@ -168,7 +393,7 @@ class KeycloakUserServiceTest : WordSpec({
                 coEvery { getUser(UserName(username)) } returns createKeycloakUser(1)
             }
 
-            val service = KeycloakUserService(client)
+            val service = KeycloakUserService(client, mockk(), mockk())
             service.userExists(username) shouldBe true
         }
 
@@ -178,27 +403,74 @@ class KeycloakUserServiceTest : WordSpec({
                 coEvery { getUser(UserName(username)) } throws KeycloakClientException("User not found")
             }
 
-            val service = KeycloakUserService(client)
+            val service = KeycloakUserService(client, mockk(), mockk())
             service.userExists(username) shouldBe false
+        }
+    }
+
+    "findUserId" should {
+        "return the Keycloak ID of an existing user" {
+            val user = createKeycloakUser(1)
+            val client = mockk<KeycloakClient> {
+                coEvery { findUser(user.username) } returns user
+            }
+
+            val service = KeycloakUserService(client, mockk(), mockk())
+            service.findUserId(user.username.value) shouldBe "id-1"
+        }
+
+        "return null for an unknown username" {
+            val client = mockk<KeycloakClient> {
+                coEvery { findUser(UserName("unknown-user")) } returns null
+            }
+
+            val service = KeycloakUserService(client, mockk(), mockk())
+            service.findUserId("unknown-user") should beNull()
+        }
+
+        "throw an exception if Keycloak cannot be asked" {
+            val client = mockk<KeycloakClient> {
+                coEvery { findUser(UserName("some-user")) } throws KeycloakClientException("Keycloak is down")
+            }
+
+            val service = KeycloakUserService(client, mockk(), mockk())
+            shouldThrow<KeycloakClientException> {
+                service.findUserId("some-user")
+            }
         }
     }
 })
 
-/**
- * Generate a test user in Keycloak with properties derived from the given [index].
- */
-private fun createKeycloakUser(index: Int): KeycloakUser =
+/** Generate a test user in Keycloak with properties derived from the given [index]. */
+private fun createKeycloakUser(
+    index: Int,
+    username: String = "user$index",
+    firstName: String? = "First$index",
+    lastName: String? = "Last$index",
+    email: String? = "user$index@example.com"
+): KeycloakUser =
     KeycloakUser(
         id = UserId("id-$index"),
-        username = UserName("user$index"),
-        firstName = "First$index",
-        lastName = "Last$index",
-        email = "user$index@example.com"
+        username = UserName(username),
+        firstName = firstName,
+        lastName = lastName,
+        email = email
     )
 
-/**
- * Generate a test user in the ORT Server model with properties derived from the given [index].
- */
+/** Create a user service backed by a client that returns the given [users]. */
+private fun createService(users: Set<KeycloakUser>): KeycloakUserService {
+    val client = mockk<KeycloakClient> {
+        coEvery { getUsers() } returns users
+    }
+
+    return KeycloakUserService(client, mockk(), mockk())
+}
+
+/** Create list query parameters for the given sort [field] and [direction]. */
+private fun queryParameters(field: String, direction: OrderDirection) =
+    ListQueryParameters(sortFields = listOf(OrderField(field, direction)))
+
+/** Generate a test user in the ORT Server model with properties derived from the given [index]. */
 private fun createUser(index: Int): User =
     User(
         username = "user$index",

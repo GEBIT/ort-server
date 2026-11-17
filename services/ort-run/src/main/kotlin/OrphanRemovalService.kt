@@ -20,7 +20,6 @@
 package org.eclipse.apoapsis.ortserver.services.ortrun
 
 import org.eclipse.apoapsis.ortserver.config.ConfigManager
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.AuthorsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.PackagesAnalyzerRunsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.analyzerrun.PackagesAuthorsTable
@@ -46,6 +45,9 @@ import org.eclipse.apoapsis.ortserver.dao.tables.SnippetsTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.DeclaredLicensesTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.RemoteArtifactsTable
 import org.eclipse.apoapsis.ortserver.dao.tables.shared.VcsInfoTable
+import org.eclipse.apoapsis.ortserver.dao.transaction
+import org.eclipse.apoapsis.ortserver.dao.transactionCatching
+import org.eclipse.apoapsis.ortserver.model.util.ProcessingResult
 
 import org.jetbrains.exposed.v1.core.AbstractQuery
 import org.jetbrains.exposed.v1.core.Column
@@ -92,8 +94,11 @@ class OrphanRemovalService(
     /**
      * Delete orphaned entities of ORT runs.
      * Method uses heavy SQL queries, so it is not recommended to run it very often or under high DB loads.
+     *
+     * Return a [ProcessingResult] with the number of orphaned entities that the [OrphanEntityHandler]s found, and the
+     * number of them that could not be deleted.
      */
-    suspend fun deleteRunsOrphanedEntities(config: ConfigManager) {
+    suspend fun deleteRunsOrphanedEntities(config: ConfigManager): ProcessingResult {
         logger.info("Deleting orphaned children of ORT runs.")
 
         logger.info("Deleted {} records from {}", deleteOrphanedPackages(), PackagesTable.tableName)
@@ -106,11 +111,13 @@ class OrphanRemovalService(
             SnippetFindingsSnippetsTable.tableName
         )
 
-        OrphanEntityHandler.entries.forEach { handler ->
+        val handlerResults = OrphanEntityHandler.entries.map { handler ->
             handler.deleteOrphanedEntities(db, config)
         }
 
         logger.info("Deleting orphaned children of ORT runs finished.")
+
+        return ProcessingResult(handlerResults.sumOf { it.totalCount }, handlerResults.sumOf { it.failedCount })
     }
 
     /**
@@ -120,7 +127,7 @@ class OrphanRemovalService(
     private suspend fun <T : LongIdTable> T.deleteWhereNotExists(
         cond: (Column<EntityID<Long>>) -> AbstractQuery<*>
     ): Int =
-        db.dbQuery {
+        db.transaction {
             deleteWhere {
                 id inSubQuery (
                         select(id).where { notExists(cond(id)) }
@@ -170,7 +177,7 @@ class OrphanRemovalService(
         }
 
     private suspend fun deleteOrphanedSnippetAssociations() =
-        db.dbQuery {
+        db.transaction {
             SnippetFindingsSnippetsTable.deleteWhere {
                 SnippetFindingsSnippetsTable.snippetFindingId inSubQuery findUnassignedSnippetFindings()
             }
@@ -325,15 +332,16 @@ private enum class OrphanEntityHandler(
 
     /**
      * Delete orphaned entities from the represented table in the given [db] using configuration from the given
-     * [config].
+     * [config]. Return a [ProcessingResult] with the number of orphaned entities found, and the number of them in
+     * chunks that could not be deleted.
      */
-    suspend fun deleteOrphanedEntities(db: Database, config: ConfigManager) {
+    suspend fun deleteOrphanedEntities(db: Database, config: ConfigManager): ProcessingResult {
         logger.info("Deleting orphaned children of ${table.tableName}.")
 
         val limit = config.getInt("$configPrefix.limit")
         val chunkSize = config.getInt("$configPrefix.chunkSize")
 
-        val orphanIds = db.dbQuery {
+        val orphanIds = db.transaction {
             val orphansQuery = table.select(table.id).where {
                 notExists(filterOrphanedEntities().invoke())
             }.limit(limit)
@@ -343,21 +351,21 @@ private enum class OrphanEntityHandler(
 
         logger.info("Found ${orphanIds.size} orphaned entities in ${table.tableName}.")
 
+        var failedCount = 0
         orphanIds.chunked(chunkSize).forEach { ids ->
             logger.info("Deleting ${ids.size} orphaned entities from ${table.tableName}.")
 
-            runCatching {
-                db.dbQuery {
-                    table.deleteWhere { table.id inList ids }
-                }
+            db.transactionCatching {
+                table.deleteWhere { table.id inList ids }
             }.onFailure {
                 logger.error("Failed to delete chunk of orphaned entities from ${table.tableName}.", it)
+                failedCount += ids.size
             }
         }
+
+        return ProcessingResult(orphanIds.size, failedCount)
     }
 
-    /**
-     * Return a query condition that filters for orphaned entities for the represented table.
-     */
+    /** Return a query condition that filters for orphaned entities for the represented table. */
     abstract fun filterOrphanedEntities(): () -> AbstractQuery<*>
 }

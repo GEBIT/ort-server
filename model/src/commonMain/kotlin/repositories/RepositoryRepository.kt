@@ -28,14 +28,10 @@ import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryResult
 import org.eclipse.apoapsis.ortserver.model.util.OptionalValue
 
-/**
- * A repository of [repositories][Repository].
- */
+/** A repository of [repositories][Repository]. */
 interface RepositoryRepository {
-    /**
-     * Create a repository.
-     */
-    fun create(
+    /** Create a repository. */
+    suspend fun create(
         type: RepositoryType,
         url: String,
         productId: Long,
@@ -43,40 +39,34 @@ interface RepositoryRepository {
         description: String?
     ): Repository
 
-    /**
-     * Get a repository by [id]. Returns null if the repository is not found.
-     */
-    fun get(id: Long): Repository?
+    /** Get a repository by [id]. Returns null if the repository is not found. */
+    suspend fun get(id: Long): Repository?
 
     /**
      * Return a [Hierarchy] object for the repository with the given [id] with the entities it belongs to. Fail with
      * an exception if the [id] cannot be resolved.
      */
-    fun getHierarchy(id: Long): Hierarchy
+    suspend fun getHierarchy(id: Long): Hierarchy
 
     /**
      * List all repositories according to the given [parameters]. Optionally, a [filter] on the repository name or URL
      * and a [hierarchyFilter] can be provided.
      */
-    fun list(
+    suspend fun list(
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
         filter: FilterParameter? = null,
         hierarchyFilter: HierarchyFilter = HierarchyFilter.WILDCARD
     ): ListQueryResult<Repository>
 
-    /**
-     * List all repositories for a [product][productId] according to the given [parameters].
-     */
-    fun listForProduct(
+    /** List all repositories for a [product][productId] according to the given [parameters]. */
+    suspend fun listForProduct(
         productId: Long,
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
         filter: FilterParameter? = null
     ): ListQueryResult<Repository>
 
-    /**
-     * Update a repository by [id] with the [present][OptionalValue.Present] values.
-     */
-    fun update(
+    /** Update a repository by [id] with the [present][OptionalValue.Present] values. */
+    suspend fun update(
         id: Long,
         type: OptionalValue<RepositoryType> = OptionalValue.Absent,
         url: OptionalValue<String> = OptionalValue.Absent,
@@ -85,13 +75,9 @@ interface RepositoryRepository {
         productId: OptionalValue<Long> = OptionalValue.Absent
     ): Repository
 
-    /**
-     * Delete a repository by [id].
-     */
-    fun delete(id: Long)
+    /** Delete a repository by [id]. */
+    suspend fun delete(id: Long)
 
-    /**
-     * Delete all [Repositories][Repository] associated to this [productId].
-     */
-    fun deleteByProduct(productId: Long): Int
+    /** Delete all [Repositories][Repository] associated to this [productId]. */
+    suspend fun deleteByProduct(productId: Long): Int
 }

@@ -33,12 +33,15 @@ import org.eclipse.apoapsis.ortserver.api.v1.model.OrtRunStatistics
 import org.eclipse.apoapsis.ortserver.api.v1.model.PatchOrganization
 import org.eclipse.apoapsis.ortserver.api.v1.model.PostOrganization
 import org.eclipse.apoapsis.ortserver.api.v1.model.PostProduct
+import org.eclipse.apoapsis.ortserver.api.v1.model.UserWithOrganizationRole
 import org.eclipse.apoapsis.ortserver.api.v1.model.Username
 import org.eclipse.apoapsis.ortserver.components.authorization.api.OrganizationRole
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.OrganizationPermission
+import org.eclipse.apoapsis.ortserver.components.authorization.rights.OrganizationRole as ModelOrganizationRole
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.OrtServerPrincipal.Companion.requirePrincipal
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.delete
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.get
+import org.eclipse.apoapsis.ortserver.components.authorization.routes.mapToApi
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.mapToModel
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.patch
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.post
@@ -47,8 +50,8 @@ import org.eclipse.apoapsis.ortserver.components.authorization.routes.requirePer
 import org.eclipse.apoapsis.ortserver.components.authorization.routes.requireSuperuser
 import org.eclipse.apoapsis.ortserver.components.authorization.service.AuthorizationService
 import org.eclipse.apoapsis.ortserver.components.authorization.service.UserService
-import org.eclipse.apoapsis.ortserver.core.api.UserWithGroupsHelper.mapToApi
-import org.eclipse.apoapsis.ortserver.core.api.UserWithGroupsHelper.sortAndPage
+import org.eclipse.apoapsis.ortserver.core.api.UserWithRoleHelper.mapToApi
+import org.eclipse.apoapsis.ortserver.core.api.UserWithRoleHelper.sortAndPage
 import org.eclipse.apoapsis.ortserver.core.apiDocs.deleteOrganization
 import org.eclipse.apoapsis.ortserver.core.apiDocs.deleteOrganizationRoleFromUser
 import org.eclipse.apoapsis.ortserver.core.apiDocs.getOrganization
@@ -108,7 +111,8 @@ fun Route.organizations() = route("organizations") {
             organizationService.listOrganizationsForUser(
                 principal.username,
                 pagingOptions.mapToModel(),
-                filter?.mapToModel()
+                filter?.mapToModel(),
+                principal.userId
             )
 
         val pagedResponse = organizationsForUser.mapToApi(Organization::mapToApi)
@@ -168,7 +172,8 @@ fun Route.organizations() = route("organizations") {
                         orgId,
                         principal.username,
                         pagingOptions.mapToModel(),
-                        filter?.mapToModel()
+                        filter?.mapToModel(),
+                        principal.userId
                     )
 
                 val pagedResponse = productsForOrganization.mapToApi(Product::mapToApi)
@@ -179,12 +184,14 @@ fun Route.organizations() = route("organizations") {
             post(postProduct, requirePermission(OrganizationPermission.CREATE_PRODUCT)) {
                 val createProduct = call.receive<PostProduct>()
                 val orgId = call.requireIdParameter("organizationId")
+                val principal = requirePrincipal()
 
                 val createdProduct = organizationService.createProduct(
                     createProduct.name,
                     createProduct.description,
                     orgId,
-                    requirePrincipal().username
+                    principal.username,
+                    principal.userId
                 )
 
                 call.respond(HttpStatusCode.Created, createdProduct.mapToApi())
@@ -193,7 +200,7 @@ fun Route.organizations() = route("organizations") {
 
         route("roles") {
             route("{role}") {
-                put(putOrganizationRoleToUser, requirePermission(OrganizationPermission.MANAGE_GROUPS)) {
+                put(putOrganizationRoleToUser, requirePermission(OrganizationPermission.MANAGE_ROLES)) {
                     val user = call.receive<Username>()
                     val organizationId = call.requireIdParameter("organizationId")
                     val role = call.requireEnumParameter<OrganizationRole>("role").mapToModel()
@@ -203,7 +210,8 @@ fun Route.organizations() = route("organizations") {
                         return@put
                     }
 
-                    if (!userService.userExists(user.username)) {
+                    val userSub = userService.findUserId(user.username)
+                    if (userSub == null) {
                         call.respondError(
                             HttpStatusCode.NotFound,
                             "Could not find user with username '${user.username}'."
@@ -212,13 +220,14 @@ fun Route.organizations() = route("organizations") {
                         authorizationService.assignRole(
                             user.username,
                             role,
-                            CompoundHierarchyId.forOrganization(OrganizationId(organizationId))
+                            CompoundHierarchyId.forOrganization(OrganizationId(organizationId)),
+                            userSub
                         )
                         call.respond(HttpStatusCode.NoContent)
                     }
                 }
 
-                delete(deleteOrganizationRoleFromUser, requirePermission(OrganizationPermission.MANAGE_GROUPS)) {
+                delete(deleteOrganizationRoleFromUser, requirePermission(OrganizationPermission.MANAGE_ROLES)) {
                     val organizationId = call.requireIdParameter("organizationId")
                     val username = call.requireParameter("username")
                     call.requireEnumParameter<OrganizationRole>("role")
@@ -246,10 +255,12 @@ fun Route.organizations() = route("organizations") {
                 val organizationId = call.requireIdParameter("organizationId")
                 val pagingOptions = call.pagingOptions(SortProperty("rating", SortDirection.DESCENDING))
                 val filters = call.vulnerabilityForRunsFilters()
+                val principal = requirePrincipal()
 
                 val repositoryIds = organizationService.getRepositoryIdsForOrganizationAndUser(
                     organizationId,
-                    requirePrincipal().username
+                    principal.username,
+                    principal.userId
                 )
 
                 val ortRunIds = repositoryIds.mapNotNull { repositoryId ->
@@ -272,9 +283,11 @@ fun Route.organizations() = route("organizations") {
             route("advisors") {
                 get(getOrganizationVulnerabilityAdvisors, requirePermission(OrganizationPermission.READ)) {
                     val organizationId = call.requireIdParameter("organizationId")
+                    val principal = requirePrincipal()
                     val repositoryIds = organizationService.getRepositoryIdsForOrganizationAndUser(
                         organizationId,
-                        requirePrincipal().username
+                        principal.username,
+                        principal.userId
                     )
                     val ortRunIds = repositoryIds.mapNotNull { repositoryId ->
                         repositoryService.getLatestOrtRunIdWithSuccessfulAdvisorJob(repositoryId)
@@ -289,10 +302,12 @@ fun Route.organizations() = route("organizations") {
             route("runs") {
                 get(getOrganizationRunStatistics, requirePermission(OrganizationPermission.READ)) {
                     val orgId = call.requireIdParameter("organizationId")
+                    val principal = requirePrincipal()
 
                     val repositoryIds = organizationService.getRepositoryIdsForOrganizationAndUser(
                         orgId,
-                        requirePrincipal().username
+                        principal.username,
+                        principal.userId
                     )
 
                     val latestRunsWithAnalyzerJobInFinalState = repositoryIds.mapNotNull {
@@ -441,9 +456,14 @@ fun Route.organizations() = route("organizations") {
                 val pagingOptions = call.pagingOptions(SortProperty("username", SortDirection.ASCENDING))
 
                 val users = authorizationService.listUsers(orgId)
-                    .mapToApi(userService) { it.assignedAt.level == HierarchyLevel.ORGANIZATION }
+                    .mapToApi(userService, { it.assignedAt.level == HierarchyLevel.ORGANIZATION }) { user, role ->
+                        UserWithOrganizationRole(user, (role as ModelOrganizationRole).mapToApi())
+                    }
                 call.respond(
-                    PagedResponse(users.sortAndPage(pagingOptions), pagingOptions.toPagingData(users.size.toLong()))
+                    PagedResponse(
+                        users.sortAndPage(pagingOptions, { it.user }, { it.role }),
+                        pagingOptions.toPagingData(users.size.toLong())
+                    )
                 )
             }
         }

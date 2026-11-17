@@ -24,9 +24,9 @@ import kotlinx.coroutines.withContext
 
 import org.eclipse.apoapsis.ortserver.components.authorization.rights.RepositoryRole
 import org.eclipse.apoapsis.ortserver.components.authorization.service.AuthorizationService
-import org.eclipse.apoapsis.ortserver.dao.dbQuery
 import org.eclipse.apoapsis.ortserver.dao.repositories.ortrun.OrtRunsTable
 import org.eclipse.apoapsis.ortserver.dao.repositories.repository.RepositoriesTable
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.CompoundHierarchyId
 import org.eclipse.apoapsis.ortserver.model.OrganizationId
 import org.eclipse.apoapsis.ortserver.model.OrtRun
@@ -43,6 +43,7 @@ import org.eclipse.apoapsis.ortserver.model.util.FilterParameter
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryParameters
 import org.eclipse.apoapsis.ortserver.model.util.ListQueryResult
 import org.eclipse.apoapsis.ortserver.model.util.OptionalValue
+import org.eclipse.apoapsis.ortserver.shared.coroutines.Virtual
 
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
@@ -52,9 +53,7 @@ import org.jetbrains.exposed.v1.core.max
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.select
 
-/**
- * A service providing functions for working with [products][Product].
- */
+/** A service providing functions for working with [products][Product]. */
 class ProductService(
     private val db: Database,
     private val productRepository: ProductRepository,
@@ -63,7 +62,8 @@ class ProductService(
     private val authorizationService: AuthorizationService
 ) {
     /**
-     * Create a repository inside a [product][productId].
+     * Create a repository inside a [product][productId]. If [creatorId] is given, assign the ADMIN role on the
+     * repository to the user with this username and the Keycloak ID [creatorSub].
      */
     suspend fun createRepository(
         type: RepositoryType,
@@ -71,9 +71,10 @@ class ProductService(
         productId: Long,
         name: String?,
         description: String?,
-        creatorId: String? = null
+        creatorId: String? = null,
+        creatorSub: String? = null
     ): Repository {
-        val repository = db.dbQuery {
+        val repository = db.transaction {
             repositoryRepository.create(
                 type = type,
                 url = url,
@@ -92,96 +93,109 @@ class ProductService(
                     OrganizationId(repository.organizationId),
                     ProductId(productId),
                     RepositoryId(repository.id)
-                )
+                ),
+                creatorSub
             )
         }
 
         return repository
     }
 
-    /**
-     * Delete a [product][productId] with its [repositories][Repository] and [OrtRun]s.
-     */
-    suspend fun deleteProduct(productId: Long): Unit = db.dbQuery {
+    /** Delete a [product][productId] with its [repositories][Repository] and [OrtRun]s. */
+    suspend fun deleteProduct(productId: Long): Unit = db.transaction {
         ortRunRepository.deleteByProduct(productId)
         repositoryRepository.deleteByProduct(productId)
 
         productRepository.delete(productId)
     }
 
-    /**
-     * Get a product by [productId]. Returns null if the product is not found.
-     */
-    suspend fun getProduct(productId: Long): Product? = db.dbQuery {
+    /** Get a product by [productId]. Returns null if the product is not found. */
+    suspend fun getProduct(productId: Long): Product? = db.transaction {
         productRepository.get(productId)
     }
 
     /**
-     * List all repositories for a [product][productId] according to the given [parameters].
+     * List all products on the server according to the given [parameters] and an optional [filter] on the product
+     * name. No hierarchy filter is applied, so this function is meant for server administrators.
      */
+    suspend fun listProducts(
+        parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
+        filter: FilterParameter? = null
+    ): ListQueryResult<Product> = db.transaction {
+        productRepository.list(parameters, filter)
+    }
+
+    /** List all repositories for a [product][productId] according to the given [parameters]. */
     suspend fun listRepositoriesForProduct(
         productId: Long,
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
         filter: FilterParameter? = null
-    ): ListQueryResult<Repository> = db.dbQuery {
+    ): ListQueryResult<Repository> = db.transaction {
         repositoryRepository.listForProduct(productId, parameters, filter)
     }
 
     /**
-     * List all repositories for a [product][productId] that are visible to a specific [user][userId] according to the
-     * given [parameters] and [filter], which is applied to the repository name or URL.
+     * List all repositories for a [product][productId] that are visible to a specific [user][userId] with the
+     * Keycloak ID [userSub] according to the given [parameters] and [filter], which is applied to the repository name
+     * or URL.
      */
     suspend fun listRepositoriesForProductAndUser(
         productId: Long,
         userId: String,
         parameters: ListQueryParameters = ListQueryParameters.DEFAULT,
-        filter: FilterParameter? = null
+        filter: FilterParameter? = null,
+        userSub: String? = null
     ): ListQueryResult<Repository> = getProduct(productId)?.let { product ->
         val hierarchyFilter = authorizationService.filterHierarchyIds(
             userId,
             RepositoryRole.READER,
-            ProductId(product.id)
+            ProductId(product.id),
+            userSub
         )
-        db.dbQuery {
+        db.transaction {
             repositoryRepository.list(parameters, filter, hierarchyFilter)
         }
     } ?: ListQueryResult(emptyList(), parameters, 0)
 
-    /**
-     * Update a product by [productId] with the [present][OptionalValue.Present] values.
-     */
+    /** Update a product by [productId] with the [present][OptionalValue.Present] values. */
     suspend fun updateProduct(
         productId: Long,
         name: OptionalValue<String> = OptionalValue.Absent,
         description: OptionalValue<String?> = OptionalValue.Absent
-    ): Product = db.dbQuery {
+    ): Product = db.transaction {
         productRepository.update(productId, name, description)
     }
 
-    suspend fun getRepositoryIdsForProduct(productId: Long): List<Long> = db.dbQuery {
+    suspend fun getRepositoryIdsForProduct(productId: Long): List<Long> = db.transaction {
         RepositoriesTable
             .select(RepositoriesTable.id)
             .where { RepositoriesTable.productId eq productId }
             .map { it[RepositoriesTable.id].value }
     }
 
-    /** Return the IDs of repositories in the product that are readable by the given user. */
-    suspend fun getRepositoryIdsForProductAndUser(productId: Long, userId: String): List<Long> {
+    /**
+     * Return the IDs of repositories in the product that are readable by the user with the given [userId] and the
+     * Keycloak ID [userSub].
+     */
+    suspend fun getRepositoryIdsForProductAndUser(
+        productId: Long,
+        userId: String,
+        userSub: String? = null
+    ): List<Long> {
         val hierarchyFilter = authorizationService.filterHierarchyIds(
             userId,
             RepositoryRole.READER,
-            ProductId(productId)
+            ProductId(productId),
+            userSub
         )
 
-        return withContext(Dispatchers.IO) {
+        return withContext(Dispatchers.Virtual) {
             repositoryRepository.list(ListQueryParameters.DEFAULT, null, hierarchyFilter).data.map { it.id }
         }
     }
 
-    /**
-     * Get the ID of the latest ORT run of the repository where the status is failed.
-     **/
-    suspend fun getLatestOrtRunWithFailedStatusForProduct(productId: Long): List<Long> = db.dbQuery {
+    /** Get the ID of the latest ORT run of the repository where the status is failed. */
+    suspend fun getLatestOrtRunWithFailedStatusForProduct(productId: Long): List<Long> = db.transaction {
         RepositoriesTable
             .innerJoin(OrtRunsTable)
             .select(

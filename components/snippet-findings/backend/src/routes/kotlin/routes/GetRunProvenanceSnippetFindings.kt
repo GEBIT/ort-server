@@ -45,6 +45,7 @@ internal fun Route.getRunProvenanceSnippetFindings(
     get("runs/{runId}/snippet-findings/provenances/{provenanceId}/findings", {
         operationId = "getRunProvenanceSnippetFindings"
         summary = "Get snippet findings for a specific package provenance in an ORT run"
+        description = "Supported sort fields are 'path' and 'snippetCount'."
         tags = listOf("Runs")
 
         request {
@@ -82,12 +83,18 @@ internal fun Route.getRunProvenanceSnippetFindings(
                     }
                 }
             }
+
+            HttpStatusCode.NotFound to {
+                description = "The ORT run does not exist, or the provenance does not belong to it."
+            }
+
+            HttpStatusCode.BadRequest to {
+                description = "An unsupported sort field was provided."
+            }
         }
     }, requireRunReadPermission(ortRunRepository)) {
         val runId = call.requireIdParameter("runId")
         val provenanceId = call.requireIdParameter("provenanceId")
-
-        ortRunRepository.get(runId) ?: return@get call.respond(HttpStatusCode.NotFound)
 
         if (!service.hasProvenanceForRun(runId, provenanceId)) {
             return@get call.respond(HttpStatusCode.NotFound)

@@ -26,7 +26,7 @@ import io.kotest.matchers.shouldBe
 import java.util.EnumSet
 
 import org.eclipse.apoapsis.ortserver.model.CredentialsType
-import org.eclipse.apoapsis.ortserver.workers.common.ResolvedInfrastructureService
+import org.eclipse.apoapsis.ortserver.shared.authenticator.ResolvedInfrastructureService
 import org.eclipse.apoapsis.ortserver.workers.common.env.MockConfigFileBuilder.Companion.createInfrastructureService
 import org.eclipse.apoapsis.ortserver.workers.common.env.MockConfigFileBuilder.Companion.createSecret
 import org.eclipse.apoapsis.ortserver.workers.common.env.MockConfigFileBuilder.Companion.testSecretRef
@@ -149,8 +149,6 @@ class NetRcGeneratorTest : StringSpec({
         }
 })
 
-/**
- * Helper function to create a list with [EnvironmentServiceDefinition] objects from the passed in [services].
- */
+/** Helper function to create a list with [EnvironmentServiceDefinition] objects from the passed in [services]. */
 private fun definitions(vararg services: ResolvedInfrastructureService): List<EnvironmentServiceDefinition> =
     listOf(*services).map { EnvironmentServiceDefinition((it)) }

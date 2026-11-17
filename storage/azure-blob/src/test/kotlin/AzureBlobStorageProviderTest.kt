@@ -33,6 +33,7 @@ import org.eclipse.apoapsis.ortserver.storage.Storage
 import org.eclipse.apoapsis.ortserver.storage.Storage.Companion.dataString
 import org.eclipse.apoapsis.ortserver.storage.StorageException
 import org.eclipse.apoapsis.ortserver.utils.test.Images
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.testcontainers.containers.GenericContainer
 
@@ -44,7 +45,16 @@ private const val ACCOUNT_KEY =
 private const val CONTAINER = "test"
 
 class AzureBlobStorageProviderTest : WordSpec({
-    val azuriteContainer = install(TestContainerSpecExtension(GenericContainer(Images.AZURITE).withExposedPorts(10000)))
+    tags(Integration)
+
+    val azuriteContainer = install(
+        TestContainerSpecExtension(
+            GenericContainer(Images.AZURITE)
+                // Skip the API version check to work around https://github.com/Azure/Azurite/issues/2623.
+                .withCommand("azurite-blob", "--skipApiVersionCheck", "--blobHost", "0.0.0.0")
+                .withExposedPorts(10000)
+        )
+    )
 
     lateinit var containerClient: BlobContainerClient
 

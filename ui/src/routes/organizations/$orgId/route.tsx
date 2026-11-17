@@ -22,6 +22,7 @@ import { AxiosError } from 'axios';
 import {
   BookLock,
   Eye,
+  ListChecks,
   Search,
   ServerCog,
   Settings,
@@ -87,19 +88,25 @@ const Layout = () => {
           title: 'Secrets',
           to: '/organizations/$orgId/secrets',
           icon: () => <BookLock className='h-4 w-4' />,
-          visible: organizationPermissions?.includes('WRITE_SECRETS'),
+          visible: organizationPermissions?.includes('READ'),
         },
         {
           title: 'Infrastructure Services',
           to: '/organizations/$orgId/infrastructure-services',
           icon: () => <ServerCog className='h-4 w-4' />,
-          visible: organizationPermissions?.includes('WRITE'),
+          visible: organizationPermissions?.includes('READ'),
         },
         {
           title: 'Users',
           to: '/organizations/$orgId/users',
           icon: () => <User className='h-4 w-4' />,
-          visible: organizationPermissions?.includes('MANAGE_GROUPS'),
+          visible: organizationPermissions?.includes('READ'),
+        },
+        {
+          title: 'Default Plugins',
+          to: '/organizations/$orgId/default-plugins',
+          icon: () => <ListChecks className='h-4 w-4' />,
+          visible: organizationPermissions?.includes('MANAGE_DEFAULT_PLUGINS'),
         },
         {
           title: 'Settings',

@@ -36,7 +36,7 @@ import org.eclipse.apoapsis.ortserver.shared.ktorutils.jsonBody
 import org.eclipse.apoapsis.ortserver.shared.ktorutils.requireIdParameter
 
 internal fun Route.postProductSecret(secretService: SecretService) =
-    post("/products/{productId}/secrets", {
+    post("products/{productId}/secrets", {
         operationId = "postProductSecret"
         summary = "Create a secret for a product"
         tags = listOf("Products")
@@ -48,7 +48,7 @@ internal fun Route.postProductSecret(secretService: SecretService) =
             jsonBody<PostSecret> {
                 example("Create Secret") {
                     value = PostSecret(
-                        name = "token_maven_repo_1",
+                        name = "token-maven-repo-1",
                         value = "pr0d-s3cr3t-08_15",
                         description = "Access token for Maven Repo 1"
                     )
@@ -61,9 +61,21 @@ internal fun Route.postProductSecret(secretService: SecretService) =
                 description = "Success"
                 jsonBody<Secret> {
                     example("Create Secret") {
-                        value = Secret(name = "token_maven_repo_1", description = "Access token for Maven Repo 1")
+                        value = Secret(name = "token-maven-repo-1", description = "Access token for Maven Repo 1")
                     }
                 }
+            }
+
+            HttpStatusCode.NotFound to {
+                description = "The product does not exist."
+            }
+
+            HttpStatusCode.BadRequest to {
+                description = "The secret name is invalid."
+            }
+
+            HttpStatusCode.Conflict to {
+                description = "A secret with the same name already exists."
             }
         }
     }, requirePermission(ProductPermission.WRITE_SECRETS)) {

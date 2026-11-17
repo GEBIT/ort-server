@@ -36,10 +36,8 @@ import org.eclipse.apoapsis.ortserver.transport.NotifierEndpoint
 import org.eclipse.apoapsis.ortserver.transport.ReporterEndpoint
 import org.eclipse.apoapsis.ortserver.transport.ScannerEndpoint
 
-/**
- * Type definition for a function that schedules another worker job.
- */
-typealias JobScheduleFunc = () -> Unit
+/** Type definition for a function that schedules another worker job. */
+typealias JobScheduleFunc = suspend () -> Unit
 
 /**
  * An enumeration class with constants that describe if and when a job for a specific worker should be scheduled.
@@ -64,13 +62,11 @@ internal enum class WorkerScheduleInfo(
      */
     private val runsAfter: List<Endpoint<*>> = emptyList(),
 
-    /**
-     * A flag determining whether the represented worker should be run even if previous workers have already failed.
-     */
+    /** A flag determining whether the represented worker should be run even if previous workers have already failed. */
     private val runAfterFailure: Boolean = false
 ) {
     ANALYZER(AnalyzerEndpoint) {
-        override fun createJob(context: WorkerScheduleContext): WorkerJob =
+        override suspend fun createJob(context: WorkerScheduleContext): WorkerJob =
             context.workerJobRepositories.analyzerJobRepository.create(
                 context.ortRun.id,
                 context.jobConfigs().analyzer
@@ -84,7 +80,7 @@ internal enum class WorkerScheduleInfo(
     },
 
     ADVISOR(AdvisorEndpoint, dependsOn = listOf(AnalyzerEndpoint)) {
-        override fun createJob(context: WorkerScheduleContext): WorkerJob? =
+        override suspend fun createJob(context: WorkerScheduleContext): WorkerJob? =
             context.jobConfigs().advisor?.let { config ->
                 context.workerJobRepositories.advisorJobRepository.create(context.ortRun.id, config)
             }
@@ -98,7 +94,7 @@ internal enum class WorkerScheduleInfo(
     },
 
     SCANNER(ScannerEndpoint, dependsOn = listOf(AnalyzerEndpoint)) {
-        override fun createJob(context: WorkerScheduleContext): WorkerJob? =
+        override suspend fun createJob(context: WorkerScheduleContext): WorkerJob? =
             context.jobConfigs().scanner?.let { config ->
                 context.workerJobRepositories.scannerJobRepository.create(context.ortRun.id, config)
             }
@@ -112,7 +108,7 @@ internal enum class WorkerScheduleInfo(
     },
 
     EVALUATOR(EvaluatorEndpoint, runsAfter = listOf(AdvisorEndpoint, ScannerEndpoint)) {
-        override fun createJob(context: WorkerScheduleContext): WorkerJob? =
+        override suspend fun createJob(context: WorkerScheduleContext): WorkerJob? =
             context.jobConfigs().evaluator?.let { config ->
                 context.workerJobRepositories.evaluatorJobRepository.create(context.ortRun.id, config)
             }
@@ -126,7 +122,7 @@ internal enum class WorkerScheduleInfo(
     },
 
     REPORTER(ReporterEndpoint, runsAfter = listOf(EvaluatorEndpoint), runAfterFailure = true) {
-        override fun createJob(context: WorkerScheduleContext): WorkerJob? =
+        override suspend fun createJob(context: WorkerScheduleContext): WorkerJob? =
             context.jobConfigs().reporter?.let { config ->
                 context.workerJobRepositories.reporterJobRepository.create(context.ortRun.id, config)
             }
@@ -140,7 +136,7 @@ internal enum class WorkerScheduleInfo(
     },
 
     NOTIFIER(NotifierEndpoint, dependsOn = listOf(ReporterEndpoint), runAfterFailure = true) {
-        override fun createJob(context: WorkerScheduleContext): WorkerJob? =
+        override suspend fun createJob(context: WorkerScheduleContext): WorkerJob? =
             context.jobConfigs().notifier?.let { config ->
                 context.workerJobRepositories.notifierJobRepository.create(context.ortRun.id, config)
             }
@@ -172,7 +168,7 @@ internal enum class WorkerScheduleInfo(
      * Check whether a job for the represented worker can be scheduled now based on the given [context]. If so, create
      * the job in the database and return a function that schedules the job.
      */
-    fun createAndScheduleJobIfPossible(context: WorkerScheduleContext): JobScheduleFunc? {
+    suspend fun createAndScheduleJobIfPossible(context: WorkerScheduleContext): JobScheduleFunc? {
         if (!canRun(context)) return null
 
         return createJob(context)?.let { job ->
@@ -184,10 +180,8 @@ internal enum class WorkerScheduleInfo(
         }
     }
 
-    /**
-     * Create a new job for this worker based on the information in the given [context].
-     */
-    protected abstract fun createJob(context: WorkerScheduleContext): WorkerJob?
+    /** Create a new job for this worker based on the information in the given [context]. */
+    protected abstract suspend fun createJob(context: WorkerScheduleContext): WorkerJob?
 
     /**
      * Publish a message to the worker endpoint to schedule the given [job] based on the information in the given
@@ -195,9 +189,7 @@ internal enum class WorkerScheduleInfo(
      */
     protected abstract fun publishJob(context: WorkerScheduleContext, job: WorkerJob)
 
-    /**
-     * Return a flag whether this worker is configured to run for the current ORT run based on the given [configs].
-     */
+    /** Return a flag whether this worker is configured to run for the current ORT run based on the given [configs]. */
     protected abstract fun isConfigured(configs: JobConfigurations): Boolean
 
     /**
@@ -214,12 +206,20 @@ internal enum class WorkerScheduleInfo(
 
     /**
      * Check whether the represented worker is pending for the current ORT run based on the given [context]. This
-     * means that the worker has not yet run, but - given the current state - is supposed to run later.
+     * means that the worker has not yet completed and either was already scheduled or - given the current state - is
+     * supposed to run later. A scheduled job is pending independently of the failure state, as it is still running.
      */
     private fun isPending(context: WorkerScheduleContext): Boolean =
         isConfigured(context.jobConfigs()) &&
                 !context.isJobCompleted(endpoint) &&
-                canRunWithFailureState(context) &&
+                (context.wasScheduled(endpoint) || isExpectedToRun(context))
+
+    /**
+     * Check whether the represented worker is supposed to run later based on the given [context]. This is the case if
+     * it can run in the current failure state and all the workers it depends on were scheduled or are pending.
+     */
+    private fun isExpectedToRun(context: WorkerScheduleContext): Boolean =
+        canRunWithFailureState(context) &&
                 dependsOn.all {
                     context.wasScheduled(it) ||
                             WorkerScheduleInfo[it].isPending(context)

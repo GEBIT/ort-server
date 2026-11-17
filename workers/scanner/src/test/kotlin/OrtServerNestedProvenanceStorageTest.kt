@@ -30,12 +30,12 @@ import org.eclipse.apoapsis.ortserver.dao.tables.NestedProvenancesTable
 import org.eclipse.apoapsis.ortserver.dao.tables.PackageProvenanceDao
 import org.eclipse.apoapsis.ortserver.dao.tables.PackageProvenancesTable
 import org.eclipse.apoapsis.ortserver.dao.test.DatabaseTestExtension
+import org.eclipse.apoapsis.ortserver.dao.transaction
 import org.eclipse.apoapsis.ortserver.model.runs.scanner.ScannerRun
 import org.eclipse.apoapsis.ortserver.services.ortrun.mapToModel
-import org.eclipse.apoapsis.ortserver.utils.logging.runBlocking
+import org.eclipse.apoapsis.ortserver.utils.test.Integration
 
 import org.jetbrains.exposed.v1.jdbc.selectAll
-import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 
 import org.ossreviewtoolkit.model.Identifier
 import org.ossreviewtoolkit.model.KnownProvenance
@@ -59,6 +59,8 @@ class OrtServerNestedProvenanceStorageTest : WordSpec() {
     private lateinit var scannerRun: ScannerRun
 
     init {
+        tags(Integration)
+
         beforeEach {
             scannerRun = dbExtension.fixtures.scannerRunRepository.create(dbExtension.fixtures.scannerJob.id)
             packageProvenanceCache = PackageProvenanceCache()
@@ -73,17 +75,13 @@ class OrtServerNestedProvenanceStorageTest : WordSpec() {
             packageProvenanceStorage.writeProvenance(id, vcsInfo, packageProvenance)
         }
 
-        /**
-         * Verify that the provided [result] was associated to the given [provenance].
-         */
-        fun verifyAssociatedProvenance(
+        /** Verify that the provided [result] was associated to the given [provenance]. */
+        suspend fun verifyAssociatedProvenance(
             result: NestedProvenanceResolutionResult,
             provenance: RepositoryProvenance = packageProvenance.provenance
         ) {
-            transaction {
-                val packageProvenanceId = runBlocking {
-                    packageProvenanceCache.get(provenance).first()
-                }
+            dbExtension.db.transaction {
+                val packageProvenanceId = packageProvenanceCache.get(provenance).first()
 
                 val associatedResult = PackageProvenanceDao[packageProvenanceId].nestedProvenance?.mapToOrt()
 
@@ -118,7 +116,7 @@ class OrtServerNestedProvenanceStorageTest : WordSpec() {
                 nestedProvenanceStorage.writeNestedProvenance(rootProvenance, result1)
                 nestedProvenanceStorage.writeNestedProvenance(rootProvenance, result2)
 
-                transaction {
+                dbExtension.db.transaction {
                     NestedProvenancesTable.selectAll().count() shouldBe 2
                 }
             }
@@ -169,7 +167,7 @@ class OrtServerNestedProvenanceStorageTest : WordSpec() {
 
                 nestedProvenanceStorage.writeNestedProvenance(repositoryProvenance, result)
 
-                transaction {
+                dbExtension.db.transaction {
                     val packageProvenances = PackageProvenancesTable.selectAll().toList()
                     packageProvenances shouldHaveSize 3
 

@@ -71,9 +71,7 @@ context(entity: EntityClass<*, *>)
 fun <T : EntityID<Long>?> Column<T>.transformToEntityId() =
     with(entity) { transform({ id -> id?.let { EntityID(it, table as IdTable<Long>) } as T }, { it?.value }) }
 
-/**
- * Transform the given column [to database precision][toDatabasePrecision] when creating a DAO object.
- */
+/** Transform the given column [to database precision][toDatabasePrecision] when creating a DAO object. */
 @Suppress("UNCHECKED_CAST")
 context(entity: EntityClass<*, *>)
 fun <T : Instant?> Column<T>.transformToDatabasePrecision() =
@@ -163,7 +161,9 @@ fun <E : LongEntity, M, T : AbstractQuery<T>> SortableEntityClass<E>.listCustomQ
 }
 
 /**
- * Apply the given [parameters] to this query result using [table] to resolve the columns to be sorted by.
+ * Apply the given [parameters] to this query result using [table] to resolve the columns to be sorted by. The ID of
+ * [table] is added as the last sort field, so that entities with equal values in the requested sort fields keep the
+ * same order across pages.
  */
 fun <T> SizedIterable<T>.apply(table: SortableTable, parameters: ListQueryParameters): SizedIterable<T> {
     val orders = parameters.sortFields.map {
@@ -172,13 +172,12 @@ fun <T> SizedIterable<T>.apply(table: SortableTable, parameters: ListQueryParame
         column to it.direction.toSortOrder()
     }
 
-    val orderedQuery = orderBy(*orders.toTypedArray())
+    val idOrder = (table.id to SortOrder.ASC).takeIf { orders.none { (column, _) -> column == table.id } }
+    val orderedQuery = orderBy(*(orders + listOfNotNull(idOrder)).toTypedArray())
     return parameters.limit?.let { orderedQuery.limit(it).offset(parameters.offset ?: 0) } ?: orderedQuery
 }
 
-/**
- * Apply the given [parameters] and [customOrders] to this query result.
- */
+/** Apply the given [parameters] and [customOrders] to this query result. */
 fun <T> SizedIterable<T>.apply(
     parameters: ListQueryParameters,
     customOrders: List<Pair<Expression<*>, SortOrder>>
@@ -187,9 +186,7 @@ fun <T> SizedIterable<T>.apply(
     return parameters.limit?.let { orderedQuery.limit(it).offset(parameters.offset ?: 0) } ?: orderedQuery
 }
 
-/**
- * Convert this [OrderDirection] constant to the corresponding [SortOrder].
- */
+/** Convert this [OrderDirection] constant to the corresponding [SortOrder]. */
 fun OrderDirection.toSortOrder(): SortOrder =
     when (this) {
         OrderDirection.ASCENDING -> SortOrder.ASC
@@ -215,15 +212,11 @@ class InsensitiveLikeOp(expr1: Expression<*>, expr2: Expression<*>) : Comparison
  */
 class InsensitiveRegexOp(expr1: Expression<*>, expr2: Expression<*>) : ComparisonOp(expr1, expr2, "~*")
 
-/**
- * Apply the given [value] to filter this column by using the ILIKE operator.
- */
+/** Apply the given [value] to filter this column by using the ILIKE operator. */
 fun Expression<String>.applyILike(value: String): Op<Boolean> =
     InsensitiveLikeOp(this, QueryParameter("%$value%", TextColumnType()))
 
-/**
- * Apply the given [operator] and filter [value] to filter this expression by.
- */
+/** Apply the given [operator] and filter [value] to filter this expression by. */
 fun Expression<String>.applyFilter(operator: ComparisonOperator, value: String): Op<Boolean> =
     when (operator) {
         ComparisonOperator.EQUALS -> EqOp(this, QueryParameter(value, TextColumnType()))
@@ -231,9 +224,7 @@ fun Expression<String>.applyFilter(operator: ComparisonOperator, value: String):
         else -> throw IllegalArgumentException("Unsupported operator.")
     }
 
-/**
- * Apply the given [value] to filter this column by using the ~* operator.
- */
+/** Apply the given [value] to filter this column by using the ~* operator. */
 fun Expression<String>.applyIRegex(value: String): Op<Boolean> =
     InsensitiveRegexOp(this, QueryParameter(value, TextColumnType()))
 
