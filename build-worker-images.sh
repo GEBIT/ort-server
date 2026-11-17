@@ -20,6 +20,9 @@
 #   6. ort-server-config-worker              - the Config worker, built via Gradle/Jib on top of
 #                                              the common base image
 #
+# The worker images are tagged ${REGISTRY}/ort-server-<worker>-worker:gebit-<ORT_SERVER_VERSION>; REGISTRY can be
+# overridden via the environment.
+#
 # Usage:
 #   ./build-worker-images.sh [analyzer|config|reporter|all] [ORT_SERVER_DIR]
 #
@@ -41,14 +44,20 @@ case "${TARGET}" in
         ;;
 esac
 
-# Pinned to the base image published for the upstream ORT Server 0.91.0 release.
-BASE_IMAGE_TAG="0.91.0"
+# Pinned to the upstream ORT Server release this checkout is based on. The tag only names the local base images.
+ORT_SERVER_VERSION="0.104.0"
+BASE_IMAGE_TAG="${ORT_SERVER_VERSION}"
 BASE_IMAGE_NAME="ort-server-base-image:${BASE_IMAGE_TAG}"
 ANALYZER_BASE_IMAGE_NAME="ort-server-analyzer-worker-base-image:${BASE_IMAGE_TAG}"
 REPORTER_BASE_IMAGE_NAME="ort-server-reporter-worker-base-image:${BASE_IMAGE_TAG}"
 
-# Overrides the Go version of Analyzer.Dockerfile (1.25.0): it installs buildozer@latest, which now requires Go 1.26.
-GO_VERSION="1.26.0"
+# The final worker images are tagged "gebit-<version>" in the GEBIT registry namespace. They are only built locally;
+# push them manually, then ort-server-service/scripts/k8s/mirror-images.sh re-tags them as "<version>-gebit".
+REGISTRY="${REGISTRY:-docker-registry.local.gebit.de:5002/gebit-build}"
+WORKER_TAG="gebit-${ORT_SERVER_VERSION}"
+ANALYZER_WORKER_IMAGE="${REGISTRY}/ort-server-analyzer-worker:${WORKER_TAG}"
+CONFIG_WORKER_IMAGE="${REGISTRY}/ort-server-config-worker:${WORKER_TAG}"
+REPORTER_WORKER_IMAGE="${REGISTRY}/ort-server-reporter-worker:${WORKER_TAG}"
 
 if [[ ! -d "${ORT_SERVER_DIR}" ]]; then
     echo "ORT Server checkout not found at: ${ORT_SERVER_DIR}" >&2
@@ -72,7 +81,6 @@ if [[ "${TARGET}" == "analyzer" || "${TARGET}" == "all" ]]; then
         -f "${ORT_SERVER_DIR}/workers/analyzer/docker/Analyzer.Dockerfile" \
         --build-arg BASE_REGISTRY= \
         --build-arg BASE_IMAGE_TAG="${BASE_IMAGE_TAG}" \
-        --build-arg GO_VERSION="${GO_VERSION}" \
         -t "${ANALYZER_BASE_IMAGE_NAME}"
 
     echo "==> Building Analyzer worker image via Gradle/Jib"
@@ -80,10 +88,10 @@ if [[ "${TARGET}" == "analyzer" || "${TARGET}" == "all" ]]; then
         cd "${ORT_SERVER_DIR}"
         ./gradlew :workers:analyzer:tinyJibDocker --rerun \
             -Djib.from.image="docker://${ANALYZER_BASE_IMAGE_NAME}" \
-            -Djib.to.image=ort-server-analyzer-worker:latest
+            -Djib.to.image="${ANALYZER_WORKER_IMAGE}"
     )
 
-    BUILT_IMAGES+=("${ANALYZER_BASE_IMAGE_NAME}" "ort-server-analyzer-worker:latest")
+    BUILT_IMAGES+=("${ANALYZER_BASE_IMAGE_NAME}" "${ANALYZER_WORKER_IMAGE}")
 fi
 
 if [[ "${TARGET}" == "config" || "${TARGET}" == "all" ]]; then
@@ -92,10 +100,10 @@ if [[ "${TARGET}" == "config" || "${TARGET}" == "all" ]]; then
         cd "${ORT_SERVER_DIR}"
         ./gradlew :workers:config:tinyJibDocker --rerun \
             -Djib.from.image="docker://${BASE_IMAGE_NAME}" \
-            -Djib.to.image=ort-server-config-worker:latest
+            -Djib.to.image="${CONFIG_WORKER_IMAGE}"
     )
 
-    BUILT_IMAGES+=("ort-server-config-worker:latest")
+    BUILT_IMAGES+=("${CONFIG_WORKER_IMAGE}")
 fi
 
 if [[ "${TARGET}" == "reporter" || "${TARGET}" == "all" ]]; then
@@ -112,10 +120,10 @@ if [[ "${TARGET}" == "reporter" || "${TARGET}" == "all" ]]; then
         cd "${ORT_SERVER_DIR}"
         ./gradlew :workers:reporter:tinyJibDocker --rerun \
             -Djib.from.image="docker://${REPORTER_BASE_IMAGE_NAME}" \
-            -Djib.to.image=ort-server-reporter-worker:latest
+            -Djib.to.image="${REPORTER_WORKER_IMAGE}"
     )
 
-    BUILT_IMAGES+=("${REPORTER_BASE_IMAGE_NAME}" "ort-server-reporter-worker:latest")
+    BUILT_IMAGES+=("${REPORTER_BASE_IMAGE_NAME}" "${REPORTER_WORKER_IMAGE}")
 fi
 
 echo "==> Done. Built images:"
